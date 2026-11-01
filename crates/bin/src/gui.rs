@@ -952,6 +952,23 @@ impl UiController {
         self
     }
 
+    /// Runs `turn` on the runtime and answers on a channel, so the UI
+    /// awaits it without tokio. A turn that never answers (it panicked, or
+    /// the runtime shut down) ends as failed.
+    fn spawn_turn(
+        &self,
+        turn: impl Future<Output = TurnEnd> + Send + 'static,
+    ) -> BoxFuture<'static, TurnEnd> {
+        let (tx, rx) = oneshot::channel();
+        self.handle.spawn(async move {
+            tx.send(turn.await).ok();
+        });
+        rx.map(|end| {
+            end.unwrap_or_else(|_| TurnEnd::Failed("the turn ended without an answer".into()))
+        })
+        .boxed()
+    }
+
     /// Runs the command `name` on the runtime; `Ctrl+C` aborts it
     /// ([`SessionController::interrupt_commands`]).
     fn spawn_command(
@@ -1277,28 +1294,13 @@ pub fn command_turn(prompt: &str) -> TurnRequest {
 
 impl SessionController for UiController {
     fn run_turn(&self, request: TurnRequest) -> BoxFuture<'static, TurnEnd> {
-        let (tx, rx) = oneshot::channel();
         let router = self.router();
-        self.handle.spawn(async move {
-            tx.send(router.line(request).await).ok();
-        });
-        rx.map(|end| {
-            end.unwrap_or_else(|_| TurnEnd::Failed("the turn ended without an answer".into()))
-        })
-        .boxed()
+        self.spawn_turn(async move { router.line(request).await })
     }
 
     fn resume_pending(&self, cancel: CancelToken) -> BoxFuture<'static, TurnEnd> {
-        let (tx, rx) = oneshot::channel();
         let app = Arc::clone(&self.app);
-        self.handle.spawn(async move {
-            let end = resume_pending(&mut *app.lock().await, cancel).await;
-            tx.send(end).ok();
-        });
-        rx.map(|end| {
-            end.unwrap_or_else(|_| TurnEnd::Failed("the turn ended without an answer".into()))
-        })
-        .boxed()
+        self.spawn_turn(async move { resume_pending(&mut *app.lock().await, cancel).await })
     }
 
     fn recompute(&self, block: domain::block::Block) -> BoxFuture<'static, Result<(), String>> {
@@ -1510,13 +1512,14 @@ impl SessionController for UiController {
     }
 
     fn login(&self, account: Account, key: String) -> BoxFuture<'static, Result<String, String>> {
-        login_on(
+        let login = login_on(
             &self.handle,
             Arc::clone(&self.api_keys),
             account,
             key,
             self.preferences_path.clone(),
-        )
+        );
+        forget_models_after(self.catalog.clone(), login)
     }
 
     fn catalog_models(&self) -> BoxFuture<'static, Result<Vec<ModelChoice>, String>> {
@@ -1599,7 +1602,8 @@ impl SessionController for UiController {
     }
 
     fn logout(&self, account: Option<Account>) -> BoxFuture<'static, Result<String, String>> {
-        logout_on(&self.handle, Arc::clone(&self.api_keys), account)
+        let logout = logout_on(&self.handle, Arc::clone(&self.api_keys), account);
+        forget_models_after(self.catalog.clone(), logout)
     }
 
     fn git_status(&self) -> BoxFuture<'static, Option<GitStatus>> {
@@ -1715,6 +1719,21 @@ fn login_on(
         joined.unwrap_or_else(|err| Err(err.to_string()))
     })
     .boxed()
+}
+
+/// Runs `change` (a `/login` or `/logout`) and, if it went through, drops
+/// the model listings `catalog` keeps, so the next `/model` asks again.
+fn forget_models_after(
+    catalog: Option<Arc<dyn ModelCatalogPort>>,
+    change: BoxFuture<'static, Result<String, String>>,
+) -> BoxFuture<'static, Result<String, String>> {
+    change
+        .inspect(move |done| {
+            if let (Ok(_), Some(catalog)) = (done, &catalog) {
+                catalog.invalidate();
+            }
+        })
+        .boxed()
 }
 
 /// Aborts a runtime task when dropped.
@@ -2128,7 +2147,7 @@ impl ProjectOpener for Launcher {
                 };
                 let mut stored = store.load(id).await.map_err(|err| err.to_string())?;
                 stored.session.title = Some(title);
-                store.save(&stored).await.map_err(|err| err.to_string())
+                store.save(stored).await.map_err(|err| err.to_string())
             })
             .map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
             .boxed()

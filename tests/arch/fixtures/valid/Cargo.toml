@@ -6,6 +6,7 @@ members = [
     "crates/app-testing",
     "crates/adapters/fs",
     "crates/adapters/shell",
+    "crates/adapters/support",
     "crates/ui",
     "crates/bin",
 ]

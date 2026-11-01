@@ -11,7 +11,7 @@
 //! one without a classification, is a warning that says so: the card
 //! shows nothing it did not fetch.
 
-use domain::block::{BlockKind, ImageData};
+use domain::block::BlockKind;
 use domain::science::ghs::{GhsClassification, GhsSpec};
 use gpui::{
     AnyElement, App, FontWeight, Hsla, ImageSource, InteractiveElement as _, IntoElement as _,
@@ -21,7 +21,7 @@ use gpui::{
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
 use super::molecule::svg_data;
-use super::svg::SvgState;
+use super::svg::{SvgData, SvgState};
 use crate::timeline::TimelineEntry;
 
 /// Size a pictogram is drawn at, in pixels.
@@ -54,14 +54,28 @@ fn signal_color(signal: &str, cx: &App) -> Hsla {
     }
 }
 
+/// The pictogram of `code` as hashed SVG data, made once per code: the
+/// card is drawn on every frame.
+fn pictogram_data(code: &str) -> SvgData {
+    thread_local! {
+        static MADE: std::cell::RefCell<std::collections::HashMap<String, SvgData>> =
+            std::cell::RefCell::default();
+    }
+    MADE.with_borrow_mut(|made| {
+        made.entry(code.to_owned())
+            .or_insert_with(|| svg_data(&pictogram_svg(code)))
+            .clone()
+    })
+}
+
 fn pictogram(
-    data: &ImageData,
+    data: &SvgData,
     code: &str,
     label: Option<&str>,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let picture = match super::svg::use_svg(data, 1.0, window, cx) {
+    let picture = match super::svg::use_svg_data(data, 1.0, None, window, cx) {
         SvgState::Ready(raster) => img(ImageSource::Render(raster.image.clone()))
             .size(px(PICTOGRAM))
             .object_fit(ObjectFit::Contain)
@@ -95,7 +109,7 @@ fn classification(
         .pictograms
         .iter()
         .map(|p| {
-            let data = svg_data(&pictogram_svg(&p.code));
+            let data = pictogram_data(&p.code);
             pictogram(
                 &data,
                 &p.code,

@@ -6,9 +6,10 @@ use std::time::Duration;
 
 use application::ports::credentials::{CredentialError, KeyCheck};
 use application::ports::llm::{LlmError, ModelCatalogPort};
+use platform::KEYRING_SERVICE;
 
 use crate::catalog::AnthropicCatalog;
-use crate::client::{AnthropicClient, ApiKey, ClientConfig, KEYRING_SERVICE};
+use crate::client::{AnthropicClient, ApiKey, ClientConfig};
 
 /// Longest wait for the check of a new key.
 pub const CHECK_TIMEOUT: Duration = Duration::from_secs(10);

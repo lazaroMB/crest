@@ -1,6 +1,7 @@
 //! Mapping of API errors (HTTP error bodies and stream `error` events) to
 //! the port's [`LlmError`].
 
+use adapter_support::errors::{self, Wording, is_context_error};
 use application::ports::llm::LlmError;
 
 use crate::wire::ApiError;
@@ -32,7 +33,7 @@ pub fn from_api(status: Option<u16>, error: &ApiError, retry_after_ms: Option<u6
             status: status.unwrap_or(504),
             message,
         },
-        "invalid_request_error" if is_prompt_too_long(&message) => LlmError::ContextTooLong,
+        "invalid_request_error" if is_context_error(&message) => LlmError::ContextTooLong,
         "invalid_request_error" | "not_found_error" | "request_too_large" | "billing_error" => {
             LlmError::InvalidRequest {
                 message: format!("{}: {message}", error.kind),
@@ -42,23 +43,28 @@ pub fn from_api(status: Option<u16>, error: &ApiError, retry_after_ms: Option<u6
     }
 }
 
-/// Converts a bare HTTP status (no parsable error body) to an [`LlmError`].
+/// Converts a bare HTTP status (no parsable error body, or an error type
+/// this crate does not know) to an [`LlmError`], with the mapping every
+/// adapter shares: a 403 that names the key and a client error that names
+/// the context are recognised as such.
 #[must_use]
 pub fn from_status(status: u16, message: String, retry_after_ms: Option<u64>) -> LlmError {
-    match status {
-        401 => LlmError::Auth {
-            message: AUTH_HINT.to_owned(),
-        },
-        403 => LlmError::NotEntitled { message },
-        429 => LlmError::RateLimited { retry_after_ms },
-        529 => LlmError::Overloaded,
-        500.. => LlmError::Server { status, message },
-        _ => LlmError::InvalidRequest { message },
-    }
+    errors::from_status(status, message, retry_after_ms, &Anthropic)
 }
 
-fn is_prompt_too_long(message: &str) -> bool {
-    message.to_ascii_lowercase().contains("prompt is too long")
+/// Anthropic's wording: a rejected key gets [`AUTH_HINT`] (which the
+/// client turns into where the key came from), a refusal the API's own
+/// message.
+struct Anthropic;
+
+impl Wording for Anthropic {
+    fn rejected_key(&self, _status: u16, _message: &str) -> String {
+        AUTH_HINT.to_owned()
+    }
+
+    fn refused(&self, _status: u16, message: String) -> String {
+        message
+    }
 }
 
 #[cfg(test)]
@@ -128,5 +134,45 @@ mod tests {
             from_status(418, "teapot".into(), None),
             LlmError::InvalidRequest { .. }
         ));
+    }
+
+    #[test]
+    fn the_shared_fallback_finds_rejected_keys_and_full_contexts() {
+        // A server speaking the Messages API (OpenCode) with its own types.
+        assert!(matches!(
+            from_api(Some(403), &api("AuthError", "Invalid API key"), None),
+            LlmError::Auth { message } if message == AUTH_HINT
+        ));
+        assert!(matches!(
+            from_api(Some(403), &api("FreeTierError", "subscription required"), None),
+            LlmError::NotEntitled { message } if message == "FreeTierError: subscription required"
+        ));
+        // A body that does not parse.
+        assert_eq!(
+            from_status(413, "Prompt is too long".into(), None),
+            LlmError::ContextTooLong
+        );
+        assert_eq!(
+            from_api(
+                Some(400),
+                &api(
+                    "invalid_request_error",
+                    "This model's maximum context length is 200000 tokens"
+                ),
+                None
+            ),
+            LlmError::ContextTooLong
+        );
+        // Unchanged: 401 is the key and any other 4xx an invalid request.
+        assert!(matches!(
+            from_status(401, String::new(), None),
+            LlmError::Auth { message } if message == AUTH_HINT
+        ));
+        assert_eq!(
+            from_status(400, "bad".into(), None),
+            LlmError::InvalidRequest {
+                message: "bad".into()
+            }
+        );
     }
 }

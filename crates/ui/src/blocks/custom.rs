@@ -11,13 +11,12 @@
 //! `https` and `mailto` URLs. Nesting past [`MAX_DEPTH`] is cut with a
 //! marker instead of recursing further.
 
-use domain::block::{Block, BlockId, BlockKind, CustomNode, MermaidSpec, is_openable_url};
+use domain::block::{Block, BlockId, BlockKind, CustomNode, is_openable_url};
 use gpui::{
     AnyElement, App, ClickEvent, ElementId, InteractiveElement as _, IntoElement as _,
     ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
     px,
 };
-use gpui_component::text::TextView;
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 use uuid::Uuid;
 
@@ -73,17 +72,6 @@ impl Walk<'_> {
         let id = node_id(self.entry.block.id, self.next);
         self.next += 1;
         id
-    }
-
-    /// An entry of its own for a node drawn by another block's renderer.
-    fn child_entry(&mut self, kind: BlockKind) -> TimelineEntry {
-        let id = self.next_id();
-        TimelineEntry {
-            block: Block { id, kind },
-            expanded: true,
-            alt_view: self.entry.alt_view,
-            numbers: Default::default(),
-        }
     }
 
     fn children(
@@ -152,14 +140,20 @@ impl Walk<'_> {
                     }))
                     .into_any_element()
             }
+            // Nodes are drawn at the revision of their block: the ids
+            // follow the position in the tree, so a node changes only when
+            // its block does, and the specs are compared only then.
             CustomNode::Table(spec) => {
-                let entry = self.child_entry(BlockKind::Table(spec.clone()));
-                super::table::render(&entry, window, cx)
+                super::table::render_spec(self.next_id(), spec, self.entry.rev, window, cx)
             }
-            CustomNode::Chart(spec) => {
-                let entry = self.child_entry(BlockKind::Chart(spec.clone()));
-                super::chart::render(&entry, window, cx)
-            }
+            CustomNode::Chart(spec) => super::chart::render_spec(
+                self.next_id(),
+                spec,
+                self.entry.alt_view,
+                self.entry.rev,
+                window,
+                cx,
+            ),
             CustomNode::Code { lang, source } => {
                 super::math::code_block(self.next_id(), lang.as_deref(), source, window, cx)
                     .into_any_element()
@@ -169,12 +163,11 @@ impl Walk<'_> {
                     .on_link_click(open_link)
                     .into_any_element()
             }
-            CustomNode::Html { source } => TextView::html(
-                element_id("custom-html", self.next_id()),
-                SharedString::from(source.clone()),
-            )
-            .on_link_click(open_link)
-            .into_any_element(),
+            CustomNode::Html { source } => {
+                super::math::html_block(self.next_id(), source, window, cx)
+                    .on_link_click(open_link)
+                    .into_any_element()
+            }
             CustomNode::Image {
                 source,
                 media_type,
@@ -186,6 +179,7 @@ impl Walk<'_> {
                 media_type.as_deref(),
                 alt.as_deref(),
                 *fit,
+                self.entry.rev,
                 window,
                 cx,
             )
@@ -193,34 +187,45 @@ impl Walk<'_> {
             CustomNode::Json {
                 value,
                 expand_depth,
-            } => super::json::json_view(self.next_id(), value, *expand_depth, window, cx)
-                .into_any_element(),
-            CustomNode::Mermaid { source } => {
-                let entry = self.child_entry(BlockKind::Mermaid(MermaidSpec {
-                    source: source.clone(),
-                    title: None,
-                }));
-                super::mermaid::render(&entry, window, cx)
-            }
+            } => super::json::json_view(
+                self.next_id(),
+                value,
+                *expand_depth,
+                self.entry.rev,
+                window,
+                cx,
+            )
+            .into_any_element(),
+            CustomNode::Mermaid { source } => super::mermaid::render_source(
+                self.next_id(),
+                source,
+                None,
+                self.entry.alt_view,
+                self.entry.rev,
+                window,
+                cx,
+            ),
             CustomNode::Diff { unified } => super::diff::render_unified(unified, cx),
             CustomNode::Plot(spec) => {
                 // A node id of its own keeps the sliders across frames.
-                super::plot::view(self.next_id(), spec, window, cx).into_any_element()
+                super::plot::view(self.next_id(), spec, self.entry.rev, window, cx)
+                    .into_any_element()
             }
             CustomNode::Timeline(spec) => {
-                crate::widgets::timeline::render(self.next_id(), spec, window, cx)
+                crate::widgets::timeline::render(self.next_id(), spec, self.entry.rev, window, cx)
             }
             CustomNode::FilterList(spec) => {
-                crate::widgets::list::render(self.next_id(), spec, window, cx)
+                crate::widgets::list::render(self.next_id(), spec, self.entry.rev, window, cx)
             }
             CustomNode::Graph(spec) => {
-                crate::widgets::graph::render(self.next_id(), spec, window, cx)
+                crate::widgets::graph::render(self.next_id(), spec, self.entry.rev, window, cx)
             }
             CustomNode::Tree(spec) => {
-                crate::widgets::tree::render(self.next_id(), spec, window, cx)
+                crate::widgets::tree::render(self.next_id(), spec, self.entry.rev, window, cx)
             }
             CustomNode::Model3d(spec) => {
-                super::model_view::model_view(self.next_id(), spec, window, cx).into_any_element()
+                super::model_view::model_view(self.next_id(), spec, self.entry.rev, window, cx)
+                    .into_any_element()
             }
             CustomNode::Link { text, url } => {
                 let id = element_id("custom-link", self.next_id());
@@ -268,9 +273,12 @@ pub fn render_tree(
 
 /// Draws `tree` outside the timeline (a modal): its stateful nodes get ids
 /// derived from `parent`, so they keep their state across frames.
+/// `rev` is the revision of `tree` ([`crate::timeline::next_rev`] when
+/// it changes, or [`crate::timeline::NO_REV`]).
 pub fn render_node(
     parent: BlockId,
     tree: &CustomNode,
+    rev: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
@@ -284,6 +292,7 @@ pub fn render_node(
         expanded: true,
         alt_view: false,
         numbers: Default::default(),
+        rev,
     };
     render_tree(&entry, tree, window, cx)
 }

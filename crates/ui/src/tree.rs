@@ -11,11 +11,14 @@
 //! `tree` tool uses, so it lists what the agent sees (`.gitignore`d files
 //! and `.git/` excluded). [`DirWatcher`] is the only piece that touches the
 //! file system: it pings on structural changes and the panel reloads from
-//! the port.
+//! the port. It is started on the background executor and does not watch
+//! what the workspace's `.gitignore` leaves out (`target/`, `node_modules/`
+//! ...): a build there costs neither watches nor reloads. While the panel
+//! is hidden a change only marks it stale; it reloads when shown.
 
 use std::collections::HashSet;
-use std::path::{Component, Path};
-use std::sync::Arc;
+use std::path::{Component, Path, PathBuf};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use application::keymap::Action;
@@ -27,12 +30,13 @@ use futures::channel::mpsc;
 use futures::{FutureExt as _, Stream, StreamExt as _};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Render, ScrollStrategy,
-    SharedString, Styled as _, Subscription, Task, Window, div, px,
+    InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _, Pixels, Render,
+    ScrollStrategy, SharedString, Styled as _, Subscription, Task, Window, div, px,
 };
 use gpui_component::list::ListItem;
 use gpui_component::tree::{TreeEvent, TreeItem, TreeState, tree};
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
+use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use notify::{EventKind, RecursiveMode, Watcher as _};
 
 /// Action that shows or hides the panel.
@@ -114,33 +118,134 @@ fn in_git_dir(path: &Path) -> bool {
         .any(|c| matches!(c, Component::Normal(name) if name == ".git"))
 }
 
-/// Watches a directory recursively and pings a channel on every event that
-/// [`changes_tree`]. Watching stops when it is dropped.
+/// What the workspace's ignore files leave out: the root `.gitignore` and
+/// `.git/info/exclude`, plus `.git/` itself. Nested `.gitignore` files and
+/// the global excludes file are not read; a change under a path only they
+/// ignore costs a reload that finds nothing new.
+pub struct Ignored {
+    root: PathBuf,
+    matcher: Gitignore,
+}
+
+impl Ignored {
+    /// The rules of the workspace at `root`; none when it has no ignore
+    /// file or it does not parse.
+    pub fn new(root: &Path) -> Self {
+        let mut builder = GitignoreBuilder::new(root);
+        for file in [root.join(".gitignore"), root.join(".git/info/exclude")] {
+            if file.is_file() {
+                // A bad line only loses that rule.
+                let _ = builder.add(file);
+            }
+        }
+        Self {
+            root: root.to_owned(),
+            matcher: builder.build().unwrap_or_else(|_| Gitignore::empty()),
+        }
+    }
+
+    /// Whether `path` (absolute, as the watcher reports it) or one of its
+    /// directories is ignored. Paths outside the root are not.
+    pub fn is_ignored(&self, path: &Path) -> bool {
+        let Ok(relative) = path.strip_prefix(&self.root) else {
+            return false;
+        };
+        if relative.as_os_str().is_empty() {
+            return false;
+        }
+        in_git_dir(relative)
+            || self
+                .matcher
+                .matched_path_or_any_parents(relative, path.is_dir())
+                .is_ignore()
+    }
+}
+
+/// Watches a directory and pings a channel on every event that
+/// [`changes_tree`] outside the ignored paths ([`Ignored`]). The root is
+/// watched on its own and each top-level directory that is not ignored
+/// recursively, so `target/` and the like get no watches at all; a
+/// directory that appears at the top later is watched when it does.
+/// Watching stops when it is dropped.
 pub struct DirWatcher {
-    _watcher: notify::RecommendedWatcher,
+    _watcher: Arc<Mutex<Option<notify::RecommendedWatcher>>>,
 }
 
 impl DirWatcher {
-    /// Starts watching `root`. Pings arrive from the watcher's own thread;
-    /// many may arrive for one change, so the reader debounces.
+    /// Starts watching `root`. It walks the directories it watches, so
+    /// call it off the UI thread. Pings arrive from the watcher's own
+    /// thread; many may arrive for one change, so the reader debounces.
     pub fn new(root: &Path) -> Result<(Self, mpsc::UnboundedReceiver<()>), WatchError> {
         let (tx, rx) = mpsc::unbounded();
         let error = |source| WatchError::Watch {
             path: root.display().to_string(),
             source,
         };
+        let ignored = Arc::new(Ignored::new(root));
+        let shared: Arc<Mutex<Option<notify::RecommendedWatcher>>> = Arc::default();
+        // Weak: the watcher owns this handler, and must go when dropped.
+        let (handler_ignored, handler_shared, handler_root) = (
+            Arc::clone(&ignored),
+            Arc::downgrade(&shared),
+            root.to_owned(),
+        );
         let mut watcher =
             notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-                // A watcher error (e.g. queue overflow) may hide changes: reload.
-                if event.as_ref().map_or(true, changes_tree) {
-                    let _ = tx.unbounded_send(());
+                let event = match event {
+                    Ok(event) => event,
+                    // A watcher error (e.g. queue overflow) may hide changes:
+                    // reload.
+                    Err(_) => {
+                        let _ = tx.unbounded_send(());
+                        return;
+                    }
+                };
+                if !changes_tree(&event) {
+                    return;
                 }
+                let wanted: Vec<&PathBuf> = event
+                    .paths
+                    .iter()
+                    .filter(|path| !handler_ignored.is_ignored(path))
+                    .collect();
+                if wanted.is_empty() {
+                    return;
+                }
+                // A new top-level directory: watch it too. Not from this
+                // thread, which serves the watcher's own calls.
+                let new_dirs: Vec<PathBuf> = wanted
+                    .iter()
+                    .filter(|path| path.parent() == Some(&handler_root) && path.is_dir())
+                    .map(|path| (*path).clone())
+                    .collect();
+                if !new_dirs.is_empty()
+                    && let Some(shared) = handler_shared.upgrade()
+                {
+                    std::thread::spawn(move || {
+                        let mut guard = shared.lock().unwrap_or_else(PoisonError::into_inner);
+                        if let Some(watcher) = guard.as_mut() {
+                            for dir in new_dirs {
+                                let _ = watcher.watch(&dir, RecursiveMode::Recursive);
+                            }
+                        }
+                    });
+                }
+                let _ = tx.unbounded_send(());
             })
             .map_err(error)?;
         watcher
-            .watch(root, RecursiveMode::Recursive)
+            .watch(root, RecursiveMode::NonRecursive)
             .map_err(error)?;
-        Ok((Self { _watcher: watcher }, rx))
+        let entries = std::fs::read_dir(root).map_err(|e| error(notify::Error::io(e)))?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if entry.file_type().is_ok_and(|t| t.is_dir()) && !ignored.is_ignored(&path) {
+                // A directory removed meanwhile is simply not watched.
+                let _ = watcher.watch(&path, RecursiveMode::Recursive);
+            }
+        }
+        *shared.lock().unwrap_or_else(PoisonError::into_inner) = Some(watcher);
+        Ok((Self { _watcher: shared }, rx))
     }
 }
 
@@ -149,6 +254,9 @@ impl DirWatcher {
 pub enum TreePanelEvent {
     /// A file was clicked or chosen with `Enter`.
     Open(WorkspacePath),
+    /// The workspace cannot be watched: the tree will not refresh by
+    /// itself.
+    WatchFailed(String),
 }
 
 /// The side panel. Hidden until toggled; it loads the tree when created and
@@ -162,7 +270,12 @@ pub struct TreePanel {
     error: Option<String>,
     visible: bool,
     loading: Option<Task<()>>,
+    /// Whether the files changed while the panel was hidden: it reloads
+    /// when shown.
+    stale: bool,
     watching: Option<Task<()>>,
+    /// The watcher being started.
+    starting: Option<Task<()>>,
     watcher: Option<DirWatcher>,
     _subscriptions: Vec<Subscription>,
 }
@@ -189,7 +302,9 @@ impl TreePanel {
             error: None,
             visible: false,
             loading: None,
+            stale: false,
             watching: None,
+            starting: None,
             watcher: None,
             _subscriptions: vec![expansion],
         };
@@ -202,10 +317,28 @@ impl TreePanel {
         self.visible
     }
 
-    /// Shows or hides the panel.
+    /// How wide the panel is: none of the window while hidden.
+    pub fn width(&self) -> Pixels {
+        if self.visible {
+            px(PANEL_WIDTH)
+        } else {
+            px(0.)
+        }
+    }
+
+    /// Shows or hides the panel; shown, it reloads if the files changed
+    /// while it was hidden.
     pub fn toggle(&mut self, cx: &mut Context<Self>) {
         self.visible = !self.visible;
+        if self.visible && std::mem::take(&mut self.stale) {
+            self.reload(cx);
+        }
         cx.notify();
+    }
+
+    /// Whether the files changed while the panel was hidden.
+    pub fn is_stale(&self) -> bool {
+        self.stale
     }
 
     /// Gives the keyboard focus to the tree, selecting its first row when
@@ -301,10 +434,13 @@ impl TreePanel {
                 .await;
             this.update(cx, |this, cx| this.loaded(result, cx)).ok();
         }));
+        // "Loading the files…" while nothing was loaded yet.
+        cx.notify();
     }
 
     /// Reloads after each burst of `changes`, once [`REFRESH_DEBOUNCE`]
-    /// passes without a new one. Replaces any previous source.
+    /// passes without a new one; while hidden, it only marks the panel
+    /// stale. Replaces any previous source.
     pub fn watch(
         &mut self,
         mut changes: impl Stream<Item = ()> + Unpin + 'static,
@@ -324,20 +460,44 @@ impl TreePanel {
                         break;
                     }
                 }
-                if this.update(cx, |this, cx| this.reload(cx)).is_err() {
+                let changed = this.update(cx, |this, cx| {
+                    if this.visible {
+                        this.reload(cx);
+                    } else {
+                        this.stale = true;
+                    }
+                });
+                if changed.is_err() {
                     break;
                 }
             }
         }));
     }
 
-    /// Watches `root` (the workspace directory) with a [`DirWatcher`] and
-    /// reloads on changes, until the panel is dropped.
-    pub fn watch_dir(&mut self, root: &Path, cx: &mut Context<Self>) -> Result<(), WatchError> {
-        let (watcher, changes) = DirWatcher::new(root)?;
-        self.watcher = Some(watcher);
-        self.watch(changes, cx);
-        Ok(())
+    /// Watches `root` (the workspace directory) with a [`DirWatcher`],
+    /// started on the background executor, and reloads on changes until
+    /// the panel is dropped. A watcher that cannot start is reported with
+    /// [`TreePanelEvent::WatchFailed`].
+    pub fn watch_dir(&mut self, root: &Path, cx: &mut Context<Self>) {
+        let root = root.to_owned();
+        self.starting = Some(cx.spawn(async move |this, cx| {
+            let started = cx
+                .background_spawn(async move { DirWatcher::new(&root) })
+                .await;
+            this.update(cx, |this, cx| {
+                this.starting = None;
+                match started {
+                    Ok((watcher, changes)) => {
+                        this.watcher = Some(watcher);
+                        this.watch(changes, cx);
+                    }
+                    Err(err) => cx.emit(TreePanelEvent::WatchFailed(format!(
+                        "the tree will not refresh by itself: {err}"
+                    ))),
+                }
+            })
+            .ok();
+        }));
     }
 
     fn loaded(&mut self, result: Result<TreeNode, SearchError>, cx: &mut Context<Self>) {
@@ -823,7 +983,10 @@ mod tests {
         let (panel, cx) = panel(port.clone(), cx);
         assert_eq!(port.trees(), 1, "initial load");
         let (tx, rx) = mpsc::unbounded();
-        panel.update(cx, |panel, cx| panel.watch(rx, cx));
+        panel.update(cx, |panel, cx| {
+            panel.toggle(cx);
+            panel.watch(rx, cx);
+        });
 
         fs.set_file("src/main.rs", "");
         for _ in 0..3 {
@@ -841,6 +1004,97 @@ mod tests {
         assert_eq!(port.trees(), 2, "one reload for the burst");
         panel.update(cx, |panel, cx| panel.set_expanded("src", true, cx));
         assert!(visible(&panel, cx).contains(&"src/main.rs".to_owned()));
+    }
+
+    #[gpui::test]
+    fn changes_while_hidden_reload_once_when_shown(cx: &mut TestAppContext) {
+        let fs = fake_fs();
+        let port = Arc::new(Counting {
+            inner: fs.clone(),
+            trees: Default::default(),
+        });
+        let (panel, cx) = panel(port.clone(), cx);
+        let (tx, rx) = mpsc::unbounded();
+        panel.update(cx, |panel, cx| panel.watch(rx, cx));
+
+        fs.set_file("src/main.rs", "");
+        for _ in 0..2 {
+            tx.unbounded_send(()).unwrap();
+            cx.run_until_parked();
+            cx.executor().advance_clock(REFRESH_DEBOUNCE);
+            cx.run_until_parked();
+        }
+        assert_eq!(port.trees(), 1, "hidden: no reload");
+        assert!(panel.read_with(cx, |panel, _| panel.is_stale()));
+
+        panel.update(cx, |panel, cx| panel.toggle(cx));
+        cx.run_until_parked();
+        assert_eq!(port.trees(), 2, "shown: one reload");
+        assert!(!panel.read_with(cx, |panel, _| panel.is_stale()));
+        panel.update(cx, |panel, cx| {
+            panel.toggle(cx);
+            panel.toggle(cx);
+        });
+        cx.run_until_parked();
+        assert_eq!(port.trees(), 2, "nothing changed since");
+    }
+
+    #[test]
+    fn the_root_gitignore_and_git_dir_are_ignored() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join(".gitignore"), "target/\n*.log\n").unwrap();
+        std::fs::create_dir_all(root.join("target/debug")).unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        let ignored = Ignored::new(root);
+        assert!(ignored.is_ignored(&root.join("target")));
+        assert!(ignored.is_ignored(&root.join("target/debug/app.d")));
+        assert!(ignored.is_ignored(&root.join("src/run.log")));
+        assert!(ignored.is_ignored(&root.join(".git/index")));
+        assert!(!ignored.is_ignored(&root.join("src/main.rs")));
+        assert!(!ignored.is_ignored(root));
+        assert!(!ignored.is_ignored(Path::new("/elsewhere/target/x")));
+        // No ignore file: nothing but `.git/`.
+        let bare = tempfile::tempdir().unwrap();
+        let none = Ignored::new(bare.path());
+        assert!(!none.is_ignored(&bare.path().join("target/x")));
+    }
+
+    /// Waits up to `wait` for a ping.
+    fn pinged(pings: &mut mpsc::UnboundedReceiver<()>, wait: Duration) -> bool {
+        let start = Instant::now();
+        while start.elapsed() < wait {
+            if pings.try_recv().is_ok() {
+                while pings.try_recv().is_ok() {}
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        false
+    }
+
+    #[test]
+    fn the_watcher_skips_ignored_paths_and_follows_new_top_level_dirs() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        std::fs::write(root.join(".gitignore"), "target/\n").unwrap();
+        std::fs::create_dir_all(root.join("target/debug")).unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        let (_watcher, mut pings) = DirWatcher::new(root).unwrap();
+
+        std::fs::write(root.join("target/debug/app.o"), "").unwrap();
+        assert!(!pinged(&mut pings, Duration::from_millis(400)), "ignored");
+
+        std::fs::write(root.join("src/lib.rs"), "").unwrap();
+        assert!(pinged(&mut pings, Duration::from_secs(5)), "watched");
+
+        std::fs::create_dir(root.join("docs")).unwrap();
+        assert!(pinged(&mut pings, Duration::from_secs(5)), "new directory");
+        // The new directory is watched from a helper thread: give it a
+        // moment, then a file inside it counts.
+        std::thread::sleep(Duration::from_millis(200));
+        std::fs::write(root.join("docs/a.md"), "").unwrap();
+        assert!(pinged(&mut pings, Duration::from_secs(5)), "inside it");
     }
 
     /// A [`FileSearchPort`] over a real directory, walked with `std::fs`.
@@ -898,7 +1152,10 @@ mod tests {
         // app `watch_dir` passes the watcher's channel straight in.
         let (_watcher, mut pings) = DirWatcher::new(dir.path()).unwrap();
         let (relay, changes) = mpsc::unbounded();
-        panel.update(cx, |panel, cx| panel.watch(changes, cx));
+        panel.update(cx, |panel, cx| {
+            panel.toggle(cx);
+            panel.watch(changes, cx);
+        });
 
         std::fs::write(dir.path().join("b.txt"), "").unwrap();
         for _ in 0..250 {

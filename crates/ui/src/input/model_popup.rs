@@ -4,7 +4,8 @@
 //! it the models once it has listed them ([`ModelCompletion::set`]); the
 //! [`InputView`] feeds it the text and the keys and applies the result.
 //!
-//! It shows [`PALETTE_ROWS`] models at a time: `Up`/`Down` walk all the
+//! It shows [`PALETTE_ROWS`](super::completion::PALETTE_ROWS) models at a
+//! time: `Up`/`Down` walk all the
 //! matches (wrapping around) and the list scrolls to keep the chosen one
 //! in view, so no model needs typing to be reached.
 //!
@@ -13,38 +14,19 @@
 //! as typed (`/model opus`: the model of the next turn only).
 
 use domain::model::ModelId;
-use gpui::{
-    AnyElement, App, InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
-    Styled as _, div,
-};
-use gpui_component::{ActiveTheme as _, h_flex, v_flex};
+use gpui::{AnyElement, App, ParentElement as _, SharedString, Styled as _, div};
+use gpui_component::{ActiveTheme as _, h_flex};
 
-use super::{PALETTE_ROWS, window_note};
+use super::completion::{self, Look, Nav, Popup, PopupKey, nav_key};
 use crate::session::ModelChoice;
 
-/// What the popup shows for the current line.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ModelPopup {
-    /// The matching models, best first.
-    Entries(Vec<ModelChoice>),
-    /// Why there is nothing to choose (no match, still listing, an error).
-    Message(String),
-}
+/// What the popup shows for the current line: the matching models, best
+/// first, or why there is nothing to choose (no match, still listing, an
+/// error).
+pub type ModelPopup = Popup<ModelChoice>;
 
 /// What a key pressed while the popup shows asks the input to do.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ModelKey {
-    /// Choose the entry at this index.
-    Select(usize),
-    /// Hide the popup until the text changes.
-    Hide,
-    /// Replace the prompt with this text.
-    SetText(String),
-    /// Run this command (without the slash).
-    Run(String),
-    /// Not the popup's key.
-    Ignored,
-}
+pub type ModelKey = PopupKey;
 
 /// The models, as far as they are known.
 #[derive(Debug, Default)]
@@ -152,26 +134,16 @@ impl ModelCompletion {
     }
 }
 
-/// What `key` does in `popup` for the line `text`, with entry `selected`
-/// chosen.
+/// What `key` does in `popup` with entry `selected` chosen: `Tab`
+/// completes the line to the chosen model and `Enter` saves it.
 #[must_use]
 pub fn model_key(key: &application::keymap::Key, popup: &ModelPopup, selected: usize) -> ModelKey {
-    use application::keymap::KeyCode;
-    let entries = match popup {
-        ModelPopup::Entries(entries) => entries,
-        ModelPopup::Message(_) if key.code == KeyCode::Esc => return ModelKey::Hide,
-        ModelPopup::Message(_) => return ModelKey::Ignored,
-    };
-    let len = entries.len();
-    let selected = selected.min(len - 1);
-    let id = entries[selected].model.as_str();
-    match key.code {
-        KeyCode::Down => ModelKey::Select((selected + 1) % len),
-        KeyCode::Up => ModelKey::Select((selected + len - 1) % len),
-        KeyCode::Esc => ModelKey::Hide,
-        KeyCode::Tab => ModelKey::SetText(format!("/model set {id}")),
-        KeyCode::Enter => ModelKey::Run(format!("model set {id}")),
-        _ => ModelKey::Ignored,
+    match nav_key(key, popup, selected) {
+        Nav::Select(ix) => ModelKey::Select(ix),
+        Nav::Hide => ModelKey::Hide,
+        Nav::Complete(choice) => ModelKey::SetText(format!("/model set {}", choice.model.as_str())),
+        Nav::Accept(choice) => ModelKey::Run(format!("model set {}", choice.model.as_str())),
+        Nav::Ignored => ModelKey::Ignored,
     }
 }
 
@@ -185,92 +157,49 @@ pub fn render(
     cx: &App,
 ) -> AnyElement {
     let theme = cx.theme();
-    let (rows, position) = match popup {
-        ModelPopup::Entries(entries) => {
-            let total = entries.len();
-            let selected = selected.min(total - 1);
-            let position = window_note(top, total);
-            let rows: Vec<_> = entries
-                .into_iter()
-                .enumerate()
-                .skip(top)
-                .take(PALETTE_ROWS)
-                .map(|(ix, choice)| {
-                    let marker = if current == Some(&choice.model) {
-                        "●"
-                    } else {
-                        " "
-                    };
-                    let (provider, name) = match choice.model.provider() {
-                        Some((provider, bare)) => (provider.to_string(), bare.to_owned()),
-                        None => (String::new(), choice.model.as_str().to_owned()),
-                    };
-                    let alias = (choice.alias != choice.model.as_str()).then_some(choice.alias);
-                    let mut row = h_flex()
-                        .id(("model", ix))
-                        .gap_2()
-                        .px_2()
-                        .child(div().text_color(theme.primary).child(marker))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .text_color(theme.foreground)
-                                .child(SharedString::from(match alias {
-                                    Some(alias) => format!("{alias}  {name}"),
-                                    None => name,
-                                })),
-                        )
-                        .child(
-                            div()
-                                .text_color(theme.muted_foreground)
-                                .child(SharedString::from(provider)),
-                        );
-                    if ix == selected {
-                        row = row.bg(theme.list_active).rounded_sm();
-                    }
-                    row.into_any_element()
-                })
-                .collect();
-            (rows, position)
-        }
-        ModelPopup::Message(message) => (
-            vec![
-                div()
-                    .px_2()
-                    .text_color(theme.muted_foreground)
-                    .child(SharedString::from(message))
-                    .into_any_element(),
-            ],
-            None,
-        ),
-    };
-    let mut footer =
-        "↑↓ choose · Enter save as your model · Tab complete · Esc hide (Enter: next turn only)"
-            .to_owned();
-    if let Some(position) = position {
-        footer.push_str(&position);
-    }
-    v_flex()
-        .id("model-palette")
-        .mb_1()
-        .py_1()
-        .border_1()
-        .border_color(theme.border)
-        .rounded_md()
-        .bg(theme.popover)
-        .text_sm()
-        .children(rows)
-        .child(
-            div()
+    completion::render(
+        &Look {
+            id: "model-palette",
+            row_id: "model",
+            keys: "↑↓ choose · Enter save as your model · Tab complete · Esc hide (Enter: next turn only)",
+        },
+        popup,
+        selected,
+        top,
+        cx,
+        |choice| {
+            let marker = if current == Some(&choice.model) {
+                "●"
+            } else {
+                " "
+            };
+            let (provider, name) = match choice.model.provider() {
+                Some((provider, bare)) => (provider.to_string(), bare.to_owned()),
+                None => (String::new(), choice.model.as_str().to_owned()),
+            };
+            let alias = (choice.alias != choice.model.as_str()).then_some(choice.alias);
+            h_flex()
+                .gap_2()
                 .px_2()
-                .pt_1()
-                .text_xs()
-                .text_color(theme.muted_foreground)
-                .child(SharedString::from(footer)),
-        )
-        .into_any_element()
+                .child(div().text_color(theme.primary).child(marker))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(theme.foreground)
+                        .child(SharedString::from(match alias {
+                            Some(alias) => format!("{alias}  {name}"),
+                            None => name,
+                        })),
+                )
+                .child(
+                    div()
+                        .text_color(theme.muted_foreground)
+                        .child(SharedString::from(provider)),
+                )
+        },
+    )
 }
 
 #[cfg(test)]
@@ -383,7 +312,7 @@ mod tests {
 
     #[test]
     fn the_window_moves_only_to_keep_the_choice_in_view() {
-        use super::super::palette_top;
+        use super::super::completion::palette_top;
         assert_eq!(palette_top(3, 0, 12), 0, "inside the window");
         assert_eq!(palette_top(8, 0, 12), 1, "down past the bottom");
         assert_eq!(palette_top(9, 1, 12), 2);

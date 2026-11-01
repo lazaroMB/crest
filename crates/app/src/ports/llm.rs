@@ -9,6 +9,7 @@
 //!   must not keep working in the background.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use domain::conversation::{ContentPart, Message, SessionId, StopReason, ToolUseId, TurnId, Usage};
@@ -29,10 +30,13 @@ pub struct LlmRequest {
     /// System prompt, split into blocks so cache breakpoints can be placed
     /// between the stable and the volatile parts.
     pub system: Vec<SystemBlock>,
-    /// Conversation history, oldest first.
-    pub messages: Vec<Message>,
+    /// Conversation history, oldest first. Each message is shared: the
+    /// agent loop sends the same history on every call of a turn and only
+    /// copies the messages it adds.
+    pub messages: Vec<Arc<Message>>,
     /// Client-side tools the model may call (results are produced locally).
-    pub tools: Vec<ToolDefinition>,
+    /// Shared: the agent loop sends the same list on every call.
+    pub tools: Arc<[ToolDefinition]>,
     /// Tools executed by the provider itself (web search, web fetch).
     pub server_tools: Vec<ServerTool>,
     /// How the model must choose among the tools.
@@ -50,8 +54,8 @@ impl LlmRequest {
         Self {
             model,
             system: Vec::new(),
-            messages,
-            tools: Vec::new(),
+            messages: messages.into_iter().map(Arc::new).collect(),
+            tools: Arc::new([]),
             server_tools: Vec::new(),
             tool_choice: ToolChoice::Auto,
             max_tokens: None,
@@ -472,6 +476,11 @@ pub struct ModelInfo {
 pub trait ModelCatalogPort: Send + Sync {
     /// Every available model, following pagination to the end.
     async fn list_models(&self) -> Result<Vec<ModelInfo>, LlmError>;
+
+    /// Forgets any listing kept from an earlier call, so the next one asks
+    /// the provider again (after `/login` or `/logout`). Catalogs that keep
+    /// nothing do nothing.
+    fn invalidate(&self) {}
 }
 
 /// Error turning an event stream into a message: the stream broke the

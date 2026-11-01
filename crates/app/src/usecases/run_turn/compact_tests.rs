@@ -158,7 +158,8 @@ async fn past_the_threshold_the_history_is_compacted_and_the_turn_goes_on() {
     assert_eq!(requests[2].model.role, ModelRole::Main);
 
     // [summary, ack] + the kept turn + the running turn.
-    let sent = &requests[2].messages;
+    let sent: Vec<Message> = requests[2].messages.iter().map(|m| (**m).clone()).collect();
+    let sent = &sent;
     assert_eq!(sent.len(), 2 + 4 + 3);
     assert_eq!(
         summary_text(&sent[0]),

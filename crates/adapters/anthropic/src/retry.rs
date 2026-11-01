@@ -2,37 +2,18 @@
 //! through [`AnthropicBackend`], with the retries and the fallback walk of
 //! [`RetryingLlm`].
 
-use std::collections::hash_map::RandomState;
-use std::hash::{BuildHasher, Hasher};
 use std::sync::Arc;
-use std::time::Duration;
 
+use adapter_support::TokioClock;
 pub use application::llm_retry::{Clock, RetryPolicy};
 use application::llm_retry::{ModelBackend, RetryingLlm};
 use application::ports::llm::{LlmError, LlmPort, LlmRequest, LlmStream};
 use async_trait::async_trait;
 use domain::model::ModelId;
-use futures::future::BoxFuture;
 
 use crate::client::{AnthropicClient, ApiKey, ClientConfig};
 use crate::request;
 use crate::server_tools::ServerToolOptions;
-
-/// [`Clock`] backed by `tokio::time::sleep` and std's random hasher seed.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct TokioClock;
-
-impl Clock for TokioClock {
-    fn sleep(&self, duration: Duration) -> BoxFuture<'static, ()> {
-        Box::pin(tokio::time::sleep(duration))
-    }
-
-    fn jitter(&self) -> f64 {
-        // Each `RandomState` is seeded randomly; good enough for jitter.
-        let bits = RandomState::new().build_hasher().finish();
-        (bits >> 11) as f64 / (1u64 << 53) as f64
-    }
-}
 
 /// One attempt on the Anthropic Messages API (or a server speaking it,
 /// such as OpenCode's `/anthropic` endpoint).

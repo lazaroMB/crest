@@ -10,37 +10,22 @@ use std::sync::Arc;
 use application::keymap::{Key, KeyCode};
 use application::ports::search::{FileSearchPort, TreeNodeKind, TreeRequest};
 use domain::workspace::WorkspacePath;
-use gpui::{
-    AnyElement, App, Context, InteractiveElement as _, IntoElement, ParentElement as _,
-    SharedString, Styled as _, Task, div,
-};
-use gpui_component::{ActiveTheme as _, h_flex, v_flex};
+use gpui::{AnyElement, App, Context, ParentElement as _, SharedString, Styled as _, Task, div};
+use gpui_component::{ActiveTheme as _, h_flex};
 
+use super::InputView;
+use super::completion::{self, Look, Nav, Popup, PopupKey, nav_key};
 use super::paths::{PathEntry, TokenDir, complete, path_matches, path_token, token_dir};
-use super::{InputView, PALETTE_ROWS, window_note};
 
-/// What the `@` popup shows for the current word.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PathPopup {
-    /// The matching entries of the directory, best first.
-    Entries(Vec<PathEntry>),
-    /// Why there is nothing to choose (no match, still listing, an error).
-    Message(String),
-}
+/// What the `@` popup shows for the current word: the matching entries
+/// of the directory, best first, or why there is nothing to choose (no
+/// match, still listing, an error).
+pub type PathPopup = Popup<PathEntry>;
 
-/// What a key pressed while the popup shows asks the input to do.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PathKey {
-    /// Choose the entry at this index.
-    Select(usize),
-    /// Hide the popup until the text changes.
-    Hide,
-    /// Replace the prompt with this text (a completed entry).
-    SetText(String),
-    /// Not the popup's key: the input handles it (`Enter` on a word that
-    /// is already the chosen entry submits the line).
-    Ignored,
-}
+/// What a key pressed while the popup shows asks the input to do. It never
+/// runs a command: `Enter` on a word that is already the chosen entry is
+/// [`PopupKey::Ignored`], so the input submits the line.
+pub type PathKey = PopupKey;
 
 /// The entries of a directory, as far as they are known.
 enum Listing {
@@ -154,103 +139,58 @@ impl PathCompletion {
 }
 
 /// What `key` does in `popup` for the prompt `text`, with entry `selected`
-/// chosen.
+/// chosen: `Tab` and `Enter` complete the `@` word to the chosen entry.
 pub fn path_key(key: &Key, popup: &PathPopup, text: &str, selected: usize) -> PathKey {
-    let entries = match popup {
-        PathPopup::Entries(entries) => entries,
-        PathPopup::Message(_) if key.code == KeyCode::Esc => return PathKey::Hide,
-        PathPopup::Message(_) => return PathKey::Ignored,
+    let entry = match nav_key(key, popup, selected) {
+        Nav::Select(ix) => return PathKey::Select(ix),
+        Nav::Hide => return PathKey::Hide,
+        Nav::Ignored => return PathKey::Ignored,
+        Nav::Complete(entry) | Nav::Accept(entry) => entry,
     };
-    let len = entries.len();
-    let selected = selected.min(len - 1);
     let Some(token) = path_token(text) else {
         return PathKey::Ignored;
     };
-    let completed = complete(text, &token, &entries[selected]);
-    match key.code {
-        KeyCode::Down => PathKey::Select((selected + 1) % len),
-        KeyCode::Up => PathKey::Select((selected + len - 1) % len),
-        KeyCode::Esc => PathKey::Hide,
-        // Already the chosen entry: the line is submitted.
-        KeyCode::Enter if completed.trim_end() == text.trim_end() => PathKey::Ignored,
-        KeyCode::Tab | KeyCode::Enter => PathKey::SetText(completed),
-        _ => PathKey::Ignored,
+    let completed = complete(text, &token, entry);
+    // Already the chosen entry: the line is submitted.
+    if key.code == KeyCode::Enter && completed.trim_end() == text.trim_end() {
+        return PathKey::Ignored;
     }
+    PathKey::SetText(completed)
 }
 
 /// Draws `popup` from entry `top` on, with entry `selected` highlighted.
 pub fn render(popup: PathPopup, selected: usize, top: usize, cx: &App) -> AnyElement {
     let theme = cx.theme();
-    let (rows, note) = match popup {
-        PathPopup::Entries(entries) => {
-            let selected = selected.min(entries.len() - 1);
-            let note = window_note(top, entries.len());
-            let rows: Vec<_> = entries
-                .into_iter()
-                .enumerate()
-                .skip(top)
-                .take(PALETTE_ROWS)
-                .map(|(ix, entry)| {
-                    let (marker, name, color) = if entry.dir {
-                        ("▸", format!("{}/", entry.name), theme.primary)
-                    } else {
-                        (" ", entry.name, theme.foreground)
-                    };
-                    let mut row = h_flex()
-                        .id(("path", ix))
-                        .gap_2()
-                        .px_2()
-                        .child(div().text_color(theme.muted_foreground).child(marker))
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .text_color(color)
-                                .child(SharedString::from(name)),
-                        );
-                    if ix == selected {
-                        row = row.bg(theme.list_active).rounded_sm();
-                    }
-                    row.into_any_element()
-                })
-                .collect();
-            (rows, note)
-        }
-        PathPopup::Message(message) => (
-            vec![
-                div()
-                    .px_2()
-                    .text_color(theme.muted_foreground)
-                    .child(SharedString::from(message))
-                    .into_any_element(),
-            ],
-            None,
-        ),
-    };
-    let footer = format!(
-        "↑↓ choose · Tab complete · Enter accept · Esc hide{}",
-        note.unwrap_or_default()
-    );
-    v_flex()
-        .id("path-palette")
-        .mb_1()
-        .py_1()
-        .border_1()
-        .border_color(theme.border)
-        .rounded_md()
-        .bg(theme.popover)
-        .text_sm()
-        .children(rows)
-        .child(
-            div()
+    completion::render(
+        &Look {
+            id: "path-palette",
+            row_id: "path",
+            keys: "↑↓ choose · Tab complete · Enter accept · Esc hide",
+        },
+        popup,
+        selected,
+        top,
+        cx,
+        |entry| {
+            let (marker, name, color) = if entry.dir {
+                ("▸", format!("{}/", entry.name), theme.primary)
+            } else {
+                (" ", entry.name, theme.foreground)
+            };
+            h_flex()
+                .gap_2()
                 .px_2()
-                .pt_1()
-                .text_xs()
-                .text_color(theme.muted_foreground)
-                .child(SharedString::from(footer)),
-        )
-        .into_any_element()
+                .child(div().text_color(theme.muted_foreground).child(marker))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_color(color)
+                        .child(SharedString::from(name)),
+                )
+        },
+    )
 }
 
 #[cfg(test)]

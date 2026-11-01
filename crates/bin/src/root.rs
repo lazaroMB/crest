@@ -6,22 +6,16 @@
 //! later) and [`Overrides`] that replace external services in tests (the
 //! model above all, see `tests/it/headless_demo.rs`).
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::research::Research;
-use adapter_anthropic::{
-    AnthropicBackend, AnthropicCatalog, AnthropicClient, ApiKey, ClientConfig, TokioClock,
-};
-use adapter_compute::StatsEngine;
-use adapter_export::HtmlExporter;
-use adapter_formats::Formats;
 use adapter_fs::{LocalFs, WorkspaceGuard};
 use adapter_lua::{HostOptions, LuaHost, default_sources};
 use adapter_search::RipgrepSearch;
 use adapter_shell::LocalShell;
-use adapter_store::{SqliteDiscoveryStore, SqliteFlowStorage, SqliteSessionStore};
+use adapter_store::{SqliteDiscoveryStore, SqliteFlowStorage};
 use adapter_telemetry::TracingTelemetry;
 use anyhow::{Context as _, anyhow};
 use application::cost::CostTracker;
@@ -30,9 +24,7 @@ use application::flows::implement::graph::{ImplementSession, plan_path};
 use application::flows::implement::node::{AgentKit, ImplementDeps};
 use application::flows::research::agents::ExplorePorts;
 use application::flows::research::graph::ResearchWorkspace;
-use application::llm_retry::RetryingLlm;
 use application::ports::approval::ApprovalPort;
-use application::ports::checkpoint::TurnCheckpointPort;
 use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use application::ports::form::FormPort;
 use application::ports::formats::FormatsPort;
@@ -47,28 +39,19 @@ use application::ports::shell::ShellPort;
 use application::ports::store::{SessionStorePort, StoreError, StoredSession};
 use application::ports::telemetry::TelemetryPort;
 use application::ports::web::WebPort;
-use application::providers::{Provider, ProviderRouter, ProvidersOptions, effective_default};
-use application::tools::components::{COMPONENT_TOOLS_PROMPT, register_component_tools};
-use application::tools::compute::{COMPUTE_TOOLS_PROMPT, ComputeToolPorts, register_compute_tools};
-use application::tools::files::{FileToolPorts, register_file_tools};
-use application::tools::form::{FORM_TOOL_PROMPT, register_form_tool};
-use application::tools::formats::{FORMAT_TOOLS_PROMPT, FormatToolPorts, register_format_tools};
-use application::tools::ghs::{GHS_TOOL_PROMPT, ShowGhsTool};
-use application::tools::plugin::PluginTool;
-use application::tools::registry::ToolRegistry;
-use application::tools::simulate::SimulateTool;
-use application::tools::task::{TaskPorts, TaskTool};
+use application::tools::components::COMPONENT_TOOLS_PROMPT;
+use application::tools::compute::{COMPUTE_TOOLS_PROMPT, ComputeToolPorts};
+use application::tools::form::FORM_TOOL_PROMPT;
+use application::tools::formats::FORMAT_TOOLS_PROMPT;
+use application::tools::ghs::GHS_TOOL_PROMPT;
 use application::tools::web::WEB_TOOLS_PROMPT;
 use application::usecases::approval::lock_permissions;
 use application::usecases::compact::CompactionPolicy;
-use application::usecases::resume::{
-    restore_permission_rules, resume_by_id, resume_latest, settle_orphan_forms,
-};
 use application::usecases::run_turn::{AgentDeps, AgentService, SharedPermissions, TurnOptions};
-use application::usecases::simulate::{SimulateDeps, Simulator};
+use application::usecases::simulate::Simulator;
 use domain::block::Block;
-use domain::conversation::{Session, SessionId};
-use domain::model::{Account, BuiltinDefaults, ModelPolicy, ModelRole, ProviderId};
+use domain::conversation::Session;
+use domain::model::{ModelPolicy, ModelRole, ProviderId};
 use domain::permission::{PermissionMode, PermissionPolicy};
 use domain::workspace::WorkspaceRoot;
 use ui::timeline::TimelineState;
@@ -76,12 +59,19 @@ use ui::timeline::TimelineState;
 use crate::args::Args;
 use crate::images::{ImageGuardSink, SharedGuard};
 use crate::mcp::{self, McpServers, TrustOptions};
-use crate::opencode::PlanAccess;
 use crate::permissions;
 use crate::plugin_trust;
 use crate::preferences::{self, Preferences};
 use crate::research;
-use crate::startup::{self, CATALOG_TIMEOUT};
+use crate::startup::{self};
+
+mod llm_ports;
+mod stores;
+mod tool_registry;
+
+use llm_ports::{Models, resolve_models};
+use stores::{Checkpoint, Resumed, open_flow_storage, open_store, resume_session};
+use tool_registry::{ToolInputs, Tools, register_tools};
 
 /// What the command line decided.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -196,47 +186,6 @@ impl std::fmt::Display for MissingApiKey {
 }
 
 impl std::error::Error for MissingApiKey {}
-
-/// Saves the turn in progress when a tool waits on the user (a form), so a
-/// restart finds the question and asks it again. The session is written
-/// as the end of the turn would write it, with that turn unfinished.
-struct Checkpoint {
-    store: Arc<dyn SessionStorePort>,
-    timeline: Arc<Mutex<TimelineState>>,
-    permissions: SharedPermissions,
-    prompt_history: SharedPromptHistory,
-}
-
-#[async_trait::async_trait]
-impl TurnCheckpointPort for Checkpoint {
-    async fn checkpoint(&self, session: &Session, turn: &domain::conversation::Turn) {
-        let prompt_history = self
-            .prompt_history
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .clone();
-        let mut session = session.clone();
-        session.title = session_title(session.title.as_deref(), &prompt_history);
-        session.turns.push(turn.clone());
-        let timeline = self
-            .timeline
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .entries()
-            .iter()
-            .map(|entry| entry.block.clone())
-            .collect();
-        let stored = StoredSession {
-            session,
-            timeline,
-            permission_rules: lock_permissions(&self.permissions).rules.clone(),
-            prompt_history,
-        };
-        if let Err(err) = self.store.save(&stored).await {
-            eprintln!("warning: could not save the turn in progress: {err}");
-        }
-    }
-}
 
 /// Records the timeline of the session while forwarding every event.
 struct TimelineSink {
@@ -435,7 +384,7 @@ impl App {
     /// The store's error.
     pub async fn save(&self) -> Result<(), StoreError> {
         match &self.store {
-            Some(store) => store.save(&self.stored_session()).await,
+            Some(store) => store.save(self.stored_session()).await,
             None => Ok(()),
         }
     }
@@ -568,8 +517,11 @@ pub async fn build_app(
     *image_guard.write().unwrap_or_else(PoisonError::into_inner) = guard.clone();
 
     let search = RipgrepSearch::new(root.clone()).with_sensitive_rules(rules);
-    warnings.extend(search.check_tools().await.problems());
 
+    // The steps below do not depend on each other: they run together, and
+    // their warnings are added in a fixed order afterwards. Files and the
+    // keyring are read on the blocking pool; the keyring in one task (see
+    // `SecretsWanted::read`).
     // A scripted model (tests) only sees the preferences it is given.
     let preferences_path = overrides.preferences_path.clone().or_else(|| {
         overrides
@@ -578,43 +530,74 @@ pub async fn build_app(
             .then(preferences::default_path)
             .flatten()
     });
-    let preferences = match preferences_path.as_deref().map(Preferences::load) {
-        Some(Ok(preferences)) => preferences,
-        Some(Err(err)) => {
-            warnings.push(format!("the saved preferences were ignored: {err}"));
-            Preferences::default()
-        }
-        None => Preferences::default(),
+    let preferences_task = tokio::task::spawn_blocking({
+        let path = preferences_path.clone();
+        move || path.as_deref().map(Preferences::load)
+    });
+    let store_task = tokio::task::spawn_blocking({
+        let path = overrides.db_path.clone();
+        move || open_store(path.as_deref())
+    });
+    let wanted = startup::SecretsWanted {
+        models: overrides.llm.is_none(),
+        ..startup::SecretsWanted::for_options(
+            &loaded.options,
+            overrides.decision.as_ref(),
+            overrides.web.as_ref(),
+        )
     };
-    let (llm, catalog, default_provider) = model_ports(
-        &overrides,
-        &loaded.options,
-        &preferences,
-        preferences_path.as_deref(),
-        &mut warnings,
-    )
-    .await?;
-    let defaults = if default_provider == ProviderId::Anthropic {
-        BuiltinDefaults::Claude
-    } else {
-        BuiltinDefaults::None
-    };
-    let selected = preferences.models.get(&default_provider).cloned();
-    let mut policy = loaded.model_policy().with_selection(selected, defaults);
-    if policy.needs_selection() {
-        warnings.push(format!(
-            "no model is selected for {default_provider}: pick one with /model"
-        ));
+    let secrets_task = tokio::task::spawn_blocking(move || wanted.read());
+    let (tool_report, secrets) = tokio::join!(search.check_tools(), secrets_task);
+    let secrets = secrets.context("reading the API keys")?;
+    if overrides.llm.is_none() && secrets.anthropic.is_none() && secrets.opencode.is_none() {
+        return Err(MissingApiKey.into());
     }
-    let catalog_for_picker = catalog.clone();
-    if let Some(catalog) = catalog {
-        let (checked, model_warnings) =
-            startup::validate_models(policy, catalog.as_ref(), CATALOG_TIMEOUT).await;
-        policy = checked;
-        warnings.extend(model_warnings);
-    }
+    warnings.extend(tool_report.problems());
 
-    let store = match open_store(overrides.db_path.as_deref()) {
+    let mcp_trust = TrustOptions {
+        store: overrides
+            .mcp_trust_path
+            .clone()
+            .or_else(mcp::default_trust_path),
+        trust_now: config.trust_mcp.clone(),
+    };
+    let startup::StartupSecrets {
+        anthropic,
+        opencode,
+        decision: decision_secrets,
+        brave,
+    } = secrets;
+    let models = resolve_models(
+        preferences_task,
+        &overrides,
+        &loaded,
+        preferences_path.as_deref(),
+        (anthropic, opencode),
+    );
+    let mcp_servers = mcp::connect(
+        loaded.mcp_servers.clone(),
+        root.as_path(),
+        &mcp_trust,
+        mcp::READY_TIMEOUT,
+        Some(Arc::clone(&events)),
+    );
+    let (models, (web, web_warnings), (connected_mcp, mcp_warnings), store) = tokio::join!(
+        models,
+        startup::web_tools(&loaded.options, overrides.web.clone(), brave),
+        mcp_servers,
+        store_task,
+    );
+    let Models {
+        llm,
+        catalog,
+        default_provider,
+        policy,
+        warnings: model_warnings,
+    } = models?;
+    warnings.extend(model_warnings);
+    let catalog_for_picker = catalog;
+
+    let store = match store.context("opening the session store")? {
         Ok(store) => Some(Arc::new(store) as Arc<dyn SessionStorePort>),
         Err(err) => {
             warnings.push(format!("the session will not be saved: {err}"));
@@ -639,166 +622,65 @@ pub async fn build_app(
     let shell: Arc<dyn ShellPort> =
         Arc::new(LocalShell::new(root.clone()).with_line_shell(line_shell));
     let telemetry: Arc<dyn TelemetryPort> = Arc::new(TracingTelemetry::new());
-    let (web, web_warnings) = startup::web_tools(&loaded.options, overrides.web.clone()).await;
     warnings.extend(web_warnings);
-    let (decider, decider_warnings) =
-        startup::decider(&loaded.options, overrides.decision.clone()).await;
+    let (decider, decider_warnings) = startup::decider(
+        &loaded.options,
+        overrides.decision.clone(),
+        decision_secrets,
+    );
     warnings.extend(decider_warnings);
     let (redactor, privacy_warning) = startup::redactor(&loaded.options);
     warnings.extend(privacy_warning);
     let (rewriter, rtk_warning) = startup::rtk(&loaded.options, &root);
     warnings.extend(rtk_warning);
-    let mut tools = ToolRegistry::new().with_redactor(redactor);
-    register_file_tools(
-        &mut tools,
-        FileToolPorts {
-            file_search: search.clone(),
-            content_search: search.clone(),
-            fs: Arc::clone(&tool_fs),
+    let Tools {
+        mut tools,
+        compute,
+        formats,
+        simulator,
+    } = register_tools(
+        ToolInputs {
+            redactor,
+            search,
+            fs: Arc::clone(&fs),
+            tool_fs: Arc::clone(&tool_fs),
             shell: Arc::clone(&shell),
             rewriter,
-        },
-    )
-    .context("tool registration")?;
-    register_component_tools(&mut tools).context("tool registration")?;
-    register_form_tool(&mut tools, Arc::clone(&frontend.form)).context("tool registration")?;
-    let compute = compute_ports(Arc::clone(&fs));
-    register_compute_tools(&mut tools, &compute).context("tool registration")?;
-    let formats: Arc<dyn FormatsPort> = Arc::new(Formats::new());
-    register_format_tools(
-        &mut tools,
-        &FormatToolPorts {
-            formats: Arc::clone(&formats),
-            fs: Arc::clone(&compute.fs),
-            offload: Arc::clone(&compute.offload),
-        },
-    )
-    .context("tool registration")?;
-    if let Some(host) = &plugins {
-        if let Err(err) = host
-            .provide_compute(Arc::clone(&compute.engine), Arc::clone(&compute.fs))
-            .await
-        {
-            warnings.push(format!("app.compute unavailable: {err}"));
-        }
-        if let Err(err) = host
-            .provide_formats(
-                Arc::clone(&formats),
-                Arc::clone(&compute.fs),
-                web.as_ref().map(|w| Arc::clone(&w.web)),
-            )
-            .await
-        {
-            warnings.push(format!("app.formats unavailable: {err}"));
-        }
-        if let Err(err) = host.provide_forms(Arc::clone(&frontend.form)).await {
-            warnings.push(format!("app.ask unavailable: {err}"));
-        }
-    }
-    if let Some(web) = &web {
-        web.register(&mut tools).context("tool registration")?;
-        tools
-            .register_typed(ShowGhsTool::new(Arc::clone(&web.web), now_ms))
-            .context("tool registration")?;
-    }
-    let task = TaskTool::new(
-        TaskPorts {
+            form: Arc::clone(&frontend.form),
+            plugins: &plugins,
+            web: &web,
             llm: Arc::clone(&llm),
             telemetry: Arc::clone(&telemetry),
-            models: policy.clone(),
-            file_search: search.clone(),
-            content_search: search,
-            fs: Arc::clone(&fs),
-            web: web.clone(),
+            policy: &policy,
+            file_search: Arc::clone(&file_search),
+            events: Arc::clone(&events),
+            plugin_tools: &loaded.tools,
         },
-        tools.budget(),
+        &mut warnings,
     )
-    .context("tool registration")?;
-    tools.register_typed(task).context("tool registration")?;
-    let simulator = Simulator::new(SimulateDeps {
-        llm: Arc::clone(&llm),
-        models: policy.clone(),
-        fs: Arc::clone(&fs),
-        search: file_search.clone(),
-        events: Some(Arc::clone(&events)),
-        export: Some(Arc::new(HtmlExporter::new())),
-    });
-    tools
-        .register_typed(SimulateTool::new(simulator.clone(), now_ms))
-        .context("tool registration")?;
-    if let Some(host) = &plugins {
-        for spec in loaded.tools.iter().cloned() {
-            let name = spec.name.clone();
-            let tool = PluginTool::new(spec, host.clone() as Arc<dyn PluginHostPort>);
-            if let Err(err) = tools.register(Arc::new(tool)) {
-                warnings.push(format!("plugin tool `{name}` ignored: {err}"));
-            }
-        }
-    }
+    .await?;
 
-    let trust = TrustOptions {
-        store: overrides
-            .mcp_trust_path
-            .clone()
-            .or_else(mcp::default_trust_path),
-        trust_now: config.trust_mcp.clone(),
-    };
-    let mcp_trust_path = trust.store.clone();
-    let (mcp, mcp_warnings) = mcp::start(
-        loaded.mcp_servers.clone(),
-        root.as_path(),
-        &trust,
-        mcp::READY_TIMEOUT,
-        &mut tools,
-        Some(Arc::clone(&events)),
-    )
-    .await;
+    let mcp_trust_path = mcp_trust.store;
+    let mcp = connected_mcp.map(|(servers, source)| {
+        tools.add_source(source);
+        servers
+    });
     warnings.extend(mcp_warnings);
 
     let permissions = Arc::new(Mutex::new(PermissionPolicy::new(config.mode)));
-    let mut session = Session::new(root.as_path().display().to_string(), now_ms());
-    let mut resumed_notice = None;
-    let mut prompt_history = Vec::new();
-    if let Some(store) = &store {
-        let chosen = config.session_id.as_deref().and_then(SessionId::parse);
-        let loaded = if let Some(id) = chosen {
-            match resume_by_id(store.as_ref(), id, &session.workspace_root).await {
-                Ok(stored) => Ok(Some(stored)),
-                Err(err) => {
-                    warnings.push(format!("could not open the chosen session: {err}"));
-                    Ok(None)
-                }
-            }
-        } else if config.resume {
-            resume_latest(store.as_ref(), &session.workspace_root).await
-        } else {
-            Ok(None)
-        };
-        match loaded {
-            Ok(Some(mut stored)) => {
-                // Forms of calls that are over close; one whose call still
-                // waits is asked again once the session opens.
-                if settle_orphan_forms(&mut stored) > 0 {
-                    warnings.push("a form left unanswered by an earlier run was closed".into());
-                }
-                restore_permission_rules(&permissions, &stored.permission_rules);
-                let mut state = timeline.lock().unwrap_or_else(PoisonError::into_inner);
-                for block in stored.timeline {
-                    state.apply(&DomainEvent::BlockAdded { block });
-                }
-                if chosen.is_none() {
-                    resumed_notice = Some(format!(
-                        "previous session resumed ({} turns); `crest --new` starts a new one",
-                        stored.session.turns.len()
-                    ));
-                }
-                session = stored.session;
-                prompt_history = stored.prompt_history;
-            }
-            Ok(None) => {}
-            Err(err) => warnings.push(format!("could not resume the last session: {err}")),
-        }
-    }
+    let Resumed {
+        session,
+        notice: resumed_notice,
+        prompt_history,
+    } = resume_session(
+        store.as_ref(),
+        config,
+        &root,
+        &timeline,
+        &permissions,
+        &mut warnings,
+    )
+    .await;
     // The project's rules join the restored session ones; "always in
     // project" answers are written back to the same file.
     let (project_rules, project_warnings) =
@@ -997,163 +879,6 @@ pub async fn build_app(
         compute,
         formats,
     })
-}
-
-/// The statistics engine, reading data through `fs` and running on the
-/// blocking pool of the current runtime.
-fn compute_ports(fs: Arc<dyn FileSystemPort>) -> ComputeToolPorts {
-    let handle = tokio::runtime::Handle::current();
-    ComputeToolPorts {
-        engine: Arc::new(StatsEngine::new()),
-        fs,
-        offload: Arc::new(move |job| {
-            // The caller awaits the job's own channel, not the join handle.
-            drop(handle.spawn_blocking(job));
-        }),
-    }
-}
-
-type ModelPorts = (
-    Arc<dyn LlmPort>,
-    Option<Arc<dyn ModelCatalogPort>>,
-    ProviderId,
-);
-
-/// The model and its catalog: the overrides, or every provider with a key
-/// in the environment or the keyring (Anthropic; OpenCode Go and Zen),
-/// routed by the prefix of each model id (`app.opt.providers`).
-/// Asks OpenCode what `key` may use and saves the answer in the
-/// preferences at `path`, unless nothing could be found out (offline): then
-/// the next start asks again.
-async fn opencode_access(
-    key: &str,
-    providers: &ProvidersOptions,
-    path: Option<&Path>,
-    warnings: &mut Vec<String>,
-) -> PlanAccess {
-    let access = crate::opencode::probe_access(key, providers, CATALOG_TIMEOUT).await;
-    let known = access.go.is_some() || access.zen.is_some() || access.zen_free.is_some();
-    if let (true, Some(path)) = (known, path) {
-        let path = path.to_path_buf();
-        let saved = tokio::task::spawn_blocking(move || {
-            preferences::update(Some(&path), |p| p.opencode_access = Some(access))
-        })
-        .await
-        .map_err(|err| err.to_string())
-        .and_then(|saved| saved);
-        if let Err(err) = saved {
-            warnings.push(format!(
-                "what the OpenCode key may use was not saved: {err}"
-            ));
-        }
-    }
-    access
-}
-
-async fn model_ports(
-    overrides: &Overrides,
-    options: &AppOptions,
-    preferences: &Preferences,
-    preferences_path: Option<&Path>,
-    warnings: &mut Vec<String>,
-) -> anyhow::Result<ModelPorts> {
-    let providers = ProvidersOptions::from_options(options).unwrap_or_else(|err| {
-        warnings.push(format!("{err}; using the default providers"));
-        ProvidersOptions::default()
-    });
-    if let Some(llm) = &overrides.llm {
-        // A scripted model: only the config names the default provider.
-        let default = effective_default(providers.default, None, &[]);
-        return Ok((Arc::clone(llm), overrides.catalog.clone(), default));
-    }
-    // The keyring may block (D-Bus, Keychain).
-    let (anthropic, opencode) = tokio::task::spawn_blocking(|| {
-        (
-            ApiKey::from_env_or_keyring().ok(),
-            crate::credentials::stored_key(Account::OpenCode),
-        )
-    })
-    .await
-    .context("reading the API keys")?;
-    // A plan left unknown (offline, a timeout) is asked again at each start.
-    let access = match (&opencode, preferences.opencode_access) {
-        (Some(key), saved) if saved.is_none_or(|a| !a.is_complete()) => {
-            opencode_access(key, &providers, preferences_path, warnings).await
-        }
-        (_, saved) => saved.unwrap_or_default(),
-    };
-    let mut with_key = Vec::new();
-    if anthropic.is_some() {
-        with_key.push(ProviderId::Anthropic);
-    }
-    if opencode.is_some() {
-        with_key.extend(
-            [ProviderId::OpencodeGo, ProviderId::OpencodeZen]
-                .into_iter()
-                .filter(|plan| access.serves(*plan)),
-        );
-    }
-    let preferred = preferences
-        .provider
-        .map(|p| Preferences::opencode_plan(p, &access));
-    let default = effective_default(providers.default, preferred, &with_key);
-    if opencode.is_some() && !access.serves(default) {
-        warnings.push(format!(
-            "your OpenCode key cannot use {default} (no subscription or balance); \
-             pick another model with /model or set app.opt.providers.default"
-        ));
-    }
-    let mut router = ProviderRouter::new(default);
-    if let Some(key) = anthropic {
-        let client = AnthropicClient::new(&key, ClientConfig::default())
-            .map_err(|err| anyhow!("cannot create the Anthropic client: {err}"))?;
-        router = router.with(
-            ProviderId::Anthropic,
-            Provider {
-                backend: Arc::new(AnthropicBackend::new(client.clone())),
-                catalog: Arc::new(AnthropicCatalog::new(client)),
-            },
-        );
-    }
-    if let Some(key) = opencode {
-        for plan in [ProviderId::OpencodeGo, ProviderId::OpencodeZen] {
-            let provider = crate::opencode::provider(&key, plan, &providers, access)
-                .map_err(|err| anyhow!("cannot create the OpenCode client: {err}"))?;
-            router = router.with(plan, provider);
-        }
-    }
-    if router.is_empty() {
-        return Err(MissingApiKey.into());
-    }
-    if !router.providers().any(|p| p == default) {
-        let account = default.account();
-        warnings.push(format!(
-            "no {} API key, so models without a provider prefix (the defaults) cannot run: \
-             /login {account}, or point app.models.roles at prefixed models \
-             (opencode-go:glm-5.3) or set app.opt.providers.default",
-            account.display_name()
-        ));
-    }
-    let catalog = overrides
-        .catalog
-        .clone()
-        .unwrap_or_else(|| Arc::new(router.catalog()));
-    let llm = RetryingLlm::new(Arc::new(router), Arc::new(TokioClock));
-    Ok((Arc::new(llm), Some(catalog), default))
-}
-
-fn open_store(path: Option<&Path>) -> Result<SqliteSessionStore, StoreError> {
-    match path {
-        Some(path) => SqliteSessionStore::open(path),
-        None => SqliteSessionStore::open_default(),
-    }
-}
-
-fn open_flow_storage(path: Option<&Path>) -> Result<SqliteFlowStorage, StoreError> {
-    match path {
-        Some(path) => SqliteFlowStorage::open(path),
-        None => SqliteFlowStorage::open_default(),
-    }
 }
 
 /// The system prompt: role, workspace, platform, how to work, the

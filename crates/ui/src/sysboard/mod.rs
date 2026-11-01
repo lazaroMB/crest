@@ -5,7 +5,8 @@
 //!   (isometric preset, drag or `Shift`+arrows to orbit, right-drag,
 //!   shift-drag or `w`/`a`/`s`/`d` to pan, wheel or `+`/`-` to zoom, `i`
 //!   back to the preset), or by the 2.5D [`vector`] fallback when there is
-//!   no GPU adapter. Labels are GPUI text placed at the projected chip
+//!   no GPU adapter (and while the device is still opening, in the
+//!   background, the first time). Labels are GPUI text placed at the projected chip
 //!   positions. Click a chip, or `Tab`/`Shift+Tab` through them, to
 //!   inspect it.
 //! - Bottom: the timeline: play/pause (`space`), step to the previous or
@@ -68,17 +69,54 @@ const CLICK_SLOP: f32 = 4.0;
 pub enum Backend {
     /// The offscreen wgpu renderer.
     Gpu(Rc<RefCell<Renderer3d>>),
+    /// The device is being opened: drawn as [`Backend::Vector`] until it
+    /// is ready (ask [`auto_backend`] again).
+    Pending,
     /// The 2.5D vector drawing, and why.
     Vector(String),
 }
 
-/// The app's renderer: one device, opened on first use.
+impl Backend {
+    /// Whether the GPU draws.
+    #[must_use]
+    pub fn is_gpu(&self) -> bool {
+        matches!(self, Self::Gpu(_))
+    }
+
+    /// Why the vector drawing is used, when it is.
+    #[must_use]
+    pub fn vector_reason(&self) -> Option<&str> {
+        match self {
+            Self::Gpu(_) => None,
+            Self::Pending => Some("opening the GPU…"),
+            Self::Vector(reason) => Some(reason),
+        }
+    }
+
+    /// The backend to use now: a pending one asks [`auto_backend`] again.
+    pub fn refreshed(&self, cx: &mut App) -> Self {
+        match self {
+            Self::Pending => auto_backend(cx),
+            other => other.clone(),
+        }
+    }
+}
+
+/// The app's renderer: one device, opened on the background executor on
+/// first use.
 #[derive(Default)]
 struct SharedRenderer {
-    tried: bool,
     disabled: bool,
-    renderer: Option<Rc<RefCell<Renderer3d>>>,
-    error: Option<String>,
+    device: Device,
+}
+
+#[derive(Default)]
+enum Device {
+    #[default]
+    Untried,
+    Opening,
+    Ready(Rc<RefCell<Renderer3d>>),
+    Failed(String),
 }
 
 impl Global for SharedRenderer {}
@@ -89,24 +127,127 @@ pub fn disable_gpu(cx: &mut App) {
 }
 
 /// The 3D renderer if an adapter is available, else the fallback with the
-/// reason.
+/// reason. The first call starts opening the device on the background
+/// executor and answers [`Backend::Pending`]; the windows are refreshed
+/// when it is ready, so views ask again then.
 pub fn auto_backend(cx: &mut App) -> Backend {
     let off = std::env::var(RENDER3D_ENV).is_ok_and(|v| v.eq_ignore_ascii_case("off"));
     let shared = cx.default_global::<SharedRenderer>();
     if shared.disabled || off {
         return Backend::Vector("3D rendering is off".into());
     }
-    if !shared.tried {
-        shared.tried = true;
-        match Renderer3d::new() {
-            Ok(r) => shared.renderer = Some(Rc::new(RefCell::new(r))),
-            Err(e) => shared.error = Some(e.to_string()),
+    match &shared.device {
+        Device::Ready(r) => return Backend::Gpu(Rc::clone(r)),
+        Device::Failed(e) => return Backend::Vector(e.clone()),
+        Device::Opening => return Backend::Pending,
+        Device::Untried => {}
+    }
+    let opening = cx.background_executor().spawn(async { Renderer3d::new() });
+    cx.spawn(async move |cx| {
+        let opened = opening.await;
+        cx.update(|cx| {
+            cx.default_global::<SharedRenderer>().device = match opened {
+                Ok(r) => Device::Ready(Rc::new(RefCell::new(r))),
+                Err(e) => Device::Failed(e.to_string()),
+            };
+            cx.refresh_windows();
+        });
+    })
+    .detach();
+    cx.default_global::<SharedRenderer>().device = Device::Opening;
+    Backend::Pending
+}
+
+/// A frame of a GPU view: the image shown, the frame in flight and what
+/// they show. Both the board and the model viewer keep one.
+#[derive(Debug)]
+pub(crate) struct GpuFrames<K> {
+    /// Owner id of the view at the renderer.
+    pub owner: u64,
+    /// The image shown.
+    pub image: Option<Arc<RenderImage>>,
+    /// What the image shows.
+    pub key: Option<K>,
+    /// What the frame in flight shows.
+    pub pending: Option<K>,
+    /// Images replaced, to drop from the sprite atlas on the next paint.
+    pub retired: Vec<Arc<RenderImage>>,
+    /// Cost of the last frame.
+    pub stats: Option<RenderStats>,
+    /// Frames shown so far.
+    pub frames: u64,
+    /// Why the GPU failed; the vector drawing takes over.
+    pub failed: Option<String>,
+}
+
+impl<K> Default for GpuFrames<K> {
+    fn default() -> Self {
+        Self {
+            owner: crate::render3d::next_owner(),
+            image: None,
+            key: None,
+            pending: None,
+            retired: Vec::new(),
+            stats: None,
+            frames: 0,
+            failed: None,
         }
     }
-    match (&shared.renderer, &shared.error) {
-        (Some(r), _) => Backend::Gpu(Rc::clone(r)),
-        (None, Some(e)) => Backend::Vector(e.clone()),
-        (None, None) => Backend::Vector("no renderer".into()),
+}
+
+impl<K: PartialEq + Clone> GpuFrames<K> {
+    /// Brings the frames up to `wanted` without waiting for the GPU: takes
+    /// the frame read back for this view, if any, and starts one of
+    /// `wanted` with `start` when it is not shown nor in flight and the
+    /// renderer is free. While a frame is in flight or one is still wanted
+    /// it asks the window for another frame, and the previous image stays.
+    /// A failure is kept in `failed` and the window refreshed.
+    pub fn update(
+        &mut self,
+        renderer: &RefCell<Renderer3d>,
+        wanted: &K,
+        start: impl FnOnce(&mut Renderer3d, u64) -> Result<bool, crate::render3d::RenderError>,
+        window: &mut Window,
+    ) {
+        for old in self.retired.drain(..) {
+            window.drop_image(old).ok();
+        }
+        if self.failed.is_some() {
+            return;
+        }
+        let mut r = renderer.borrow_mut();
+        r.poll();
+        match r.take(self.owner) {
+            Some(Ok(frame)) => {
+                if let Some(old) = self.image.replace(frame.image) {
+                    self.retired.push(old);
+                }
+                self.key = self.pending.take();
+                self.stats = Some(frame.stats);
+                self.frames += 1;
+            }
+            Some(Err(e)) => {
+                self.pending = None;
+                self.failed = Some(e.to_string());
+                window.refresh();
+                return;
+            }
+            None => {}
+        }
+        if self.pending.is_none() && self.key.as_ref() != Some(wanted) {
+            match start(&mut r, self.owner) {
+                Ok(true) => self.pending = Some(wanted.clone()),
+                Ok(false) => {}
+                Err(e) => {
+                    self.failed = Some(e.to_string());
+                    window.refresh();
+                    return;
+                }
+            }
+        }
+        if self.pending.is_some() || self.key.as_ref() != Some(wanted) {
+            window.request_animation_frame();
+        }
     }
 }
 
@@ -122,15 +263,7 @@ struct FrameKey {
     selected: Option<String>,
 }
 
-#[derive(Default)]
-struct Surface {
-    image: Option<Arc<RenderImage>>,
-    key: Option<FrameKey>,
-    retired: Vec<Arc<RenderImage>>,
-    stats: Option<RenderStats>,
-    frames: u64,
-    failed: Option<String>,
-}
+type Surface = GpuFrames<FrameKey>;
 
 #[derive(Debug, Clone, Copy)]
 struct Drag {
@@ -217,6 +350,7 @@ impl SysBoardView {
     pub fn backend_name(&self) -> String {
         match &self.backend {
             Backend::Gpu(r) => format!("3D · {}", r.borrow().adapter()),
+            Backend::Pending => "2.5D · opening the GPU…".to_owned(),
             Backend::Vector(reason) => format!("2.5D · {reason}"),
         }
     }
@@ -363,7 +497,9 @@ impl SysBoardView {
         let size = self.board_size();
         match self.backend {
             Backend::Gpu(_) => self.camera.project(p, size),
-            Backend::Vector(_) => Some(IsoProjector::new(&self.scene, size, self.iso).project(p)),
+            Backend::Vector(_) | Backend::Pending => {
+                Some(IsoProjector::new(&self.scene, size, self.iso).project(p))
+            }
         }
     }
 
@@ -375,7 +511,7 @@ impl SysBoardView {
                 let (origin, dir) = self.camera.ray(at.0, at.1, size)?;
                 crate::render3d::pick::pick(&self.scene, origin, dir).map(str::to_owned)
             }
-            Backend::Vector(_) => {
+            Backend::Vector(_) | Backend::Pending => {
                 let proj = IsoProjector::new(&self.scene, size, self.iso);
                 vector::pick(&self.scene, &proj, at).map(str::to_owned)
             }
@@ -410,7 +546,9 @@ impl SysBoardView {
         match (&self.backend, drag.pan) {
             (Backend::Gpu(_), false) => self.camera.orbit(dx, dy),
             (Backend::Gpu(_), true) => self.camera.pan(dx, dy, size),
-            (Backend::Vector(_), _) => self.iso.pan = (self.iso.pan.0 + dx, self.iso.pan.1 + dy),
+            (Backend::Vector(_) | Backend::Pending, _) => {
+                self.iso.pan = (self.iso.pan.0 + dx, self.iso.pan.1 + dy);
+            }
         }
         drag.last = event.position;
         self.drag = Some(drag);
@@ -432,7 +570,7 @@ impl SysBoardView {
         let factor = ZOOM_STEP.powf(dy / 20.0);
         match self.backend {
             Backend::Gpu(_) => self.camera.zoom_by(factor),
-            Backend::Vector(_) => self.iso.zoom_by(factor),
+            Backend::Vector(_) | Backend::Pending => self.iso.zoom_by(factor),
         }
         cx.stop_propagation();
         cx.notify();
@@ -444,7 +582,9 @@ impl SysBoardView {
         match (&self.backend, pan) {
             (Backend::Gpu(_), false) => self.camera.orbit(dx, dy),
             (Backend::Gpu(_), true) => self.camera.pan(dx, dy, size),
-            (Backend::Vector(_), _) => self.iso.pan = (self.iso.pan.0 + dx, self.iso.pan.1 + dy),
+            (Backend::Vector(_) | Backend::Pending, _) => {
+                self.iso.pan = (self.iso.pan.0 + dx, self.iso.pan.1 + dy);
+            }
         }
         cx.notify();
     }
@@ -612,6 +752,7 @@ impl SysBoardView {
     }
 
     fn render_board(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        self.backend = self.backend.refreshed(cx);
         if let Some(reason) = self.surface.borrow().failed.clone()
             && self.is_gpu()
         {
@@ -656,9 +797,6 @@ impl SysBoardView {
                     return;
                 }
                 let mut s = surface.borrow_mut();
-                for old in s.retired.drain(..) {
-                    window.drop_image(old).ok();
-                }
                 if let Backend::Gpu(renderer) = &backend
                     && s.failed.is_none()
                 {
@@ -669,43 +807,36 @@ impl SysBoardView {
                         size: px_size,
                         ..key_base
                     };
-                    if s.key.as_ref() != Some(&key) {
-                        renderer.borrow_mut().set_background(key.background);
-                        let result = renderer.borrow_mut().render(
-                            &scene,
-                            &frame,
-                            &camera,
-                            selected.as_deref(),
-                            px_size,
-                        );
-                        match result {
-                            Ok(r) => {
-                                if let Some(old) = s.image.replace(r.image) {
-                                    s.retired.push(old);
-                                }
-                                s.key = Some(key);
-                                s.stats = Some(r.stats);
-                                s.frames += 1;
-                            }
-                            Err(e) => {
-                                s.failed = Some(e.to_string());
-                                window.refresh();
-                            }
+                    let background = key.background;
+                    s.update(
+                        renderer,
+                        &key,
+                        |r, owner| {
+                            r.set_background(background);
+                            r.start(owner, &scene, &frame, &camera, selected.as_deref(), px_size)
+                        },
+                        window,
+                    );
+                    if s.failed.is_none() {
+                        // Until the first frame lands the board is the
+                        // background; the labels are drawn already.
+                        if let Some(image) = &s.image {
+                            window
+                                .paint_image(
+                                    bounds,
+                                    bounds,
+                                    Corners::default(),
+                                    Arc::clone(image),
+                                    0,
+                                    false,
+                                )
+                                .ok();
                         }
-                    }
-                    if let (Some(image), None) = (&s.image, &s.failed) {
-                        window
-                            .paint_image(
-                                bounds,
-                                bounds,
-                                Corners::default(),
-                                Arc::clone(image),
-                                0,
-                                false,
-                            )
-                            .ok();
                         return;
                     }
+                }
+                for old in s.retired.drain(..) {
+                    window.drop_image(old).ok();
                 }
                 let proj = IsoProjector::new(&scene, size, iso);
                 vector::paint(&scene, &frame, selected.as_deref(), proj, bounds, window);
@@ -909,6 +1040,8 @@ impl SysBoardView {
                     expanded: true,
                     alt_view: false,
                     numbers: Default::default(),
+                    // Made on every frame: compared every time.
+                    rev: crate::timeline::NO_REV,
                 };
                 section = section.child(crate::blocks::mermaid::render(&entry, window, cx));
                 panel = panel.child(section);

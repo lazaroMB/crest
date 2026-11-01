@@ -14,18 +14,19 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use base64::Engine as _;
-use domain::block::{BlockKind, ImageData, SourceRef};
+use domain::block::{BlockId, BlockKind, ImageData, SourceRef};
 use gpui::{
-    AnyElement, App, ElementId, Hsla, Image, ImageFormat, ImageSource, InteractiveElement as _,
-    IntoElement as _, ObjectFit, ParentElement as _, Pixels, SharedString, Size,
-    StatefulInteractiveElement as _, Styled as _, StyledImage as _, Window, div, img, px, size,
+    AnyElement, App, ElementId, Entity, Hsla, Image, ImageFormat, ImageSource,
+    InteractiveElement as _, IntoElement as _, ObjectFit, ParentElement as _, Pixels, SharedString,
+    Size, StatefulInteractiveElement as _, Styled as _, StyledImage as _, Window, div, img, px,
+    size,
 };
 use gpui_component::{ActiveTheme as _, v_flex};
 
 use super::measured::measured_with;
 use super::sources::events::{BlockEvent, emit};
 use super::sources::{action, activate, entry_label};
-use super::svg::SvgState;
+use super::svg::{SvgData, SvgState};
 use crate::timeline::TimelineEntry;
 
 /// Tallest an image is drawn, in pixels; wider ones scale down to fit.
@@ -100,9 +101,45 @@ fn error_view(message: impl Into<SharedString>, danger: Hsla, border: Hsla) -> A
         .into_any_element()
 }
 
-/// The decoded source of one block and its size in pixels, kept across
-/// frames so inline data is decoded once rather than on every repaint.
-struct Decoded(Result<(ImageSource, Option<(u32, u32)>), ImageError>);
+/// What an image block keeps across frames, made again when the block
+/// changes: the decoded source and its size in pixels (inline data is
+/// decoded once rather than on every repaint), and the data, hashed for
+/// the SVG cache and shared with the click that opens it in a modal.
+struct Decoded {
+    media_type: String,
+    data: SvgData,
+    picture: Result<(ImageSource, Option<(u32, u32)>), ImageError>,
+}
+
+impl Decoded {
+    fn new(media_type: &str, data: &ImageData) -> Self {
+        Self {
+            media_type: media_type.to_owned(),
+            data: SvgData::new(data.clone()),
+            picture: image_source(media_type, data).map(|source| {
+                let natural = dimensions(&source);
+                (source, natural)
+            }),
+        }
+    }
+
+    /// Takes the block's data at a new revision, decoding it again only
+    /// when it changed.
+    fn sync(&mut self, media_type: &str, data: &ImageData) {
+        if self.media_type != media_type || self.data.data() != data {
+            *self = Self::new(media_type, data);
+        }
+    }
+
+    /// What a click on the picture of block `block` asks for.
+    fn inspect(&self, block: BlockId) -> BlockEvent {
+        BlockEvent::InspectImage {
+            block,
+            media_type: self.media_type.clone(),
+            data: self.data.data().clone(),
+        }
+    }
+}
 
 fn source_line(entry: &TimelineEntry, source: &SourceRef, cx: &App) -> AnyElement {
     let theme = cx.theme();
@@ -133,7 +170,8 @@ fn source_line(entry: &TimelineEntry, source: &SourceRef, cx: &App) -> AnyElemen
 }
 
 /// The picture, which a click opens in a modal to zoom in.
-fn clickable(entry: &TimelineEntry, picture: AnyElement, inspect: BlockEvent) -> AnyElement {
+fn clickable(entry: &TimelineEntry, picture: AnyElement, decoded: Entity<Decoded>) -> AnyElement {
+    let block = entry.block.id;
     div()
         .id(ElementId::Name(SharedString::from(format!(
             "image-{}",
@@ -144,7 +182,8 @@ fn clickable(entry: &TimelineEntry, picture: AnyElement, inspect: BlockEvent) ->
         .child(picture)
         .on_click(move |_, _, cx| {
             cx.stop_propagation();
-            emit(inspect.clone(), cx);
+            let event = decoded.read(cx).inspect(block);
+            emit(event, cx);
         })
         .into_any_element()
 }
@@ -159,24 +198,24 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     else {
         return super::placeholder(entry, cx);
     };
-    let (mime, data) = (media_type.clone(), data_or_path.clone());
-    let decoded = super::block_state(entry.block.id, window, cx, move |_, _| {
-        Decoded(image_source(&mime, &data).map(|source| {
-            let natural = dimensions(&source);
-            (source, natural)
-        }))
-    });
+    let block = entry.block.id;
+    let decoded = super::synced_state(
+        block,
+        entry.rev,
+        window,
+        cx,
+        |_, _| Decoded::new(media_type, data_or_path),
+        |decoded, _, _| decoded.sync(media_type, data_or_path),
+    );
     let theme = cx.theme();
     let (danger, border) = (theme.danger, theme.border);
     let tint = super::svg::wants_tint(media_type).then(|| super::svg::Tint::from_theme(cx));
-    let svg = super::svg::is_svg(media_type, data_or_path)
-        .then(|| super::svg::use_svg_tinted(data_or_path, 1.0, tint, window, cx));
-    let inspect = BlockEvent::InspectImage {
-        block: entry.block.id,
-        media_type: media_type.clone(),
-        data: data_or_path.clone(),
-    };
-    let picture = match (svg, &decoded.read(cx).0) {
+    let svg = super::svg::is_svg(media_type, data_or_path).then(|| {
+        let data = decoded.read(cx).data.clone();
+        super::svg::use_svg_data(&data, 1.0, tint, window, cx)
+    });
+    let inspect = decoded.clone();
+    let picture = match (svg, &decoded.read(cx).picture) {
         (Some(SvgState::Ready(raster)), _) => {
             // Its natural size, scaled down to MAX_HEIGHT; the column
             // width shrinks it further, keeping the aspect ratio.
@@ -214,7 +253,8 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
                     .overflow_hidden()
                     .on_click(move |_, _, cx| {
                         cx.stop_propagation();
-                        emit(inspect.clone(), cx);
+                        let event = inspect.read(cx).inspect(block);
+                        emit(event, cx);
                     })
                     .child(
                         picture.with_fallback(move || error_view(failed.clone(), danger, border)),

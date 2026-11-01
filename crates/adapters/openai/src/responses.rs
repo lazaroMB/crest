@@ -452,7 +452,8 @@ mod tests {
             "find_file",
             "Finds files",
             json!({ "type": "object" }),
-        )];
+        )]
+        .into();
         req.tool_choice = ToolChoice::Tool("find_file".into());
         insta::assert_json_snapshot!(build(&req, &ModelId::from("gpt-6-luna")));
     }

@@ -405,3 +405,17 @@ fn every_rich_node_draws_in_a_modal(cx: &mut TestAppContext) {
     draw(&host, cx);
     host.read_with(cx, |host, _| assert!(host.is_open()));
 }
+
+#[test]
+fn only_a_card_wholly_under_another_is_hidden() {
+    let big = spec("cov/big", 80.0, 80.0, "center", text("a"));
+    let same = spec("cov/same", 80.0, 80.0, "center", text("b"));
+    let small = spec("cov/small", 40.0, 40.0, "center", text("c"));
+    let corner = spec("cov/corner", 40.0, 40.0, "top-left", text("d"));
+    let full = spec("cov/full", 100.0, 100.0, "bottom-right", text("e"));
+    assert!(covers(&same, &big), "the same card on top");
+    assert!(covers(&big, &small));
+    assert!(!covers(&small, &big), "the big one shows around it");
+    assert!(!covers(&big, &corner), "a corner card sticks out");
+    assert!(covers(&full, &corner) && covers(&full, &big));
+}

@@ -111,7 +111,7 @@ pub(crate) fn load(vm: &mut Vm, sources: &ConfigSources) -> Result<LoadedConfig,
 
     let merged = merge::merge(global, plugins, workspace);
     vm.tools = merged.tools;
-    vm.hooks = merged.hooks;
+    vm.set_hooks(merged.hooks);
     let mut config = merged.config;
     config.errors = errors;
     for (grant, identity) in declared {

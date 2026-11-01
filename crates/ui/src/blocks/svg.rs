@@ -369,6 +369,12 @@ impl<K: std::hash::Hash + Eq + Clone, V: Clone> Lru<K, V> {
     pub(crate) fn contains(&self, key: &K) -> bool {
         self.entries.contains_key(key)
     }
+
+    /// Every key and value, in no order.
+    #[cfg(test)]
+    pub(crate) fn entries(&self) -> impl Iterator<Item = (&K, &V)> {
+        self.entries.iter().map(|(k, (v, _, _))| (k, v))
+    }
 }
 
 struct SvgCache(Lru<Key, SvgState>);
@@ -381,14 +387,42 @@ impl Default for SvgCache {
 
 impl Global for SvgCache {}
 
-fn key(data: &ImageData, scale: f32, tint: Option<&Tint>) -> Key {
+/// Hash of the bytes `data` stands for (the base64 text, or the path).
+fn data_hash(data: &ImageData) -> u64 {
     let mut hasher = DefaultHasher::new();
     match data {
         ImageData::Base64 { data } => ("b64", data).hash(&mut hasher),
         ImageData::Path { path } => ("path", path).hash(&mut hasher),
     }
+    hasher.finish()
+}
+
+fn key(data_hash: u64, scale: f32, tint: Option<&Tint>) -> Key {
+    let mut hasher = DefaultHasher::new();
+    data_hash.hash(&mut hasher);
     tint.hash(&mut hasher);
     (hasher.finish(), (scale * 100.0).round() as u32)
+}
+
+/// SVG data with its hash, worked out once: a picture drawn on every
+/// frame looks itself up in the cache without hashing its base64 again,
+/// and copies share the data.
+#[derive(Debug, Clone)]
+pub struct SvgData(Arc<(ImageData, u64)>);
+
+impl SvgData {
+    /// `data`, hashed.
+    #[must_use]
+    pub fn new(data: ImageData) -> Self {
+        let hash = data_hash(&data);
+        Self(Arc::new((data, hash)))
+    }
+
+    /// The data.
+    #[must_use]
+    pub fn data(&self) -> &ImageData {
+        &self.0.0
+    }
 }
 
 /// The SVG bytes of `data`: decoded base64, or the file.
@@ -417,15 +451,39 @@ pub fn use_svg_tinted(
     window: &Window,
     cx: &mut App,
 ) -> SvgState {
+    use_keyed(data_hash(data), || data.clone(), zoom, tint, window, cx)
+}
+
+/// [`use_svg_tinted`] for data hashed beforehand.
+pub fn use_svg_data(
+    svg: &SvgData,
+    zoom: f32,
+    tint: Option<Tint>,
+    window: &Window,
+    cx: &mut App,
+) -> SvgState {
+    use_keyed(svg.0.1, || svg.data().clone(), zoom, tint, window, cx)
+}
+
+/// The cached state of the data hashed `data_hash`; `data` is copied
+/// only to start drawing it.
+fn use_keyed(
+    data_hash: u64,
+    data: impl FnOnce() -> ImageData,
+    zoom: f32,
+    tint: Option<Tint>,
+    window: &Window,
+    cx: &mut App,
+) -> SvgState {
     let scale = raster_scale(window.scale_factor(), zoom);
-    let key = key(data, scale, tint.as_ref());
+    let key = key(data_hash, scale, tint.as_ref());
     if let Some(state) = cx.default_global::<SvgCache>().0.get(&key) {
         return state;
     }
     cx.default_global::<SvgCache>()
         .0
         .insert(key, SvgState::Loading, 0);
-    let data = data.clone();
+    let data = data();
     let task = cx.background_executor().spawn(async move {
         let bytes = bytes(&data)?;
         match &tint {
@@ -460,7 +518,11 @@ pub(crate) fn cached(
     window: &Window,
     cx: &mut App,
 ) -> Option<SvgState> {
-    let key = key(data, raster_scale(window.scale_factor(), zoom), None);
+    let key = key(
+        data_hash(data),
+        raster_scale(window.scale_factor(), zoom),
+        None,
+    );
     cx.default_global::<SvgCache>().0.get(&key)
 }
 

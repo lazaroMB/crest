@@ -3,6 +3,7 @@
 
 use application::ports::llm::{AssembledMessage, Citation, MessageAssembler};
 use domain::conversation::{ContentPart, Usage};
+use futures::StreamExt;
 use futures::executor::block_on;
 use serde_json::json;
 

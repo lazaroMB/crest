@@ -22,7 +22,7 @@ use gpui::{
 };
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
-use super::svg::SvgState;
+use super::svg::{SvgData, SvgState};
 use crate::timeline::TimelineEntry;
 
 /// Tallest the depiction is drawn, in pixels.
@@ -77,8 +77,9 @@ pub fn claim_text(spec: &MoleculeSpec) -> Option<(String, Option<bool>)> {
     })
 }
 
-/// The SVG of the block as image data, made once per block.
-struct Depiction(Option<ImageData>);
+/// The SVG of the block as image data, hashed, made once per revision of
+/// the block.
+struct Depiction(Option<SvgData>);
 
 fn chip(text: String, color: Hsla) -> gpui::Div {
     div()
@@ -137,21 +138,21 @@ pub(crate) fn picture(state: Option<SvgState>, max_height: f32, cx: &App) -> Any
 }
 
 /// `svg` as image data for the SVG cache.
-pub(crate) fn svg_data(svg: &str) -> ImageData {
-    ImageData::Base64 {
+pub(crate) fn svg_data(svg: &str) -> SvgData {
+    SvgData::new(ImageData::Base64 {
         data: base64::engine::general_purpose::STANDARD.encode(svg),
-    }
+    })
 }
 
 /// The depiction `data` tinted to the theme, at most `max_height` tall.
 pub(crate) fn tinted_picture(
-    data: &ImageData,
+    data: &SvgData,
     max_height: f32,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     let tint = super::svg::Tint::from_theme(cx);
-    let state = super::svg::use_svg_tinted(data, 1.0, Some(tint), window, cx);
+    let state = super::svg::use_svg_data(data, 1.0, Some(tint), window, cx);
     picture(Some(state), max_height, cx)
 }
 
@@ -160,14 +161,18 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let BlockKind::Molecule(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    let svg = spec.svg.clone();
-    let depiction = super::block_state(entry.block.id, window, cx, move |_, _| {
-        Depiction(svg.as_deref().map(svg_data))
-    });
+    let depiction = super::synced_state(
+        entry.block.id,
+        entry.rev,
+        window,
+        cx,
+        |_, _| Depiction(spec.svg.as_deref().map(svg_data)),
+        |depiction, _, _| *depiction = Depiction(spec.svg.as_deref().map(svg_data)),
+    );
     let data = depiction.read(cx).0.clone();
     let state = data.as_ref().map(|data| {
         let tint = super::svg::Tint::from_theme(cx);
-        super::svg::use_svg_tinted(data, 1.0, Some(tint), window, cx)
+        super::svg::use_svg_data(data, 1.0, Some(tint), window, cx)
     });
     let theme = cx.theme();
     let mono = theme.mono_font_family.clone();

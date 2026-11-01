@@ -595,7 +595,7 @@ pub fn snapshot(
     let registry = &source.tools;
     let mut tools: Vec<ToolRow> = registry
         .definitions()
-        .into_iter()
+        .iter()
         .map(|def| {
             let plugin = source.plugin_tools.iter().find(|t| t.name == def.name);
             let (source, effect) = if let Some(spec) = plugin {
@@ -614,8 +614,8 @@ pub fn snapshot(
             };
             ToolRow {
                 schema: serde_json::to_string_pretty(&def.input_schema).unwrap_or_default(),
-                name: def.name,
-                description: def.description,
+                name: def.name.clone(),
+                description: def.description.clone(),
                 source,
                 effect,
             }

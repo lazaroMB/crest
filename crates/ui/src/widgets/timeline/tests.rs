@@ -61,9 +61,13 @@ struct Host {
 
 impl Render for Host {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .size_full()
-            .child(render(self.id, &self.spec, window, cx))
+        div().size_full().child(render(
+            self.id,
+            &self.spec,
+            crate::timeline::NO_REV,
+            window,
+            cx,
+        ))
     }
 }
 
@@ -93,7 +97,7 @@ fn draw(
         move |_, _| div().size_full().child(root.clone()),
     );
     let id = host.read_with(cx, |host, _| host.id);
-    cx.update(|window, cx| view(id, spec, window, cx))
+    cx.update(|window, cx| view(id, spec, crate::timeline::NO_REV, window, cx))
 }
 
 /// Clicks the element with debug selector `selector`.

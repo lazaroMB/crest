@@ -17,6 +17,7 @@ use domain::computed::{
     Assumption, AssumptionStatus, BootInterval, BootMethod, BootStatistic, BootstrapBody, Computed,
     ComputedBody, Narrative, UncertaintyKind, WarningSeverity,
 };
+use rayon::prelude::*;
 use serde_json::Value;
 
 use crate::data;
@@ -136,47 +137,93 @@ fn resample(sample: &Sample, out: &mut Sample, rng: &mut Rng) {
     }
 }
 
-/// The statistic with each unit left out in turn.
+/// The statistic with each unit left out in turn, in unit order (the
+/// first group's units, then the second's).
+///
+/// Each leave-one-out sample is independent, so they run on rayon's pool;
+/// every thread refills one scratch sample of its own. The values are the
+/// same as computing them one by one: each statistic sees the same values
+/// in the same order, and `collect` keeps the unit order.
 fn jackknife(stat: BootStatistic, trim: f64, sample: &Sample) -> Vec<f64> {
-    let without = |v: &[f64], i: usize| -> Vec<f64> {
-        v.iter()
-            .enumerate()
-            .filter(|(j, _)| *j != i)
-            .map(|(_, x)| *x)
-            .collect()
+    /// `v` without its `i`-th value, into `out`.
+    fn without(v: &[f64], i: usize, out: &mut Vec<f64>) {
+        out.clear();
+        out.extend_from_slice(&v[..i]);
+        out.extend_from_slice(&v[i + 1..]);
+    }
+    /// A copy of `v` into `out` (the statistic may have reordered it).
+    fn refill(v: &[f64], out: &mut Vec<f64>) {
+        out.clear();
+        out.extend_from_slice(v);
+    }
+    let leave_out = |i: usize, scratch: &mut Sample| match (sample, scratch) {
+        (Sample::One(x), Sample::One(o)) => without(x, i, o),
+        (Sample::Pairs(x, y), Sample::Pairs(ox, oy)) => {
+            without(x, i, ox);
+            without(y, i, oy);
+        }
+        (Sample::Two(a, b), Sample::Two(oa, ob)) => {
+            if i < a.len() {
+                without(a, i, oa);
+                refill(b, ob);
+            } else {
+                refill(a, oa);
+                without(b, i - a.len(), ob);
+            }
+        }
+        _ => {}
     };
-    let mut out = Vec::with_capacity(sample.len());
-    match sample {
-        Sample::One(x) => {
-            for i in 0..x.len() {
-                out.push(statistic(stat, trim, &mut Sample::One(without(x, i))));
-            }
+    (0..sample.len())
+        .into_par_iter()
+        .map_init(
+            || sample.clone(),
+            |scratch, i| {
+                leave_out(i, scratch);
+                statistic(stat, trim, scratch)
+            },
+        )
+        .collect()
+}
+
+/// Values resampled per batch (resamples × n): bounds the memory of the
+/// resamples drawn ahead while keeping each batch big enough to share.
+const BATCH_VALUES: usize = 1 << 20;
+
+/// The statistic on `b` resamples of `sample`, in draw order, drawing
+/// about `batch_values` values ahead.
+///
+/// The draws come from the one seeded stream, so they stay sequential: a
+/// batch of resamples is drawn one after the other into buffers, and then
+/// the statistics of the batch are computed in parallel. The values are
+/// those of drawing and computing one resample at a time: the stream is
+/// read in the same order, each statistic sees the same resample, and the
+/// results keep the draw order (nothing is summed across threads).
+fn replicates(
+    stat: BootStatistic,
+    trim: f64,
+    sample: &Sample,
+    b: u32,
+    seed: u64,
+    batch_values: usize,
+) -> Vec<f64> {
+    let b = b as usize;
+    let batch = (batch_values / sample.len().max(1)).clamp(1, b.max(1));
+    let mut rng = Rng::new(seed);
+    let mut buffers = vec![sample.clone(); batch];
+    let mut values = Vec::with_capacity(batch);
+    let mut out = Vec::with_capacity(b);
+    let mut left = b;
+    while left > 0 {
+        let size = left.min(batch);
+        for buffer in &mut buffers[..size] {
+            resample(sample, buffer, &mut rng);
         }
-        Sample::Pairs(x, y) => {
-            for i in 0..x.len() {
-                out.push(statistic(
-                    stat,
-                    trim,
-                    &mut Sample::Pairs(without(x, i), without(y, i)),
-                ));
-            }
-        }
-        Sample::Two(a, b) => {
-            for i in 0..a.len() {
-                out.push(statistic(
-                    stat,
-                    trim,
-                    &mut Sample::Two(without(a, i), b.clone()),
-                ));
-            }
-            for i in 0..b.len() {
-                out.push(statistic(
-                    stat,
-                    trim,
-                    &mut Sample::Two(a.clone(), without(b, i)),
-                ));
-            }
-        }
+        buffers[..size]
+            .par_iter_mut()
+            .map(|buffer| statistic(stat, trim, buffer))
+            .collect_into_vec(&mut values);
+        out.extend_from_slice(&values);
+        left -= size;
     }
     out
 }
@@ -368,15 +415,8 @@ pub fn run(
         );
         return Ok((computed, ComputedBody::Bootstrap(body)));
     }
-    let mut rng = Rng::new(request.seed);
-    let mut buffer = sample.clone();
-    let mut t: Vec<f64> = (0..b)
-        .map(|_| {
-            resample(&sample, &mut buffer, &mut rng);
-            statistic(stat, request.trim, &mut buffer)
-        })
-        .filter(|x| x.is_finite())
-        .collect();
+    let mut t = replicates(stat, request.trim, &sample, b, request.seed, BATCH_VALUES);
+    t.retain(|x| x.is_finite());
     let lost = b as usize - t.len();
     if lost > 0 {
         computed.warnings.push(warning(
@@ -599,6 +639,80 @@ fn reproduce(computed: &mut Computed, request: &BootstrapRequest, used: &[DataCo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A sample of each shape, with ties and values in no order.
+    fn samples() -> Vec<(BootStatistic, Sample)> {
+        let xs: Vec<f64> = (0..37).map(|i| f64::from((i * 17) % 23) * 0.37).collect();
+        let ys: Vec<f64> = (0..37).map(|i| f64::from((i * 5) % 11) - 2.5).collect();
+        let (a, b) = (xs[..20].to_vec(), ys[..15].to_vec());
+        vec![
+            (BootStatistic::Mean, Sample::One(xs.clone())),
+            (BootStatistic::Median, Sample::One(xs.clone())),
+            (BootStatistic::Sd, Sample::One(xs.clone())),
+            (BootStatistic::TrimmedMean, Sample::One(xs.clone())),
+            (
+                BootStatistic::MeanDifference,
+                Sample::Two(a.clone(), b.clone()),
+            ),
+            (BootStatistic::MedianDifference, Sample::Two(a, b)),
+            (BootStatistic::Correlation, Sample::Pairs(xs, ys)),
+        ]
+    }
+
+    #[test]
+    fn parallel_replicates_match_drawing_one_at_a_time() {
+        for (stat, sample) in samples() {
+            let mut rng = Rng::new(42);
+            let mut buffer = sample.clone();
+            let one_by_one: Vec<f64> = (0..1500)
+                .map(|_| {
+                    resample(&sample, &mut buffer, &mut rng);
+                    statistic(stat, 0.1, &mut buffer)
+                })
+                .collect();
+            let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+            // One batch, several (the last one short) and one per resample.
+            for batch_values in [BATCH_VALUES, 37 * 64, 1] {
+                let parallel = replicates(stat, 0.1, &sample, 1500, 42, batch_values);
+                assert_eq!(bits(&parallel), bits(&one_by_one), "{stat:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_parallel_jackknife_matches_leaving_out_one_at_a_time() {
+        let without = |v: &[f64], i: usize| -> Vec<f64> {
+            v.iter()
+                .enumerate()
+                .filter(|(j, _)| *j != i)
+                .map(|(_, x)| *x)
+                .collect()
+        };
+        for (stat, sample) in samples() {
+            let one_by_one: Vec<f64> = match &sample {
+                Sample::One(x) => (0..x.len())
+                    .map(|i| statistic(stat, 0.1, &mut Sample::One(without(x, i))))
+                    .collect(),
+                Sample::Pairs(x, y) => (0..x.len())
+                    .map(|i| statistic(stat, 0.1, &mut Sample::Pairs(without(x, i), without(y, i))))
+                    .collect(),
+                Sample::Two(a, b) => {
+                    (0..a.len())
+                        .map(|i| statistic(stat, 0.1, &mut Sample::Two(without(a, i), b.clone())))
+                        .chain((0..b.len()).map(|i| {
+                            statistic(stat, 0.1, &mut Sample::Two(a.clone(), without(b, i)))
+                        }))
+                        .collect()
+                }
+            };
+            let bits = |v: &[f64]| v.iter().map(|x| x.to_bits()).collect::<Vec<_>>();
+            assert_eq!(
+                bits(&jackknife(stat, 0.1, &sample)),
+                bits(&one_by_one),
+                "{stat:?}"
+            );
+        }
+    }
 
     #[test]
     fn the_acceleration_of_the_mean_is_its_skewness_term() {

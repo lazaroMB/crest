@@ -867,13 +867,20 @@ impl Render for MapView {
 pub fn view(
     id: BlockId,
     spec: &MapSpec,
+    rev: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> gpui::Entity<MapView> {
-    let view = super::block_state(id, window, cx, |_, cx| MapView::new(spec, cx));
+    let view = super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, cx| MapView::new(spec, cx),
+        |view, _, cx| view.sync(spec, cx),
+    );
     let focus = view.read(cx).focus.clone();
     crate::blocks::remember_focus(id, &focus, cx);
-    view.update(cx, |view, cx| view.sync(spec, cx));
     view
 }
 
@@ -882,7 +889,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let BlockKind::GeoMap(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    view(entry.block.id, spec, window, cx).into_any_element()
+    view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
 }
 
 #[cfg(test)]
@@ -1003,7 +1010,8 @@ mod tests {
         ] {
             assert!(cx.debug_bounds(selector).is_some(), "{selector}");
         }
-        let view = cx.update(|window, cx| super::view(id, &spec(), window, cx));
+        let view =
+            cx.update(|window, cx| super::view(id, &spec(), crate::timeline::NO_REV, window, cx));
         let fitted = view.read_with(cx, |v, _| v.viewport());
         assert!((fitted.center[0] - 500.0).abs() < 1e-6, "{fitted:?}");
         // A click inside the park (not the hole) picks it.
@@ -1048,7 +1056,8 @@ mod tests {
         });
         cx.update(|window, _| window.refresh());
         cx.run_until_parked();
-        let view = cx.update(|window, cx| super::view(id, &spec(), window, cx));
+        let view =
+            cx.update(|window, cx| super::view(id, &spec(), crate::timeline::NO_REV, window, cx));
         let fitted = view.read_with(cx, |v, _| v.viewport());
         let canvas = cx.debug_bounds("map-canvas").expect("canvas").center();
         wheel(cx, canvas, Modifiers::none());

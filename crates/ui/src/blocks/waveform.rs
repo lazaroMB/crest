@@ -814,13 +814,20 @@ impl Render for WaveformView {
 pub fn view(
     id: BlockId,
     spec: &WaveformSpec,
+    rev: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> gpui::Entity<WaveformView> {
-    let view = super::block_state(id, window, cx, |_, cx| WaveformView::new(spec, cx));
+    let view = super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, cx| WaveformView::new(spec, cx),
+        |view, _, cx| view.sync(spec, cx),
+    );
     let focus = view.read(cx).focus.clone();
     crate::blocks::remember_focus(id, &focus, cx);
-    view.update(cx, |view, cx| view.sync(spec, cx));
     view
 }
 
@@ -829,7 +836,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let BlockKind::Waveform(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    view(entry.block.id, spec, window, cx).into_any_element()
+    view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
 }
 
 #[cfg(test)]
@@ -939,7 +946,8 @@ mod tests {
         ] {
             assert!(cx.debug_bounds(selector).is_some(), "{selector}");
         }
-        let wave = cx.update(|window, cx| super::view(id, &spec(), window, cx));
+        let wave =
+            cx.update(|window, cx| super::view(id, &spec(), crate::timeline::NO_REV, window, cx));
         wave.update(cx, |w, cx| w.set_cursor(Some(25), cx));
         let values = wave.read_with(cx, |w, _| w.cursor_values());
         assert_eq!(

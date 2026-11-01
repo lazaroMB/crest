@@ -64,6 +64,9 @@ pub fn summary_text(spec: &NetworkSpec) -> String {
 /// built for it.
 pub struct NetworkView {
     id: BlockId,
+    /// Revision of the specs made from `spec` for the widgets, new
+    /// whenever they are made again.
+    rev: u64,
     spec: Rc<NetworkSpec>,
     metric: NetworkMetric,
     graph: Rc<GraphSpec>,
@@ -75,6 +78,7 @@ impl NetworkView {
         let metric = spec.size_by;
         Self {
             id,
+            rev: crate::timeline::next_rev(),
             graph: Rc::new(spec.graph(metric)),
             table: Rc::new(spec.table(metric)),
             spec: Rc::new(spec.clone()),
@@ -98,6 +102,7 @@ impl NetworkView {
         if metric != self.metric {
             self.metric = metric;
             self.graph = Rc::new(self.spec.graph(metric));
+            self.rev = crate::timeline::next_rev();
             self.table = Rc::new(self.spec.table(metric));
             cx.notify();
         }
@@ -117,9 +122,9 @@ impl NetworkView {
 impl Render for NetworkView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let graph = Rc::clone(&self.graph);
-        let graph = widgets::graph::render(node_id(self.id, 0), &graph, window, cx);
+        let graph = widgets::graph::render(node_id(self.id, 0), &graph, self.rev, window, cx);
         let table = Rc::clone(&self.table);
-        let table = widgets::tree::render(node_id(self.id, 1), &table, window, cx);
+        let table = widgets::tree::render(node_id(self.id, 1), &table, self.rev, window, cx);
         let muted = cx.theme().muted_foreground;
         let current = self.metric;
         let chips: Vec<AnyElement> = NetworkMetric::ALL
@@ -191,12 +196,18 @@ impl Render for NetworkView {
 pub fn view(
     id: BlockId,
     spec: &NetworkSpec,
+    rev: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> gpui::Entity<NetworkView> {
-    let view = super::block_state(id, window, cx, |_, _| NetworkView::new(id, spec));
-    view.update(cx, |view, _| view.sync(spec));
-    view
+    super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, _| NetworkView::new(id, spec),
+        |view, _, _| view.sync(spec),
+    )
 }
 
 /// Draws the block held by `entry`.
@@ -204,7 +215,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let BlockKind::Network(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    view(entry.block.id, spec, window, cx).into_any_element()
+    view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
 }
 
 #[cfg(test)]
@@ -302,7 +313,8 @@ mod tests {
         ] {
             assert!(cx.debug_bounds(selector).is_some(), "{selector}");
         }
-        let view = cx.update(|window, cx| super::view(id, &spec(), window, cx));
+        let view =
+            cx.update(|window, cx| super::view(id, &spec(), crate::timeline::NO_REV, window, cx));
         assert_eq!(
             view.read_with(cx, |v, _| v.graph().nodes[1].size),
             Some(1.0),

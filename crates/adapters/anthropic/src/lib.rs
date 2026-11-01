@@ -13,5 +13,5 @@ pub mod wire;
 
 pub use catalog::AnthropicCatalog;
 pub use client::{AnthropicClient, ApiKey, ClientConfig, KeySource};
-pub use retry::{AnthropicBackend, AnthropicLlm, RetryPolicy, TokioClock};
+pub use retry::{AnthropicBackend, AnthropicLlm, RetryPolicy};
 pub use server_tools::{ServerToolConfig, ServerToolOptions};

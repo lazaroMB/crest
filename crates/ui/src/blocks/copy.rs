@@ -36,7 +36,9 @@
 //! Inline math chips copy their LaTeX themselves ([`super::math`]). `y` on
 //! a selected block still copies its default text.
 
-use domain::block::{BlockKind, Cell, ChartSpec, CustomNode, SourceRef, TableSpec};
+use std::rc::Rc;
+
+use domain::block::{BlockId, BlockKind, Cell, ChartSpec, CustomNode, SourceRef, TableSpec};
 use domain::computed::{Computed, ComputedBody, narrative};
 use domain::devops::flame::FlameSpec;
 use domain::devops::trace::TraceSpec;
@@ -45,7 +47,7 @@ use domain::science::MoleculeSpec;
 use domain::widget::timeline::{TimeUnit, format_duration};
 use gpui::{
     AnyElement, App, ClipboardItem, ElementId, InteractiveElement as _, IntoElement as _,
-    ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _, div,
+    ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
 };
 use gpui_component::{ActiveTheme as _, h_flex};
 
@@ -723,18 +725,61 @@ pub fn frame_stats_csv(spec: &FlameSpec) -> String {
     out
 }
 
+/// The text of `kind` in the form `key`, if it has that form.
+#[must_use]
+pub fn text(kind: &BlockKind, key: &str) -> Option<String> {
+    formats(kind)
+        .into_iter()
+        .find(|format| format.key == key)
+        .map(|format| format.text)
+}
+
+/// The keys and labels of the forms a block was last seen with, by
+/// revision: building the forms makes every text (a big table's CSV), so
+/// the row draws these and makes the one text clicked.
+struct CopyLabels(Rc<[(&'static str, &'static str)]>);
+
+impl CopyLabels {
+    fn new(kind: &BlockKind) -> Self {
+        Self(
+            formats(kind)
+                .into_iter()
+                .map(|format| (format.key, format.label))
+                .collect(),
+        )
+    }
+}
+
+/// Makes the text of the block `id` in the form `key` when its button is
+/// clicked (the block may have changed since it was drawn).
+pub type CopyText = Rc<dyn Fn(BlockId, &str, &App) -> Option<String>>;
+
 /// The copy row of the selected block, or `None` when it has no forms or
-/// shows its own buttons (computed cards).
-pub fn row(entry: &TimelineEntry, cx: &App) -> Option<AnyElement> {
+/// shows its own buttons (computed cards). A click copies what
+/// `text_of` makes.
+pub fn row(
+    entry: &TimelineEntry,
+    text_of: CopyText,
+    window: &mut Window,
+    cx: &mut App,
+) -> Option<AnyElement> {
     if matches!(entry.block.kind, BlockKind::Computed { .. }) {
         return None;
     }
-    let formats = formats(&entry.block.kind);
-    if formats.is_empty() {
+    let id = entry.block.id;
+    let labels = super::synced_state(
+        id,
+        entry.rev,
+        window,
+        cx,
+        |_, _| CopyLabels::new(&entry.block.kind),
+        |labels, _, _| *labels = CopyLabels::new(&entry.block.kind),
+    );
+    let labels = labels.read(cx).0.clone();
+    if labels.is_empty() {
         return None;
     }
     let theme = cx.theme();
-    let id = entry.block.id;
     let mut row = h_flex()
         .gap_1()
         .pt_1()
@@ -742,9 +787,8 @@ pub fn row(entry: &TimelineEntry, cx: &App) -> Option<AnyElement> {
         .text_color(theme.muted_foreground)
         .debug_selector(|| "copy-row".to_owned())
         .child("copy as");
-    for format in formats {
-        let key = format.key;
-        let text = format.text;
+    for &(key, label) in labels.iter() {
+        let text_of = text_of.clone();
         row = row.child(
             div()
                 .id(ElementId::Name(SharedString::from(format!(
@@ -757,10 +801,12 @@ pub fn row(entry: &TimelineEntry, cx: &App) -> Option<AnyElement> {
                 .border_color(theme.border)
                 .cursor_pointer()
                 .hover(|style| style.bg(theme.secondary_hover))
-                .child(format.label)
+                .child(label)
                 .on_click(move |_, _, cx| {
                     cx.stop_propagation();
-                    cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+                    if let Some(text) = text_of(id, key, cx) {
+                        cx.write_to_clipboard(ClipboardItem::new_string(text));
+                    }
                 }),
         );
     }

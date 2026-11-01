@@ -6,6 +6,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use adapter_anthropic::ApiKey;
 use adapter_cloudflare::{ACCOUNT_NAME, ClefClient, TOKEN_NAME, secret_from_env_or_keyring};
 use adapter_shell::RtkRewriter;
 use adapter_web::{CurlWeb, brave_key_from_env_or_keyring};
@@ -22,11 +23,85 @@ use application::rtk::RtkOptions;
 use application::tools::web::WebTools;
 use application::web::{SearchBackend, WebOptions};
 use domain::block::{Block, BlockKind};
-use domain::model::{ModelId, ModelPolicy};
+use domain::model::{Account, ModelId, ModelPolicy};
 use domain::workspace::{SensitivePathRules, WorkspaceRoot};
 
 /// How long the catalog may take before startup goes on without it.
 pub const CATALOG_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Which secrets startup reads from the environment or the keyring.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SecretsWanted {
+    /// The API keys of the model providers (not with a scripted model).
+    pub models: bool,
+    /// The Cloudflare token and account of the decision model, when it is
+    /// on; the account set in the options, if any, is not read.
+    pub decision: Option<Option<String>>,
+    /// The Brave key, when web search asks for Brave.
+    pub brave: bool,
+}
+
+impl SecretsWanted {
+    /// What [`decider`] and [`web_tools`] will need with `options`; `None`
+    /// arguments are the ports tests give instead (nothing to read then).
+    #[must_use]
+    pub fn for_options(
+        options: &AppOptions,
+        decision: Option<&Arc<dyn DecisionPort>>,
+        web: Option<&Arc<dyn WebPort>>,
+    ) -> Self {
+        let decision = decision
+            .is_none()
+            .then(|| DecisionOptions::from_options(options).ok())
+            .flatten()
+            .filter(|options| options.enabled)
+            .map(|options| options.account_id);
+        // A broken `app.opt.web` falls back to the defaults, as there.
+        let web_options = WebOptions::from_options(options).unwrap_or_default();
+        let brave =
+            web.is_none() && web_options.enabled && web_options.backend == SearchBackend::Brave;
+        Self {
+            models: false,
+            decision,
+            brave,
+        }
+    }
+
+    /// Reads them. Call it off the async runtime: the keyring may block
+    /// (D-Bus, Keychain). One task reads them all, so a locked keyring
+    /// asks to be unlocked once.
+    #[must_use]
+    pub fn read(self) -> StartupSecrets {
+        let mut secrets = StartupSecrets::default();
+        if self.models {
+            secrets.anthropic = ApiKey::from_env_or_keyring().ok();
+            secrets.opencode = crate::credentials::stored_key(Account::OpenCode);
+        }
+        if let Some(account) = self.decision {
+            secrets.decision = Some((
+                secret_from_env_or_keyring(TOKEN_NAME),
+                account.or_else(|| secret_from_env_or_keyring(ACCOUNT_NAME)),
+            ));
+        }
+        if self.brave {
+            secrets.brave = brave_key_from_env_or_keyring();
+        }
+        secrets
+    }
+}
+
+/// What [`SecretsWanted::read`] found.
+#[derive(Debug, Default)]
+pub struct StartupSecrets {
+    /// The Anthropic API key.
+    pub anthropic: Option<ApiKey>,
+    /// The OpenCode API key.
+    pub opencode: Option<String>,
+    /// The decision model's token and account, when they were wanted.
+    pub decision: Option<(Option<String>, Option<String>)>,
+    /// The Brave key.
+    pub brave: Option<String>,
+}
 
 /// Loads the global and workspace `init.lua` through `host`. Problems in
 /// single files stay in [`LoadedConfig::errors`] (each one an `Error`
@@ -250,12 +325,14 @@ pub async fn validate_models(
 }
 
 /// The decision model of `app.opt.decision`: `port` when given (tests),
-/// else Clef on Cloudflare when its token and account are set (env or
-/// keyring). Without them crest works as before; a warning says so only
-/// when `app.opt.decision` asks for it.
-pub async fn decider(
+/// else Clef on Cloudflare when its token and account are set (`secrets`,
+/// from the environment or the keyring: see [`SecretsWanted`]). Without
+/// them crest works as before; a warning says so only when
+/// `app.opt.decision` asks for it.
+pub fn decider(
     options: &AppOptions,
     port: Option<Arc<dyn DecisionPort>>,
+    secrets: Option<(Option<String>, Option<String>)>,
 ) -> (Decider, Vec<String>) {
     let mut warnings = Vec::new();
     let configured = options.extra.contains_key(DECISION_OPTION);
@@ -272,16 +349,7 @@ pub async fn decider(
     if let Some(port) = port {
         return (Decider::new(port, options), warnings);
     }
-    // The keyring may block (D-Bus, Keychain).
-    let account = options.account_id.clone();
-    let secrets = tokio::task::spawn_blocking(move || {
-        let token = secret_from_env_or_keyring(TOKEN_NAME);
-        let account = account.or_else(|| secret_from_env_or_keyring(ACCOUNT_NAME));
-        (token, account)
-    })
-    .await
-    .unwrap_or_default();
-    let (Some(token), Some(account)) = secrets else {
+    let (Some(token), Some(account)) = secrets.unwrap_or_default() else {
         if configured {
             warnings.push(format!(
                 "app.opt.{DECISION_OPTION} is set but {TOKEN_NAME} or {ACCOUNT_NAME} is missing \
@@ -302,10 +370,12 @@ pub async fn decider(
 /// The web tools of `app.opt.web`: `web` when given (tests), else curl.
 /// `None`, with a warning saying why, when the web is disabled, curl is
 /// missing or the config is broken (then the defaults are used). A Brave
-/// backend without a key falls back to DuckDuckGo.
+/// backend without a key (`brave_key`, see [`SecretsWanted`]) falls back
+/// to DuckDuckGo.
 pub async fn web_tools(
     options: &AppOptions,
     web: Option<Arc<dyn WebPort>>,
+    brave_key: Option<String>,
 ) -> (Option<WebTools>, Vec<String>) {
     let mut warnings = Vec::new();
     let mut options = WebOptions::from_options(options).unwrap_or_else(|err| {
@@ -327,11 +397,7 @@ pub async fn web_tools(
     }
     let mut key = None;
     if options.backend == SearchBackend::Brave {
-        // The keyring may block (D-Bus, Keychain).
-        key = tokio::task::spawn_blocking(brave_key_from_env_or_keyring)
-            .await
-            .ok()
-            .flatten();
+        key = brave_key;
         if key.is_none() {
             warnings.push(
                 "app.opt.web.backend is \"brave\" but there is no key (BRAVE_API_KEY or the \
@@ -369,7 +435,7 @@ mod tests {
         use serde_json::json;
 
         let scripted = || Some(Arc::new(ScriptedWeb::new()) as Arc<dyn WebPort>);
-        let (web, warnings) = web_tools(&AppOptions::default(), scripted()).await;
+        let (web, warnings) = web_tools(&AppOptions::default(), scripted(), None).await;
         assert_eq!(web.map(|w| w.default_results), Some(8));
         assert!(warnings.is_empty(), "{warnings:?}");
 
@@ -377,15 +443,54 @@ mod tests {
         options
             .extra
             .insert("web".into(), json!({ "enabled": false }));
-        let (web, warnings) = web_tools(&options, scripted()).await;
+        let (web, warnings) = web_tools(&options, scripted(), None).await;
         assert!(web.is_none() && warnings.is_empty());
 
         options
             .extra
             .insert("web".into(), json!({ "max_results": 99 }));
-        let (web, warnings) = web_tools(&options, scripted()).await;
+        let (web, warnings) = web_tools(&options, scripted(), None).await;
         assert!(web.is_some());
         assert_eq!(warnings.len(), 1, "{warnings:?}");
+    }
+
+    #[test]
+    fn startup_reads_only_the_secrets_it_needs() {
+        use application_testing::web::ScriptedWeb;
+        use serde_json::json;
+
+        let wanted = SecretsWanted::for_options(&AppOptions::default(), None, None);
+        assert_eq!(
+            wanted,
+            SecretsWanted {
+                models: false,
+                decision: Some(None),
+                brave: false,
+            }
+        );
+
+        let mut options = AppOptions::default();
+        options
+            .extra
+            .insert(DECISION_OPTION.into(), json!({ "account_id": "acct" }));
+        options
+            .extra
+            .insert("web".into(), json!({ "backend": "brave" }));
+        let wanted = SecretsWanted::for_options(&options, None, None);
+        assert_eq!(wanted.decision, Some(Some("acct".to_owned())));
+        assert!(wanted.brave);
+
+        // Ports given instead (tests), or the decision model off: nothing.
+        let web = Arc::new(ScriptedWeb::new()) as Arc<dyn WebPort>;
+        let wanted = SecretsWanted::for_options(&options, None, Some(&web));
+        assert!(!wanted.brave);
+        options
+            .extra
+            .insert(DECISION_OPTION.into(), json!({ "enabled": false }));
+        assert_eq!(
+            SecretsWanted::for_options(&options, None, None).decision,
+            None
+        );
     }
 
     #[tokio::test]

@@ -99,6 +99,9 @@ pub fn summary_table(spec: &TrainingSpec, metric: &str) -> TreeSpec {
 /// Per-block state: the spec and what is shown.
 pub struct TrainingView {
     id: BlockId,
+    /// Revision of the specs made from `spec` for the widgets, new
+    /// whenever they are made again.
+    rev: u64,
     spec: Rc<TrainingSpec>,
     metric: String,
     axis: TrainingAxis,
@@ -111,6 +114,7 @@ impl TrainingView {
     fn new(id: BlockId, spec: &TrainingSpec) -> Self {
         Self {
             id,
+            rev: crate::timeline::next_rev(),
             metric: spec.metric.clone(),
             axis: spec.axis,
             log_y: spec.log_y,
@@ -136,6 +140,7 @@ impl TrainingView {
         if self.spec.metrics.iter().any(|m| m == metric) {
             self.metric = metric.to_owned();
             self.table = Rc::new(summary_table(&self.spec, metric));
+            self.rev = crate::timeline::next_rev();
             cx.notify();
         }
     }
@@ -207,7 +212,7 @@ impl Render for TrainingView {
             .plot(&self.metric, self.axis, self.log_y, self.raw);
         let canvas = super::plot::static_plot(&plot, &format!("training-{}", self.id), window, cx);
         let table = Rc::clone(&self.table);
-        let table = widgets::tree::render(node_id(self.id, 0), &table, window, cx);
+        let table = widgets::tree::render(node_id(self.id, 0), &table, self.rev, window, cx);
         let metrics: Vec<AnyElement> = self
             .spec
             .metrics
@@ -316,12 +321,18 @@ impl Render for TrainingView {
 pub fn view(
     id: BlockId,
     spec: &TrainingSpec,
+    rev: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> gpui::Entity<TrainingView> {
-    let view = super::block_state(id, window, cx, |_, _| TrainingView::new(id, spec));
-    view.update(cx, |view, _| view.sync(spec));
-    view
+    super::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, _| TrainingView::new(id, spec),
+        |view, _, _| view.sync(spec),
+    )
 }
 
 /// Draws the block held by `entry`.
@@ -329,7 +340,7 @@ pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> AnyEl
     let BlockKind::TrainingCurves(spec) = &entry.block.kind else {
         return super::placeholder(entry, cx);
     };
-    view(entry.block.id, spec, window, cx).into_any_element()
+    view(entry.block.id, spec, entry.rev, window, cx).into_any_element()
 }
 
 #[cfg(test)]
@@ -438,7 +449,8 @@ mod tests {
         ] {
             assert!(cx.debug_bounds(selector).is_some(), "{selector}");
         }
-        let view = cx.update(|window, cx| super::view(id, &spec(), window, cx));
+        let view =
+            cx.update(|window, cx| super::view(id, &spec(), crate::timeline::NO_REV, window, cx));
         for selector in ["training-metric-1", "training-x-epoch", "training-log"] {
             let at = cx.debug_bounds(selector).unwrap().center();
             cx.simulate_click(at, Modifiers::none());

@@ -12,7 +12,7 @@ use std::thread;
 
 use application::ports::events::EventSink;
 use application::ports::plugin::{
-    CallbackId, ConfigSources, HookEvent, HookOutcome, LoadedConfig, PluginCapabilities,
+    CallbackId, ConfigSources, HookEvent, HookKind, HookOutcome, LoadedConfig, PluginCapabilities,
     PluginError, PluginHostPort, PluginOutput,
 };
 use async_trait::async_trait;
@@ -21,7 +21,7 @@ use tokio::sync::oneshot;
 
 use crate::callbacks::CallbackIds;
 use crate::config;
-use crate::vm::Vm;
+use crate::vm::{HookFlags, Vm};
 
 /// Name of the VM thread, as shown by debuggers and panics.
 const THREAD_NAME: &str = "crest-lua";
@@ -86,12 +86,13 @@ impl LuaHost {
     /// The thread ends when the last [`LuaHandle`] is dropped.
     pub fn spawn(options: HostOptions) -> Result<LuaHandle, PluginError> {
         let vm = Vm::new(options, CallbackIds::default())?;
+        let hooks = Arc::clone(vm.hook_flags());
         let (tx, rx) = mpsc::channel::<Request>();
         thread::Builder::new()
             .name(THREAD_NAME.into())
             .spawn(move || serve(vm, &rx))
             .map_err(|e| PluginError::Unavailable(format!("cannot start the Lua thread: {e}")))?;
-        Ok(LuaHandle { tx })
+        Ok(LuaHandle { tx, hooks })
     }
 }
 
@@ -107,6 +108,8 @@ fn serve(mut vm: Vm, rx: &mpsc::Receiver<Request>) {
 #[derive(Debug, Clone)]
 pub struct LuaHandle {
     tx: mpsc::Sender<Request>,
+    /// Which hooks the VM has, kept up to date by the VM thread.
+    hooks: Arc<HookFlags>,
 }
 
 impl LuaHandle {
@@ -196,6 +199,10 @@ impl PluginHostPort for LuaHandle {
 
     async fn run_hook(&self, event: HookEvent) -> Result<HookOutcome, PluginError> {
         self.run(move |vm| vm.run_hooks(event)).await?
+    }
+
+    fn has_hooks(&self, kind: HookKind) -> bool {
+        self.hooks.has(kind)
     }
 
     async fn grant_capabilities(
@@ -390,6 +397,27 @@ mod tests {
         assert_eq!(config.tools.len(), 1);
         let out = host.call_tool("echo", json!({ "text": "hi" })).await;
         assert_eq!(out, Ok(PluginOutput::Value(json!("hi"))));
+    }
+
+    #[tokio::test]
+    async fn has_hooks_follows_the_loaded_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let global = dir.path().join("init.lua");
+        std::fs::write(&global, "app.on('after_tool', function() end)").unwrap();
+        let host = spawn();
+        assert!(!host.has_hooks(HookKind::BeforeTool));
+        assert!(!host.has_hooks(HookKind::AfterTool));
+        let sources = ConfigSources {
+            global: Some(global.clone()),
+            workspace: None,
+        };
+        host.load_config(sources.clone()).await.unwrap();
+        assert!(!host.has_hooks(HookKind::BeforeTool));
+        assert!(host.has_hooks(HookKind::AfterTool));
+        // Reloading a config without hooks clears the flags.
+        std::fs::write(&global, "-- nothing").unwrap();
+        host.load_config(sources).await.unwrap();
+        assert!(!host.has_hooks(HookKind::AfterTool));
     }
 
     #[tokio::test]

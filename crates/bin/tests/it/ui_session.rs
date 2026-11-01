@@ -698,6 +698,7 @@ fn chat_only_images_are_saved_without_a_model_call(cx: &mut TestAppContext) {
             vec![gpui::Image::from_bytes(gpui::ImageFormat::Png, png)],
             cx,
         );
+        // The image is still being prepared: the switch waits for it.
         input.toggle_image_mode(cx);
     });
     cx.simulate_input("the screenshot");

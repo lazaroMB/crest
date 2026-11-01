@@ -7,6 +7,9 @@
 #   app-testing crates/app-testing (the package must be named
 #            "application-testing": the fakes of the ports, for tests)
 #   adapter  crates/adapters/<x>
+#   adapter-support crates/adapters/support (the package must be named
+#            "adapter-support": what the adapters share, such as the
+#            server-sent events loop and the HTTP error mapping)
 #   ui       crates/ui
 #   bin      crates/bin
 #   platform crates/platform (OS glue: processes, directories, console)
@@ -16,6 +19,8 @@
 # Internal dependency rules (path crates inside the workspace):
 #   domain -> none; app -> domain; app-testing -> app, domain;
 #   adapter, ui -> app, domain, platform; platform -> none; bin -> all.
+#   adapter -> adapter-support; adapter-support -> app, domain, platform
+#   (adapters may not depend on each other, only on adapter-support).
 #   adapter, ui and bin may also use app-testing, but only in
 #   [dev-dependencies]: the fakes never reach a production build.
 # domain, app and app-testing cannot use I/O crates either (see IO_CRATES).
@@ -94,6 +99,7 @@ layer_of() {
         crates/app) echo app ;;
         crates/app-testing) echo app-testing ;;
         crates/adapters/*/*) echo unknown ;;
+        crates/adapters/support) echo adapter-support ;;
         crates/adapters/*) echo adapter ;;
         crates/ui) echo ui ;;
         crates/bin) echo bin ;;
@@ -115,6 +121,8 @@ while IFS="$(printf '\t')" read -r name dir; do
         fail "crate $name (layer app) must be named 'application'"
     elif [ "$layer" = app-testing ] && [ "$name" != application-testing ]; then
         fail "crate $name (layer app-testing) must be named 'application-testing'"
+    elif [ "$layer" = adapter-support ] && [ "$name" != adapter-support ]; then
+        fail "crate $name (layer adapter-support) must be named 'adapter-support'"
     fi
 done <<EOF
 $packages
@@ -126,6 +134,8 @@ internal_allowed() {
         app:domain) return 0 ;;
         app-testing:app | app-testing:domain) return 0 ;;
         adapter:app | adapter:domain | adapter:platform | adapter:app-testing) return 0 ;;
+        adapter:adapter-support) return 0 ;;
+        adapter-support:app | adapter-support:domain | adapter-support:platform) return 0 ;;
         ui:app | ui:domain | ui:platform | ui:app-testing) return 0 ;;
         bin:*) return 0 ;;
         *) return 1 ;;

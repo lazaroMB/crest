@@ -61,6 +61,7 @@ pub mod waveform;
 
 use std::any::TypeId;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use domain::block::{BlockId, BlockKind};
 use gpui::{
@@ -69,8 +70,8 @@ use gpui::{
 };
 use gpui_component::ActiveTheme as _;
 
-use crate::timeline::TimelineEntry;
 use crate::timeline::kind_name;
+use crate::timeline::{NO_REV, TimelineEntry};
 
 /// Draws a rich block, or `None` for kinds the timeline renders itself.
 pub fn render(entry: &TimelineEntry, window: &mut Window, cx: &mut App) -> Option<AnyElement> {
@@ -143,7 +144,14 @@ pub(crate) fn placeholder(entry: &TimelineEntry, cx: &App) -> AnyElement {
 /// keeps it for the life of the app. Blocks are never removed from a
 /// session, so neither are their entries.
 #[derive(Default)]
-struct BlockStates(HashMap<(BlockId, TypeId), AnyEntity>);
+struct BlockStates(HashMap<(BlockId, TypeId), Slot>);
+
+/// One kept entity and the revision of the content it was last synced
+/// with ([`synced_state`]).
+struct Slot {
+    entity: AnyEntity,
+    rev: u64,
+}
 
 impl Global for BlockStates {}
 
@@ -154,17 +162,84 @@ pub(crate) fn block_state<T: 'static>(
     cx: &mut App,
     init: impl FnOnce(&mut Window, &mut Context<T>) -> T,
 ) -> Entity<T> {
+    synced_state(id, NO_REV, window, cx, init, |_, _, _| {})
+}
+
+/// [`block_state`], brought up to date with `sync` when the content it
+/// shows is at a revision it has not seen: `rev` is the drawn entry's
+/// [`TimelineEntry::rev`] (or one derived from it), so a block that did not
+/// change skips `sync` and the comparison of its whole spec on every frame.
+/// [`NO_REV`] always syncs.
+pub(crate) fn synced_state<T: 'static>(
+    id: BlockId,
+    rev: u64,
+    window: &mut Window,
+    cx: &mut App,
+    init: impl FnOnce(&mut Window, &mut Context<T>) -> T,
+    sync: impl FnOnce(&mut T, &mut Window, &mut Context<T>),
+) -> Entity<T> {
     let key = (id, TypeId::of::<T>());
-    let existing = cx.default_global::<BlockStates>().0.get(&key).cloned();
-    if let Some(entity) = existing.and_then(|any| any.downcast::<T>().ok()) {
+    let existing = cx
+        .default_global::<BlockStates>()
+        .0
+        .get(&key)
+        .map(|slot| (slot.entity.clone(), slot.rev));
+    if let Some((any, seen)) = existing
+        && let Ok(entity) = any.downcast::<T>()
+    {
+        if rev == NO_REV || seen != rev {
+            entity.update(cx, |state, cx| sync(state, window, cx));
+            if let Some(slot) = cx.default_global::<BlockStates>().0.get_mut(&key) {
+                slot.rev = rev;
+            }
+        }
         return entity;
     }
+    // Made from the content being drawn: nothing to sync.
     let entity = cx.new(|cx| init(window, cx));
-    cx.default_global::<BlockStates>()
-        .0
-        .insert(key, entity.clone().into_any());
+    cx.default_global::<BlockStates>().0.insert(
+        key,
+        Slot {
+            entity: entity.clone().into_any(),
+            rev,
+        },
+    );
     entity
 }
+
+/// A value worked out from the block `id` at revision `rev` (and `key`,
+/// view state such as whether the block is expanded), kept until either
+/// changes: a shell's styled output or a tool call's pretty input are
+/// made once rather than on every frame. Values of one type are told
+/// apart by `K`.
+pub(crate) fn derived<K: PartialEq + 'static, T: 'static>(
+    id: BlockId,
+    rev: u64,
+    key: K,
+    window: &mut Window,
+    cx: &mut App,
+    make: impl FnOnce(&K) -> T,
+) -> Rc<T> {
+    let state = synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, _| Derived::<K, T>(None),
+        |derived, _, _| derived.0 = None,
+    );
+    state.update(cx, |derived, _| match &derived.0 {
+        Some((made_for, value)) if *made_for == key => value.clone(),
+        _ => {
+            let value = Rc::new(make(&key));
+            derived.0 = Some((key, value.clone()));
+            value
+        }
+    })
+}
+
+/// What [`derived`] keeps: the key and the value made for it.
+struct Derived<K, T>(Option<(K, Rc<T>)>);
 
 /// The `T` entity of block `id`, if one was created.
 pub(crate) fn existing_block_state<T: 'static>(id: BlockId, cx: &mut App) -> Option<Entity<T>> {
@@ -172,8 +247,7 @@ pub(crate) fn existing_block_state<T: 'static>(id: BlockId, cx: &mut App) -> Opt
     cx.default_global::<BlockStates>()
         .0
         .get(&key)
-        .cloned()
-        .and_then(|any| any.downcast::<T>().ok())
+        .and_then(|slot| slot.entity.clone().downcast::<T>().ok())
 }
 
 /// Focus handles of the block widgets with keys of their own, by block.
@@ -277,5 +351,45 @@ mod tests {
             assert_eq!(again.read(cx).0, 7);
             assert_eq!(other.read(cx).0, 2);
         });
+    }
+
+    #[gpui::test]
+    fn derived_values_follow_the_revision_and_the_key(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let id = BlockId::new();
+        let made = std::cell::Cell::new(0);
+        let get = |rev: u64, key: bool, cx: &mut gpui::VisualTestContext| {
+            cx.update(|window, cx| {
+                derived(id, rev, key, window, cx, |key| {
+                    made.set(made.get() + 1);
+                    (rev, *key)
+                })
+            })
+        };
+        let first = get(3, false, cx);
+        assert!(Rc::ptr_eq(&first, &get(3, false, cx)), "kept");
+        assert_eq!(*get(3, true, cx), (3, true), "another key");
+        assert_eq!(*get(4, true, cx), (4, true), "another revision");
+        assert_eq!(made.get(), 3);
+    }
+
+    #[gpui::test]
+    fn synced_state_syncs_on_new_revisions(cx: &mut TestAppContext) {
+        let cx = cx.add_empty_window();
+        let id = BlockId::new();
+        let sync = |rev: u64, cx: &mut gpui::VisualTestContext| {
+            cx.update(|window, cx| {
+                synced_state(id, rev, window, cx, |_, _| Counter(0), |c, _, _| c.0 += 1)
+            })
+        };
+        let state = sync(5, cx);
+        sync(5, cx);
+        assert_eq!(state.read_with(cx, |c, _| c.0), 0, "made at 5: in sync");
+        sync(6, cx);
+        sync(6, cx);
+        assert_eq!(state.read_with(cx, |c, _| c.0), 1);
+        sync(NO_REV, cx);
+        sync(NO_REV, cx);
+        assert_eq!(state.read_with(cx, |c, _| c.0), 3, "no revision: always");
     }
 }

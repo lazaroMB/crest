@@ -2,7 +2,9 @@
 //!
 //! A session is one row of `sessions` (the [`Session`] as JSON plus copies of
 //! the fields used to list and order), one row per timeline block and one row
-//! per permission rule. A save replaces all of them in one transaction.
+//! per permission rule. A save writes all of them in one transaction: the
+//! session row and the rules are replaced, and the timeline is upserted by
+//! position so the blocks that did not change are not written again.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -92,8 +94,7 @@ impl SqliteSessionStore {
 
 #[async_trait]
 impl SessionStorePort for SqliteSessionStore {
-    async fn save(&self, session: &StoredSession) -> Result<(), StoreError> {
-        let session = session.clone();
+    async fn save(&self, session: StoredSession) -> Result<(), StoreError> {
         self.run(move |conn| save(conn, &session)).await
     }
 
@@ -154,40 +155,61 @@ pub(crate) fn save(conn: &mut Connection, stored: &StoredSession) -> Result<(), 
         ],
     )
     .map_err(sql_error)?;
-    replace_blocks(&tx, &id, &stored.timeline)?;
+    upsert_blocks(&tx, &id, &stored.timeline)?;
     replace_rules(&tx, &id, &stored.permission_rules)?;
     tx.commit().map_err(sql_error)
 }
 
-fn replace_blocks(tx: &Transaction<'_>, id: &str, blocks: &[Block]) -> Result<(), StoreError> {
-    tx.execute("DELETE FROM timeline_blocks WHERE session_id = ?1", [id])
-        .map_err(sql_error)?;
-    let mut insert = tx
+/// Writes `blocks` as the timeline of session `id`, by position (`seq`).
+///
+/// A save happens at least once per turn and the timeline only grows at
+/// the end or changes in its last blocks, so rewriting every row each time
+/// made a save cost the whole session. Each position is upserted only when
+/// its JSON differs from the stored one (SQLite compares the text, so an
+/// unchanged row is neither rewritten nor logged to the WAL), and the rows
+/// past the end are deleted. Edited, removed and reordered blocks are
+/// still exact: every position ends up holding the block now there.
+fn upsert_blocks(tx: &Transaction<'_>, id: &str, blocks: &[Block]) -> Result<(), StoreError> {
+    let mut upsert = tx
         .prepare(
             "INSERT INTO timeline_blocks (session_id, seq, block_id, kind, data_json)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT (session_id, seq) DO UPDATE SET
+                 block_id = excluded.block_id,
+                 kind = excluded.kind,
+                 data_json = excluded.data_json
+             WHERE timeline_blocks.data_json IS NOT excluded.data_json",
         )
         .map_err(sql_error)?;
+    let mut len = 0_i64;
     for (seq, block) in (0_i64..).zip(blocks) {
-        let value = serde_json::to_value(block).map_err(encode_error)?;
-        // The serde tag of the kind (`text`, `tool_call`, ...), for queries
-        // and debugging; the block itself is read back from `data_json`.
-        let kind = value
-            .get("type")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default()
-            .to_owned();
-        insert
-            .execute(params![
-                id,
-                seq,
-                block.id.to_string(),
-                kind,
-                value.to_string()
-            ])
+        let json = to_json(block)?;
+        upsert
+            .execute(params![id, seq, block.id.to_string(), kind_of(&json), json])
             .map_err(sql_error)?;
+        len = seq + 1;
     }
+    tx.execute(
+        "DELETE FROM timeline_blocks WHERE session_id = ?1 AND seq >= ?2",
+        params![id, len],
+    )
+    .map_err(sql_error)?;
     Ok(())
+}
+
+/// The serde tag of a serialized block's kind (`text`, `tool_call`, ...),
+/// kept in its own column for queries and debugging; the block itself is
+/// read back from `data_json`. Read from the JSON already written instead
+/// of building a `serde_json::Value` of the whole block.
+fn kind_of(json: &str) -> String {
+    #[derive(serde::Deserialize)]
+    struct Tag<'a> {
+        #[serde(rename = "type", borrow)]
+        kind: std::borrow::Cow<'a, str>,
+    }
+    serde_json::from_str::<Tag<'_>>(json)
+        .map(|tag| tag.kind.into_owned())
+        .unwrap_or_default()
 }
 
 /// Replaces the rules of session `id` with its session rules: project
@@ -480,6 +502,128 @@ pub(crate) mod tests {
         assert_eq!(blocks, 2);
     }
 
+    /// Counts the inserts, updates and deletes on `timeline_blocks` from
+    /// now on, to check which rows a save touches.
+    fn count_block_writes(conn: &Connection) {
+        conn.execute_batch(
+            "CREATE TABLE block_writes (n INTEGER NOT NULL);
+             INSERT INTO block_writes VALUES (0);
+             CREATE TRIGGER count_insert AFTER INSERT ON timeline_blocks
+             BEGIN UPDATE block_writes SET n = n + 1; END;
+             CREATE TRIGGER count_update AFTER UPDATE ON timeline_blocks
+             BEGIN UPDATE block_writes SET n = n + 1; END;
+             CREATE TRIGGER count_delete AFTER DELETE ON timeline_blocks
+             BEGIN UPDATE block_writes SET n = n + 1; END;",
+        )
+        .unwrap();
+    }
+
+    fn block_writes(conn: &Connection) -> i64 {
+        conn.query_row("SELECT n FROM block_writes", [], |r| r.get(0))
+            .unwrap()
+    }
+
+    #[test]
+    fn saving_again_writes_only_the_changed_blocks() {
+        let mut conn = db::open_in_memory().unwrap();
+        let mut stored = sample("/ws", 10, 6);
+        save(&mut conn, &stored).unwrap();
+        count_block_writes(&conn);
+
+        save(&mut conn, &stored).unwrap();
+        assert_eq!(
+            block_writes(&conn),
+            0,
+            "an unchanged timeline is not written"
+        );
+
+        // A streamed block grows and a new one is appended.
+        stored.timeline[5].kind = BlockKind::Error {
+            message: "otro fallo".into(),
+            hint: Some("reintenta".into()),
+        };
+        stored.timeline.push(Block::new(BlockKind::Text {
+            markdown: "nuevo".into(),
+        }));
+        save(&mut conn, &stored).unwrap();
+        assert_eq!(block_writes(&conn), 2);
+        assert_eq!(load(&mut conn, stored.session.id).unwrap(), stored);
+    }
+
+    #[test]
+    fn edited_removed_and_reordered_blocks_round_trip() {
+        let mut conn = db::open_in_memory().unwrap();
+        let mut stored = sample("/ws", 10, 8);
+        save(&mut conn, &stored).unwrap();
+
+        // Edit one in the middle.
+        stored.timeline[2].kind = BlockKind::Text {
+            markdown: "editado".into(),
+        };
+        save(&mut conn, &stored).unwrap();
+        assert_eq!(load(&mut conn, stored.session.id).unwrap(), stored);
+
+        // Remove one in the middle: the later ones shift down.
+        stored.timeline.remove(3);
+        save(&mut conn, &stored).unwrap();
+        assert_eq!(load(&mut conn, stored.session.id).unwrap(), stored);
+
+        // Reorder.
+        stored.timeline.swap(0, 4);
+        stored.timeline.reverse();
+        save(&mut conn, &stored).unwrap();
+        assert_eq!(load(&mut conn, stored.session.id).unwrap(), stored);
+
+        // Grow again past the old length, then clear.
+        for i in 0..5 {
+            stored.timeline.push(Block::new(BlockKind::Text {
+                markdown: format!("más {i}"),
+            }));
+        }
+        save(&mut conn, &stored).unwrap();
+        assert_eq!(load(&mut conn, stored.session.id).unwrap(), stored);
+        stored.timeline.clear();
+        save(&mut conn, &stored).unwrap();
+        assert_eq!(load(&mut conn, stored.session.id).unwrap(), stored);
+        let blocks: i64 = conn
+            .query_row("SELECT count(*) FROM timeline_blocks", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(blocks, 0);
+    }
+
+    #[test]
+    fn saves_of_two_sessions_do_not_touch_each_other() {
+        let mut conn = db::open_in_memory().unwrap();
+        let a = sample("/ws", 1, 4);
+        let mut b = sample("/ws", 2, 6);
+        save(&mut conn, &a).unwrap();
+        save(&mut conn, &b).unwrap();
+        b.timeline.truncate(1);
+        save(&mut conn, &b).unwrap();
+        assert_eq!(load(&mut conn, a.session.id).unwrap(), a);
+        assert_eq!(load(&mut conn, b.session.id).unwrap(), b);
+    }
+
+    #[test]
+    fn rows_written_by_older_builds_are_replaced() {
+        // Older builds stored `serde_json::Value` text (keys sorted); the
+        // first save after an upgrade rewrites those rows once.
+        let mut conn = db::open_in_memory().unwrap();
+        let stored = sample("/ws", 1, 3);
+        save(&mut conn, &stored).unwrap();
+        for block in &stored.timeline {
+            let value = serde_json::to_value(block).unwrap().to_string();
+            conn.execute(
+                "UPDATE timeline_blocks SET data_json = ?1 WHERE block_id = ?2",
+                params![value, block.id.to_string()],
+            )
+            .unwrap();
+        }
+        assert_eq!(load(&mut conn, stored.session.id).unwrap(), stored);
+        save(&mut conn, &stored).unwrap();
+        assert_eq!(load(&mut conn, stored.session.id).unwrap(), stored);
+    }
+
     #[test]
     fn records_the_block_kind() {
         let mut conn = db::open_in_memory().unwrap();
@@ -563,7 +707,7 @@ pub(crate) mod tests {
         let path = dir.path().join("sessions.db");
         let stored = sample("/ws", 42, 100);
         port(SqliteSessionStore::open(&path).unwrap())
-            .save(&stored)
+            .save(stored.clone())
             .await
             .unwrap();
 
@@ -579,8 +723,8 @@ pub(crate) mod tests {
         let fake: Arc<dyn SessionStorePort> = Arc::new(InMemorySessionStore::new());
         for (root, at) in [("/a", 5), ("/b", 9), ("/a", 12), ("/c", 1), ("/d", 9)] {
             let s = sample(root, at, 0);
-            sqlite.save(&s).await.unwrap();
-            fake.save(&s).await.unwrap();
+            sqlite.save(s.clone()).await.unwrap();
+            fake.save(s).await.unwrap();
         }
         let recent = sqlite.recent_workspaces(3).await.unwrap();
         let roots: Vec<&str> = recent.iter().map(|r| r.root.as_str()).collect();
@@ -601,8 +745,8 @@ pub(crate) mod tests {
         }
         sessions.push(sample("/other", 100, 0));
         for s in &sessions {
-            sqlite.save(s).await.unwrap();
-            fake.save(s).await.unwrap();
+            sqlite.save(s.clone()).await.unwrap();
+            fake.save(s.clone()).await.unwrap();
         }
 
         let listed = sqlite.list("/ws").await.unwrap();
@@ -621,7 +765,7 @@ pub(crate) mod tests {
         let new = sample("/a", 2, 3);
         let other = sample("/b", 99, 1);
         for s in [&old, &new, &other] {
-            store.save(s).await.unwrap();
+            store.save(s.clone()).await.unwrap();
         }
         assert_eq!(store.latest_for_workspace("/a").await.unwrap(), Some(new));
         assert_eq!(store.latest_for_workspace("/b").await.unwrap(), Some(other));
@@ -633,7 +777,7 @@ pub(crate) mod tests {
         let stored = sample("/ws", 1, 10);
         let id = stored.session.id;
         let dyn_store = port(store.clone());
-        dyn_store.save(&stored).await.unwrap();
+        dyn_store.save(stored).await.unwrap();
         dyn_store.delete(id).await.unwrap();
 
         assert_eq!(dyn_store.load(id).await, Err(StoreError::NotFound(id)));
@@ -657,7 +801,7 @@ pub(crate) mod tests {
     async fn corrupt_rows_surface_as_corrupt_through_the_port() {
         let store = SqliteSessionStore::open_in_memory().unwrap();
         let stored = sample("/ws", 1, 1);
-        port(store.clone()).save(&stored).await.unwrap();
+        port(store.clone()).save(stored).await.unwrap();
         store
             .run(|conn| {
                 conn.execute("UPDATE permission_rules SET rule_json = 'null'", [])
@@ -675,7 +819,7 @@ pub(crate) mod tests {
         let tasks: Vec<_> = (0..16)
             .map(|i| {
                 let store = Arc::clone(&store);
-                tokio::spawn(async move { store.save(&sample("/ws", i, 5)).await })
+                tokio::spawn(async move { store.save(sample("/ws", i, 5)).await })
             })
             .collect();
         for task in tasks {

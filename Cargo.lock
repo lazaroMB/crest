@@ -112,13 +112,14 @@ dependencies = [
 name = "adapter-anthropic"
 version = "0.18.0"
 dependencies = [
+ "adapter-support",
  "application",
  "async-trait",
  "domain",
- "eventsource-stream",
  "futures",
  "insta",
  "keyring",
+ "platform",
  "reqwest",
  "serde",
  "serde_json",
@@ -137,6 +138,7 @@ dependencies = [
  "async-trait",
  "domain",
  "keyring",
+ "platform",
  "reqwest",
  "serde_json",
  "tokio",
@@ -157,6 +159,7 @@ dependencies = [
  "microlp",
  "numbat",
  "rand_chacha 0.10.0",
+ "rayon",
  "rust_decimal",
  "serde",
  "serde_json",
@@ -195,6 +198,7 @@ dependencies = [
  "proj4rs",
  "prost",
  "quick-xml 0.41.0",
+ "rayon",
  "ruststep",
  "serde",
  "serde_json",
@@ -267,10 +271,10 @@ dependencies = [
 name = "adapter-openai"
 version = "0.18.0"
 dependencies = [
+ "adapter-support",
  "application",
  "async-trait",
  "domain",
- "eventsource-stream",
  "futures",
  "insta",
  "reqwest",
@@ -331,6 +335,17 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "adapter-support"
+version = "0.18.0"
+dependencies = [
+ "application",
+ "eventsource-stream",
+ "futures",
+ "reqwest",
+ "tokio",
 ]
 
 [[package]]
@@ -2096,6 +2111,7 @@ dependencies = [
  "adapter-search",
  "adapter-shell",
  "adapter-store",
+ "adapter-support",
  "adapter-telemetry",
  "adapter-web",
  "anyhow",
@@ -10357,6 +10373,7 @@ dependencies = [
  "gpui-component",
  "gpui-pre",
  "gpui-pre-platform",
+ "ignore",
  "image",
  "notify",
  "ratex-layout",

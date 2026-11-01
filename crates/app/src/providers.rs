@@ -5,7 +5,9 @@
 //! [`ProviderRouter`] is the [`ModelBackend`] that sends each attempt to
 //! the provider of its model, so [`RetryingLlm`](crate::llm_retry::RetryingLlm)
 //! can walk a fallback chain across providers. [`RouterCatalog`] lists the
-//! models of every provider with their prefixes.
+//! models of every provider with their prefixes, and [`CachedCatalog`]
+//! keeps a provider's listing for a while so start-up and the `/model`
+//! picker do not ask the network each time.
 //!
 //! ```lua
 //! app.opt.providers = {
@@ -18,6 +20,8 @@
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use domain::model::{ModelId, ProviderId};
@@ -389,6 +393,85 @@ impl ModelCatalogPort for RouterCatalog {
             _ => Ok(out),
         }
     }
+
+    fn invalidate(&self) {
+        for provider in self.router.providers.values() {
+            provider.catalog.invalidate();
+        }
+    }
+}
+
+/// How long [`CachedCatalog`] reuses a listing.
+pub const CATALOG_TTL: Duration = Duration::from_secs(5 * 60);
+
+/// [`ModelCatalogPort`] that keeps the last successful listing of `inner`
+/// for [`CATALOG_TTL`].
+///
+/// One start can list a provider several times (the OpenCode plan probe,
+/// the role validation, every `/model` picker), and each listing is a
+/// network round trip. Concurrent calls share one request: the lock is
+/// held while listing, so the ones waiting find the fresh result. Errors
+/// are not kept, and [`invalidate`](ModelCatalogPort::invalidate) drops
+/// the listing (one in flight at that moment is not kept either).
+pub struct CachedCatalog {
+    inner: Arc<dyn ModelCatalogPort>,
+    ttl: Duration,
+    /// Bumped by `invalidate`; a listing is reused only if it was fetched
+    /// in the current generation.
+    generation: AtomicU64,
+    cached: futures::lock::Mutex<Option<Listing>>,
+}
+
+struct Listing {
+    at: Instant,
+    generation: u64,
+    models: Vec<ModelInfo>,
+}
+
+impl CachedCatalog {
+    /// Caches `inner` for [`CATALOG_TTL`].
+    #[must_use]
+    pub fn new(inner: Arc<dyn ModelCatalogPort>) -> Self {
+        Self::with_ttl(inner, CATALOG_TTL)
+    }
+
+    /// Caches `inner` for `ttl`.
+    #[must_use]
+    pub fn with_ttl(inner: Arc<dyn ModelCatalogPort>, ttl: Duration) -> Self {
+        Self {
+            inner,
+            ttl,
+            generation: AtomicU64::new(0),
+            cached: futures::lock::Mutex::new(None),
+        }
+    }
+}
+
+#[async_trait]
+impl ModelCatalogPort for CachedCatalog {
+    async fn list_models(&self) -> Result<Vec<ModelInfo>, LlmError> {
+        let mut cached = self.cached.lock().await;
+        let generation = self.generation.load(Ordering::Acquire);
+        if let Some(listing) = cached.as_ref()
+            && listing.generation == generation
+            && listing.at.elapsed() < self.ttl
+        {
+            return Ok(listing.models.clone());
+        }
+        *cached = None;
+        let models = self.inner.list_models().await?;
+        *cached = Some(Listing {
+            at: Instant::now(),
+            generation,
+            models: models.clone(),
+        });
+        Ok(models)
+    }
+
+    fn invalidate(&self) {
+        self.generation.fetch_add(1, Ordering::AcqRel);
+        self.inner.invalidate();
+    }
 }
 
 #[cfg(test)]
@@ -585,6 +668,98 @@ mod tests {
             block_on(alone.catalog().list_models()),
             Err(LlmError::Auth { .. })
         ));
+    }
+
+    /// Lists one model and counts the listings; fails while `failing`.
+    #[derive(Default)]
+    struct Counting {
+        calls: std::sync::atomic::AtomicUsize,
+        failing: std::sync::atomic::AtomicBool,
+        invalidated: std::sync::atomic::AtomicUsize,
+    }
+
+    impl Counting {
+        fn calls(&self) -> usize {
+            self.calls.load(Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl ModelCatalogPort for Counting {
+        async fn list_models(&self) -> Result<Vec<ModelInfo>, LlmError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            if self.failing.load(Ordering::SeqCst) {
+                return Err(LlmError::Network("offline".into()));
+            }
+            Ok(vec![ModelInfo {
+                id: ModelId::new("m"),
+                display_name: "M".into(),
+                created_at: None,
+            }])
+        }
+
+        fn invalidate(&self) {
+            self.invalidated.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn a_cached_catalog_lists_once_until_invalidated() {
+        let inner = Arc::new(Counting::default());
+        let cached = CachedCatalog::new(Arc::clone(&inner) as Arc<dyn ModelCatalogPort>);
+        let first = block_on(cached.list_models()).unwrap();
+        assert_eq!(block_on(cached.list_models()).unwrap(), first);
+        assert_eq!(inner.calls(), 1);
+
+        cached.invalidate();
+        assert_eq!(inner.invalidated.load(Ordering::SeqCst), 1);
+        block_on(cached.list_models()).unwrap();
+        assert_eq!(inner.calls(), 2);
+    }
+
+    #[test]
+    fn a_cached_catalog_does_not_keep_errors_or_expired_listings() {
+        let inner = Arc::new(Counting::default());
+        inner.failing.store(true, Ordering::SeqCst);
+        let cached = CachedCatalog::new(Arc::clone(&inner) as Arc<dyn ModelCatalogPort>);
+        assert!(block_on(cached.list_models()).is_err());
+        inner.failing.store(false, Ordering::SeqCst);
+        assert!(block_on(cached.list_models()).is_ok());
+        assert_eq!(inner.calls(), 2);
+
+        let expired = CachedCatalog::with_ttl(
+            Arc::clone(&inner) as Arc<dyn ModelCatalogPort>,
+            Duration::ZERO,
+        );
+        block_on(expired.list_models()).unwrap();
+        block_on(expired.list_models()).unwrap();
+        assert_eq!(inner.calls(), 4);
+    }
+
+    #[test]
+    fn concurrent_listings_share_one_request() {
+        let inner = Arc::new(Counting::default());
+        let cached = CachedCatalog::new(Arc::clone(&inner) as Arc<dyn ModelCatalogPort>);
+        let (a, b) = block_on(futures::future::join(
+            cached.list_models(),
+            cached.list_models(),
+        ));
+        assert_eq!(a.unwrap(), b.unwrap());
+        assert_eq!(inner.calls(), 1);
+    }
+
+    #[test]
+    fn the_router_catalog_invalidates_every_provider() {
+        let inner = Arc::new(Counting::default());
+        let provider = Provider {
+            backend: Echo::new(vec![]),
+            catalog: Arc::clone(&inner) as Arc<dyn ModelCatalogPort>,
+        };
+        let router = ProviderRouter::new(ProviderId::Anthropic)
+            .with(ProviderId::Anthropic, provider.clone())
+            .with(ProviderId::OpencodeGo, provider);
+        router.catalog().invalidate();
+        assert_eq!(inner.invalidated.load(Ordering::SeqCst), 2);
     }
 
     #[test]

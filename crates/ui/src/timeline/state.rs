@@ -3,6 +3,7 @@
 //! window; [`super::TimelineView`] mirrors its changes into the list.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use application::ports::events::DomainEvent;
 use domain::block::{Block, BlockId, BlockKind};
@@ -24,6 +25,19 @@ pub struct TextNumbers {
 
 use super::copy_text;
 
+/// A revision no content has: state synced with it compares its spec
+/// every time (blocks drawn outside the timeline, tests).
+pub const NO_REV: u64 = 0;
+
+static NEXT_REV: AtomicU64 = AtomicU64::new(NO_REV + 1);
+
+/// A revision never handed out before, in the whole app: what a block
+/// shows is the same whenever its revision is (block states outlive a
+/// timeline, so revisions must not restart with a new one).
+pub fn next_rev() -> u64 {
+    NEXT_REV.fetch_add(1, Ordering::Relaxed)
+}
+
 /// One block of the timeline plus its view state.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TimelineEntry {
@@ -36,6 +50,10 @@ pub struct TimelineEntry {
     pub alt_view: bool,
     /// Slots and unverified numbers of a `Text` block.
     pub numbers: TextNumbers,
+    /// Revision of `block` and `numbers` ([`next_rev`]): a new one on every
+    /// change, so renderers keep what they derived from the block until it
+    /// changes instead of comparing the whole block on every frame.
+    pub rev: u64,
 }
 
 impl TimelineEntry {
@@ -47,7 +65,13 @@ impl TimelineEntry {
             expanded,
             alt_view: false,
             numbers: TextNumbers::default(),
+            rev: next_rev(),
         }
+    }
+
+    /// Records that the block or its numbers changed.
+    fn touch(&mut self) {
+        self.rev = next_rev();
     }
 }
 
@@ -60,6 +84,20 @@ fn is_prompt(markdown: &str) -> bool {
 /// Whether `markdown` may hold number slots.
 fn has_slots(markdown: &str) -> bool {
     markdown.contains('⟦') || markdown.contains("[[calc:")
+}
+
+/// Whether the last `appended` bytes of a text block, with the few bytes
+/// before them a slot marker may have started in, hold a slot marker.
+fn appended_slot(kind: &BlockKind, appended: usize) -> bool {
+    let BlockKind::Text { markdown } = kind else {
+        return false;
+    };
+    // The longest marker, `[[calc:`, can start 6 bytes before the delta.
+    let mut start = markdown.len().saturating_sub(appended + 6);
+    while !markdown.is_char_boundary(start) {
+        start -= 1;
+    }
+    has_slots(&markdown[start..])
 }
 
 /// Whether blocks of this kind have an alternate view for `t`.
@@ -207,7 +245,13 @@ impl TimelineState {
                     }
                     _ => false,
                 });
-                if let TimelineChange::Updated(ix) = change {
+                // A text without slots so far gains one only if the new
+                // tail has one: only that is scanned, not the whole reply on
+                // every delta.
+                if let TimelineChange::Updated(ix) = change
+                    && (self.entries[ix].numbers.resolved.is_some()
+                        || appended_slot(&self.entries[ix].block.kind, text.len()))
+                {
                     self.resolve(ix);
                 }
                 change
@@ -392,6 +436,7 @@ impl TimelineState {
             return false;
         }
         numbers.resolved = resolved;
+        self.entries[ix].touch();
         true
     }
 
@@ -430,6 +475,7 @@ impl TimelineState {
         for (ix, unverified) in found {
             if self.entries[ix].numbers.unverified != unverified {
                 self.entries[ix].numbers.unverified = unverified;
+                self.entries[ix].touch();
                 self.touched.push(ix);
             }
         }
@@ -438,6 +484,7 @@ impl TimelineState {
     fn upsert(&mut self, block: Block) -> TimelineChange {
         if let Some(ix) = self.position(block.id) {
             self.entries[ix].block = block;
+            self.entries[ix].touch();
             return TimelineChange::Updated(ix);
         }
         let ix = self.entries.len();
@@ -464,6 +511,7 @@ impl TimelineState {
             return TimelineChange::None;
         };
         if f(&mut self.entries[ix].block.kind) {
+            self.entries[ix].touch();
             TimelineChange::Updated(ix)
         } else {
             TimelineChange::None
@@ -519,6 +567,31 @@ mod tests {
         let ids: Vec<_> = state.entries().iter().map(|e| e.block.id).collect();
         assert_eq!(ids, blocks.iter().map(|b| b.id).collect::<Vec<_>>());
         assert_eq!(state.position(blocks[2].id), Some(2));
+    }
+
+    #[test]
+    fn revision_changes_with_the_block_only() {
+        let mut state = TimelineState::new();
+        let (first, second) = (text("a"), text("b"));
+        state.apply(&added(&first));
+        state.apply(&added(&second));
+        let revs =
+            |state: &TimelineState| -> Vec<u64> { state.entries().iter().map(|e| e.rev).collect() };
+        let before = revs(&state);
+        assert_ne!(before[0], before[1]);
+        assert!(before.iter().all(|rev| *rev != NO_REV));
+        state.apply(&DomainEvent::TextDelta {
+            block_id: first.id,
+            text: "!".into(),
+        });
+        let after = revs(&state);
+        assert_ne!(after[0], before[0], "an edit is a new revision");
+        assert_eq!(after[1], before[1], "the other block keeps its own");
+        state.select(1);
+        state.toggle_selected();
+        assert_eq!(revs(&state), after, "view state is not content");
+        state.apply(&added(&second));
+        assert_ne!(revs(&state)[1], after[1], "a replaced block is new too");
     }
 
     #[test]
@@ -827,6 +900,39 @@ mod tests {
         let plain = text("no slots here");
         state.apply(&added(&plain));
         assert_eq!(numbers(&state, 3).resolved, None);
+    }
+
+    #[test]
+    fn streamed_slots_resolve_even_when_a_delta_splits_the_marker() {
+        let mut state = TimelineState::new();
+        state.apply(&added(&computed("st_1", "p_value", ".030")));
+        let reply = text("");
+        state.apply(&added(&reply));
+        let mut delta = |text: &str| {
+            state.apply(&DomainEvent::TextDelta {
+                block_id: reply.id,
+                text: text.into(),
+            });
+        };
+        delta("p is ");
+        delta("[[ca");
+        delta("lc:st_1.p_value]] ");
+        delta("and that is all");
+        assert_eq!(
+            numbers(&state, 1).resolved.as_deref(),
+            Some("p is .030 and that is all")
+        );
+
+        let mut state = TimelineState::new();
+        let reply = text("");
+        state.apply(&added(&reply));
+        for piece in ["plain ", "é", "text"] {
+            state.apply(&DomainEvent::TextDelta {
+                block_id: reply.id,
+                text: piece.into(),
+            });
+        }
+        assert_eq!(numbers(&state, 0).resolved, None);
     }
 
     #[test]

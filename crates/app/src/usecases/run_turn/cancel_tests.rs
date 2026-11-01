@@ -193,14 +193,20 @@ async fn cancelling_while_a_tool_use_streams_drops_it() {
 
 #[tokio::test]
 async fn cancelling_a_running_tool_drops_it_and_answers_every_tool_use() {
+    // A write runs alone: the call after it has not started.
     let shell = Arc::new(ScriptedShell::new().on_hang("sleep", Vec::<String>::new()));
-    let mut h = sh_harness(
-        &shell,
-        ToolEffect::Read,
+    let shell_tool = Arc::clone(&shell);
+    let mut h = Harness::with(
         vec![
             ScriptedResponse::tool_use("toolu_1", "sh", json!({ "command": "sleep" }))
                 .then_tool_use("toolu_2", "echo", json!({ "text": "b" })),
         ],
+        PermissionMode::AutoEdit,
+        move |tools| {
+            tools
+                .register_typed(Sh(shell_tool, ToolEffect::Write))
+                .unwrap();
+        },
     );
     let outcome = run_and_cancel(&mut h, || shell.calls().len() == 1).await;
 
@@ -222,6 +228,47 @@ async fn cancelling_a_running_tool_drops_it_and_answers_every_tool_use() {
         ]
     );
     assert_eq!(h.session.turns[0].messages.last().unwrap().role, Role::User);
+    assert_resendable(&h.session);
+}
+
+#[tokio::test]
+async fn cancelling_reads_running_together_keeps_the_ones_that_finished() {
+    let shell = Arc::new(ScriptedShell::new().on_hang("sleep", Vec::<String>::new()));
+    let mut h = sh_harness(
+        &shell,
+        ToolEffect::Read,
+        vec![
+            ScriptedResponse::tool_use("toolu_1", "sh", json!({ "command": "sleep" }))
+                .then_tool_use("toolu_2", "echo", json!({ "text": "b" }))
+                .then_tool_use("toolu_3", "sh", json!({ "command": "sleep" })),
+        ],
+    );
+    let outcome = run_and_cancel(&mut h, || shell.calls().len() == 2).await;
+
+    assert_eq!(outcome.stop_reason, StopReason::Interrupted);
+    assert_eq!(shell.cancelled(), 2, "both running futures must be dropped");
+    let mut statuses = statuses(&h);
+    statuses.sort_by_key(|status| format!("{status:?}"));
+    assert_eq!(
+        statuses,
+        [
+            ToolStatus::Cancelled,
+            ToolStatus::Cancelled,
+            ToolStatus::Running,
+            ToolStatus::Running,
+            ToolStatus::Running,
+            ToolStatus::Succeeded,
+        ]
+    );
+    // In the order of the uses: the read that finished keeps its result.
+    assert_eq!(
+        h.tool_results(),
+        [
+            ("cancelled by user".to_owned(), true),
+            ("echo: b".to_owned(), false),
+            ("cancelled by user".to_owned(), true)
+        ]
+    );
     assert_resendable(&h.session);
 }
 

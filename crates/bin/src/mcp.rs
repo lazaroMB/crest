@@ -18,6 +18,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, PoisonError, RwLock};
 use std::time::Duration;
 
@@ -258,6 +259,9 @@ pub struct McpToolSource {
     port: Arc<dyn McpPort>,
     effects: HashMap<String, ToolEffect>,
     tools: RwLock<Vec<Arc<dyn Tool>>>,
+    /// Bumped after every refresh, so the registry builds the tool
+    /// definitions again.
+    revision: AtomicU64,
 }
 
 impl std::fmt::Debug for McpToolSource {
@@ -289,6 +293,7 @@ impl McpToolSource {
             })
             .collect();
         *self.tools.write().unwrap_or_else(PoisonError::into_inner) = tools;
+        self.revision.fetch_add(1, Ordering::AcqRel);
     }
 }
 
@@ -298,6 +303,10 @@ impl ToolSource for McpToolSource {
             .read()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
+    }
+
+    fn revision(&self) -> Option<u64> {
+        Some(self.revision.load(Ordering::Acquire))
     }
 }
 
@@ -354,6 +363,24 @@ pub async fn start(
     registry: &mut ToolRegistry,
     events: Option<Arc<dyn EventSink>>,
 ) -> (Option<McpServers>, Vec<String>) {
+    let (connected, warnings) = connect(specs, workspace, trust, ready_timeout, events).await;
+    let servers = connected.map(|(servers, source)| {
+        registry.add_source(source);
+        servers
+    });
+    (servers, warnings)
+}
+
+/// [`start`] without a registry: the servers and the source of their
+/// tools, for the caller to add once its registry is built (startup
+/// connects while it does other work).
+pub async fn connect(
+    specs: Vec<McpServerSpec>,
+    workspace: &Path,
+    trust: &TrustOptions,
+    ready_timeout: Duration,
+    events: Option<Arc<dyn EventSink>>,
+) -> (Option<(McpServers, Arc<dyn ToolSource>)>, Vec<String>) {
     let mut warnings = Vec::new();
     let mut store = match trust.store.as_deref().map(TrustStore::load) {
         Some(Ok(store)) => store,
@@ -459,10 +486,11 @@ pub async fn start(
         port: Arc::clone(&port),
         effects,
         tools: RwLock::new(Vec::new()),
+        revision: AtomicU64::new(0),
     });
     source.refresh().await;
     changes.mark_unchanged();
-    registry.add_source(source.clone());
+    let tools: Arc<dyn ToolSource> = source.clone();
 
     let watched = Arc::clone(&port);
     let mut last: HashMap<String, McpServerState> = statuses
@@ -486,11 +514,14 @@ pub async fn start(
         }
     });
     (
-        Some(McpServers {
-            manager,
-            port,
-            statuses,
-        }),
+        Some((
+            McpServers {
+                manager,
+                port,
+                statuses,
+            },
+            tools,
+        )),
         warnings,
     )
 }

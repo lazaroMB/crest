@@ -2,6 +2,8 @@
 //! the JSON, with JSON in the text as fallback for adapters that ignore
 //! `tool_choice`. Invalid answers are asked again with their errors.
 
+use std::sync::Arc;
+
 use domain::conversation::{ContentPart, Message};
 use futures::StreamExt;
 use schemars::JsonSchema;
@@ -88,7 +90,7 @@ async fn ask_json(
     tool: &ToolDefinition,
 ) -> Result<Result<Value, Vec<String>>, NodeError> {
     let mut req = ctx.request(system, vec![Message::user_text(prompt)]);
-    req.tools = vec![tool.clone()];
+    req.tools = Arc::new([tool.clone()]);
     req.tool_choice = ToolChoice::Tool(tool.name.clone());
     let model = req.model.spec.id.clone();
     let mut stream = ctx.llm().stream(req).await?;

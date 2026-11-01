@@ -394,17 +394,31 @@ impl Render for TreeView {
 pub fn view(
     id: BlockId,
     spec: &TreeSpec,
+    rev: u64,
     window: &mut Window,
     cx: &mut App,
 ) -> gpui::Entity<TreeView> {
-    let view = crate::blocks::block_state(id, window, cx, |_, _| TreeView::new(spec));
-    view.update(cx, |view, cx| view.sync(spec, cx));
-    view
+    crate::blocks::synced_state(
+        id,
+        rev,
+        window,
+        cx,
+        |_, _| TreeView::new(spec),
+        |view, _, cx| view.sync(spec, cx),
+    )
 }
 
 /// The whole widget (header, column heads, rows) of `id`.
-pub fn render(id: BlockId, spec: &TreeSpec, window: &mut Window, cx: &mut App) -> AnyElement {
-    view(id, spec, window, cx).into_any_element()
+/// `rev` is the revision of what `spec` was made from ([`crate::timeline::NO_REV`]
+/// when unknown): the spec is compared only when it is new.
+pub fn render(
+    id: BlockId,
+    spec: &TreeSpec,
+    rev: u64,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    view(id, spec, rev, window, cx).into_any_element()
 }
 
 #[cfg(test)]
