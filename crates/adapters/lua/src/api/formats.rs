@@ -74,6 +74,12 @@
 //! that cannot be read or parsed, or a SMILES that does not parse,
 //! raises a Lua error with the reason. The calls block the VM while they
 //! read and parse.
+//!
+//! The arguments are the tool's input (its JSON schema, read from the
+//! table): an unknown key or a wrong type raises, and the checks, limits
+//! and messages are the tool's own, from the shared `normalize_*` /
+//! `build_*` of `application::tools::formats`. Only `waveform{ signals }`
+//! and `reaction{ names }` also take a single string for their list.
 
 use std::sync::Arc;
 
@@ -277,7 +283,10 @@ fn ghs(lua: &Lua, args: Value) -> mlua::Result<Value> {
 /// `register`s each `"name" => Variant(normalize, build)`: the tool's
 /// builder, its spec boxed in `BlockKind::Variant`.
 macro_rules! boxed {
-    ($lua:expr, $formats:expr; $($name:literal => $variant:ident($normalize:path, $build:path)),* $(,)?) => {
+    (
+        $lua:expr, $formats:expr;
+        $($name:literal => $variant:ident($normalize:path, $build:path)),* $(,)?
+    ) => {
         $(register($lua, $formats, $name, $normalize, $build, |spec| {
             BlockKind::$variant(Box::new(spec))
         })?;)*
@@ -315,9 +324,15 @@ pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
         "trace" => Trace(devops::normalize_trace, devops::build_trace),
         "flamegraph" => FlameGraph(devops::normalize_flamegraph, devops::build_flamegraph),
         "logs" => Logs(devops::normalize_logs, devops::build_logs),
-        "query_plan" => QueryPlan(query_plan::normalize_query_plan, query_plan::build_query_plan),
+        "query_plan" => QueryPlan(
+            query_plan::normalize_query_plan,
+            query_plan::build_query_plan
+        ),
         "har" => Har(har::normalize_har, har::build_har),
-        "terraform_plan" => TerraformPlan(terraform::normalize_terraform_plan, terraform::build_terraform_plan),
+        "terraform_plan" => TerraformPlan(
+            terraform::normalize_terraform_plan,
+            terraform::build_terraform_plan
+        ),
         "dot" => Diagram(diagram::normalize_dot, diagram::build_dot),
         "er" => Diagram(diagram::normalize_er, diagram::build_er),
         "benchmarks" => Benchmarks(bench::normalize_benchmarks, bench::build_benchmarks),
@@ -326,14 +341,23 @@ pub(crate) fn table(lua: &Lua) -> mlua::Result<Table> {
         "dxf" => Drawing(dxf::normalize_dxf, dxf::build_dxf),
         "ifc_schedule" => IfcSchedule(ifc::normalize_ifc_schedule, ifc::build_ifc_schedule),
         "sequence" => Sequence(sequence::normalize_sequence, sequence::build_sequence),
-        "molecule_grid" => MoleculeGrid(molecule_grid::normalize_molecule_grid, molecule_grid::build_molecule_grid),
+        "molecule_grid" => MoleculeGrid(
+            molecule_grid::normalize_molecule_grid,
+            molecule_grid::build_molecule_grid
+        ),
         "spectrum" => Spectrum(spectrum::normalize_spectrum, spectrum::build_spectrum),
-        "molecule_3d" => Molecule3d(molecule3d::normalize_molecule_3d, molecule3d::build_molecule_3d),
+        "molecule_3d" => Molecule3d(
+            molecule3d::normalize_molecule_3d,
+            molecule3d::build_molecule_3d
+        ),
         "map" => GeoMap(geomap::normalize_map, geomap::build_map),
         "gantt" => Gantt(gantt::normalize_gantt, gantt::build_gantt),
         "array_file" => ArrayFile(arrays::normalize_array_file, arrays::build_array_file),
         "network" => Network(network::normalize_network, network::build_network),
-        "training_curves" => TrainingCurves(training::normalize_training_curves, training::build_training_curves),
+        "training_curves" => TrainingCurves(
+            training::normalize_training_curves,
+            training::build_training_curves
+        ),
     );
     formats.set("waveform", lua.create_function(waveform)?)?;
     formats.set("reaction", lua.create_function(reaction)?)?;
