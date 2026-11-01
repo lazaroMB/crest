@@ -109,10 +109,11 @@ impl RipgrepSearch {
     /// Checks the configured `rg` and `fzf` (meant for startup; see
     /// [`ToolReport::problems`]).
     pub async fn check_tools(&self) -> ToolReport {
-        ToolReport {
-            rg: detect::detect(Tool::Ripgrep, &self.rg).await,
-            fzf: detect::detect(Tool::Fzf, &self.fzf).await,
-        }
+        let (rg, fzf) = tokio::join!(
+            detect::detect(Tool::Ripgrep, &self.rg),
+            detect::detect(Tool::Fzf, &self.fzf)
+        );
+        ToolReport { rg, fzf }
     }
 }
 

@@ -7,9 +7,10 @@
 //! [`PreparedCall::run`] future performs it. Dropping that future cancels the
 //! call; adapters kill the processes they started when that happens.
 
-use std::collections::BTreeMap;
+use std::any::TypeId;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 
 use async_trait::async_trait;
 use domain::block::{BlockId, BlockKind};
@@ -286,18 +287,29 @@ pub trait TypedTool: Send + Sync {
 pub struct Typed<T>(pub T);
 
 impl<T: TypedTool> Typed<T> {
-    fn parse(&self, input: Value) -> Result<T::Input, ToolError> {
-        <T::Input as serde::Deserialize>::deserialize(&input).map_err(|err| {
+    fn parse(&self, input: &Value) -> Result<T::Input, ToolError> {
+        <T::Input as serde::Deserialize>::deserialize(input).map_err(|err| {
             ToolError::InvalidInput {
                 tool: self.0.name().to_owned(),
-                message: input_hint(
-                    &err.to_string(),
-                    &schemars::schema_for!(T::Input).to_value(),
-                    &input,
-                ),
+                message: input_hint(&err.to_string(), &schema_of::<T::Input>(), input),
             }
         })
     }
+}
+
+/// The JSON Schema of `I`, derived once per type: deriving it walks the
+/// whole type with `schemars`, and the definitions of every tool are
+/// built again whenever the tools change.
+fn schema_of<I: JsonSchema + 'static>() -> Arc<Value> {
+    // One map for every `I`: a static in a generic function is shared by
+    // all its instances.
+    static SCHEMAS: LazyLock<Mutex<HashMap<TypeId, Arc<Value>>>> = LazyLock::new(Mutex::default);
+    let mut schemas = SCHEMAS.lock().unwrap_or_else(PoisonError::into_inner);
+    Arc::clone(
+        schemas
+            .entry(TypeId::of::<I>())
+            .or_insert_with(|| Arc::new(schemars::schema_for!(I).to_value())),
+    )
 }
 
 /// The deserializer's `error` plus what the model needs to retry: the
@@ -363,18 +375,18 @@ impl<T: TypedTool> Tool for Typed<T> {
     }
 
     fn input_schema(&self) -> Value {
-        schemars::schema_for!(T::Input).to_value()
+        schema_of::<T::Input>().as_ref().clone()
     }
 
     /// An input that does not parse is treated as the strictest effect;
     /// [`prepare`](Tool::prepare) rejects it anyway.
     fn effect(&self, input: &Value) -> ToolEffect {
-        self.parse(input.clone())
+        self.parse(input)
             .map_or(ToolEffect::Execute, |input| self.0.effect(&input))
     }
 
     async fn prepare(&self, input: Value, ctx: &ToolContext) -> Result<PreparedCall, ToolError> {
-        let input = self.parse(input)?;
+        let input = self.parse(&input)?;
         self.0.prepare(input, ctx).await
     }
 }
@@ -403,6 +415,23 @@ fn valid_name(name: &str) -> bool {
 pub trait ToolSource: Send + Sync {
     /// The tools available right now.
     fn tools(&self) -> Vec<Arc<dyn Tool>>;
+
+    /// A number that changes whenever [`tools`](Self::tools) does, so the
+    /// registry can keep the definitions it built from them. `None` (a
+    /// source that cannot tell) builds them again on every request.
+    fn revision(&self) -> Option<u64> {
+        None
+    }
+}
+
+/// The definitions the registry built last, if it may keep them.
+#[derive(Default)]
+struct DefinitionsCache(Mutex<Option<CachedDefinitions>>);
+
+/// Definitions and the source revisions they were built from.
+struct CachedDefinitions {
+    revisions: Vec<u64>,
+    definitions: Arc<[ToolDefinition]>,
 }
 
 /// The tools offered to the model, by name, the redactor their results
@@ -413,6 +442,8 @@ pub struct ToolRegistry {
     sources: Vec<Arc<dyn ToolSource>>,
     budget: ResultBudget,
     redactor: Redactor,
+    /// Shared by clones until one of them changes its tools.
+    definitions: Arc<DefinitionsCache>,
 }
 
 impl ToolRegistry {
@@ -470,12 +501,14 @@ impl ToolRegistry {
             return Err(RegisterError::Duplicate(name));
         }
         self.tools.insert(name, tool);
+        self.definitions = Arc::default();
         Ok(())
     }
 
     /// Adds `source`, whose tools are offered next to the registered ones.
     pub fn add_source(&mut self, source: Arc<dyn ToolSource>) {
         self.sources.push(source);
+        self.definitions = Arc::default();
     }
 
     /// The tools of the sources that are valid and not shadowed, by name.
@@ -538,12 +571,34 @@ impl ToolRegistry {
 
     /// Definitions for [`LlmRequest::tools`](crate::ports::llm::LlmRequest),
     /// sorted by name so the prompt cache sees the same prefix every turn.
+    ///
+    /// Built once and shared (the same `Arc`) until a tool is registered or
+    /// a source reports a new [`revision`](ToolSource::revision).
     #[must_use]
-    pub fn definitions(&self) -> Vec<ToolDefinition> {
-        self.all()
+    pub fn definitions(&self) -> Arc<[ToolDefinition]> {
+        // Read before the tools: a source bumps its revision after its
+        // list changed, so these never describe an older list.
+        let revisions: Option<Vec<u64>> = self.sources.iter().map(|s| s.revision()).collect();
+        let mut cache = self
+            .definitions
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        if let (Some(revisions), Some(cached)) = (&revisions, cache.as_ref())
+            && *revisions == cached.revisions
+        {
+            return Arc::clone(&cached.definitions);
+        }
+        let definitions: Arc<[ToolDefinition]> = self
+            .all()
             .values()
             .map(|tool| ToolDefinition::new(tool.name(), tool.description(), tool.input_schema()))
-            .collect()
+            .collect();
+        *cache = revisions.map(|revisions| CachedDefinitions {
+            revisions,
+            definitions: Arc::clone(&definitions),
+        });
+        definitions
     }
 
     /// Prepares a call to the tool `name`.
@@ -712,6 +767,69 @@ mod tests {
         let tool = registry.get("echo").unwrap();
         assert_eq!(tool.effect(&json!({ "text": "x" })), ToolEffect::Read);
         assert_eq!(tool.effect(&json!({})), ToolEffect::Execute);
+    }
+
+    /// A source whose tools and revision the test sets.
+    #[derive(Default)]
+    struct Source {
+        tools: Mutex<Vec<Arc<dyn Tool>>>,
+        revision: std::sync::atomic::AtomicU64,
+    }
+
+    impl Source {
+        fn set(&self, names: &[&'static str]) {
+            *self.tools.lock().unwrap() = names
+                .iter()
+                .map(|name| Arc::new(Typed(Echo(name))) as Arc<dyn Tool>)
+                .collect();
+            self.revision
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    impl ToolSource for Source {
+        fn tools(&self) -> Vec<Arc<dyn Tool>> {
+            self.tools.lock().unwrap().clone()
+        }
+
+        fn revision(&self) -> Option<u64> {
+            Some(self.revision.load(std::sync::atomic::Ordering::SeqCst))
+        }
+    }
+
+    #[test]
+    fn definitions_are_shared_until_the_tools_change() {
+        let source = Arc::new(Source::default());
+        let mut registry = registry();
+        registry.add_source(Arc::clone(&source) as Arc<dyn ToolSource>);
+        let first = registry.definitions();
+        assert!(Arc::ptr_eq(&first, &registry.definitions()));
+        assert!(Arc::ptr_eq(&first, &registry.clone().definitions()));
+
+        source.set(&["mcp_echo"]);
+        let second = registry.definitions();
+        assert!(!Arc::ptr_eq(&first, &second));
+        let names: Vec<_> = second.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(names, ["echo", "mcp_echo"]);
+
+        registry.register_typed(Echo("other")).unwrap();
+        assert_eq!(registry.definitions().len(), 3);
+    }
+
+    #[test]
+    fn sources_without_a_revision_are_listed_every_time() {
+        struct Plain;
+        impl ToolSource for Plain {
+            fn tools(&self) -> Vec<Arc<dyn Tool>> {
+                Vec::new()
+            }
+        }
+        let mut registry = registry();
+        registry.add_source(Arc::new(Plain));
+        assert!(!Arc::ptr_eq(
+            &registry.definitions(),
+            &registry.definitions()
+        ));
     }
 
     #[test]

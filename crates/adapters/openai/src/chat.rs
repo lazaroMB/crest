@@ -538,7 +538,8 @@ mod tests {
         req.system = vec![SystemBlock::cached("Eres crest."), SystemBlock::new("Hoy.")];
         req.tools = vec![
             ToolDefinition::new("find_file", "Finds files", json!({ "type": "object" })).cached(),
-        ];
+        ]
+        .into();
         insta::assert_json_snapshot!(build(&req, &ModelId::from("glm-5.3")));
     }
 }

@@ -108,6 +108,23 @@ async fn a_failing_hook_is_a_notice_and_the_call_goes_on() {
 }
 
 #[tokio::test]
+async fn hooks_of_a_kind_with_none_registered_are_skipped() {
+    let host = FakePluginHost::new().on_hook(HookKind::BeforeTool, |_| Ok(HookOutcome::Continue));
+    let (mut h, host) = harness(echo("a"), host);
+    h.run("hola").await.unwrap();
+
+    assert_eq!(h.tool_results(), [("echo: a".to_owned(), false)]);
+    // The before_tool hook ran; no after_tool event crossed the port.
+    assert_eq!(
+        host.invocations(),
+        [PluginInvocation::Hook(HookEvent::BeforeTool {
+            name: "echo".into(),
+            input: json!({ "text": "a" }),
+        })]
+    );
+}
+
+#[tokio::test]
 async fn without_a_plugin_host_no_hook_runs() {
     let mut h = Harness::new(echo("a"));
     h.run("hola").await.unwrap();

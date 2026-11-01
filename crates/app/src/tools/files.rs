@@ -1405,7 +1405,7 @@ mod tests {
                 "write_file"
             ]
         );
-        for def in registry.definitions() {
+        for def in registry.definitions().iter() {
             insta::assert_json_snapshot!(def.name.clone(), def);
         }
     }
@@ -1414,10 +1414,10 @@ mod tests {
     fn schemas_mark_only_inputs_without_default_as_required() {
         let required: Vec<(String, Value)> = registry()
             .definitions()
-            .into_iter()
+            .iter()
             .map(|def| {
                 (
-                    def.name,
+                    def.name.clone(),
                     def.input_schema
                         .get("required")
                         .cloned()
