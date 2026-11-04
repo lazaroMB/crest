@@ -341,7 +341,17 @@ impl TimelineView {
         if m.control || m.alt || m.platform || crate::widgets::owns_focus(window, cx) {
             return;
         }
-        let action = match event.keystroke.key.as_str() {
+        let key = event.keystroke.key.as_str();
+        let arrow = arrow_action(key, self.outline_open);
+        if arrow.starts_with("outline.") {
+            self.refresh_outline();
+            if let Some(block) = self.outline.step(arrow == "outline.next") {
+                self.choose_outline(block, cx);
+            }
+            cx.stop_propagation();
+            return;
+        }
+        let action = match key {
             "up" => "block.prev",
             "down" => "block.next",
             "home" => "block.first",
@@ -802,6 +812,18 @@ fn copy_text_of(view: WeakEntity<TimelineView>) -> crate::blocks::copy::CopyText
     })
 }
 
+/// Where an arrow key goes: the menu of questions takes Up and Down only
+/// while it is open, any other time they move blocks.
+fn arrow_action(key: &str, outline_open: bool) -> &'static str {
+    match (key, outline_open) {
+        ("up", true) => "outline.prev",
+        ("down", true) => "outline.next",
+        ("up", false) => "block.prev",
+        ("down", false) => "block.next",
+        _ => "none",
+    }
+}
+
 impl Focusable for TimelineView {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus_handle.clone()
@@ -1127,6 +1149,17 @@ mod tests {
             assert!(scroll.offset().y < px(0.), "down to the current question");
             assert!(crate::keyscroll::is_visible(scroll, 39), "which is in view");
         });
+        // Open, the arrows walk the questions (not the blocks); after Esc
+        // they move blocks again.
+        assert_eq!(arrow_action("up", false), "block.prev");
+        let steps = [("up", 76, true), ("down", 78, true), ("down", 78, true)]
+            .into_iter()
+            .chain([("escape", 78, false), ("up", 77, false)]);
+        for (key, selected, open) in steps {
+            cx.simulate_keystrokes(key);
+            let held = view.read_with(cx, |v, _| (v.state().selected(), v.outline_open()));
+            assert_eq!(held, (Some(selected), open), "after {key}");
+        }
     }
 
     #[gpui::test]

@@ -54,6 +54,20 @@ impl Outline {
         self.groups.is_empty()
     }
 
+    /// The block of the question one step before or after the current
+    /// one, stopping at the first and last. With no current question,
+    /// forward goes to the first and back to the last.
+    pub fn step(&self, forward: bool) -> Option<usize> {
+        let items: Vec<&OutlineItem> = self.groups.iter().flat_map(|g| &g.items).collect();
+        let target = match items.iter().position(|item| item.active) {
+            Some(at) if forward => (at + 1).min(items.len() - 1),
+            Some(at) => at.saturating_sub(1),
+            None if forward => 0,
+            None => items.len().checked_sub(1)?,
+        };
+        items.get(target).map(|item| item.block)
+    }
+
     /// One mark per row. A heading with no rows yet still leaves a mark,
     /// aimed at the heading itself.
     pub fn marks(&self) -> Vec<OutlineMark> {
@@ -209,5 +223,19 @@ mod tests {
         let label = &listed.groups[0].items[0].label;
         assert_eq!(label.chars().count(), LABEL_LIMIT + 1);
         assert!(label.ends_with('…'));
+    }
+
+    #[test]
+    fn stepping_walks_the_questions_and_stops_at_the_ends() {
+        let entries = vec![prompt("a"), text("r"), prompt("b"), text("r"), prompt("c")];
+        let at = |sel| chat_outline(&entries, sel);
+        assert_eq!(at(Some(0)).step(true), Some(2));
+        assert_eq!(at(Some(3)).step(true), Some(4), "from a reply of b");
+        assert_eq!(at(Some(4)).step(true), Some(4));
+        assert_eq!(at(Some(2)).step(false), Some(0));
+        assert_eq!(at(Some(0)).step(false), Some(0));
+        assert_eq!(at(None).step(true), Some(0));
+        assert_eq!(at(None).step(false), Some(4));
+        assert_eq!(chat_outline(&[], None).step(true), None);
     }
 }
