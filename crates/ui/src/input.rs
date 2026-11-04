@@ -48,6 +48,7 @@
 pub mod attachments;
 pub mod completion;
 pub mod cursor;
+mod groups;
 pub mod history;
 mod keys;
 pub mod model_popup;
@@ -216,6 +217,8 @@ pub struct InputView {
     /// Wheel pixels over a popup not yet a whole row.
     wheel_rest: f32,
     palette_hidden: bool,
+    /// The group of commands opened in the palette (`/` alone), by name.
+    palette_group: Option<String>,
     paths: PathCompletion,
     models: ModelCompletion,
     /// The model the next turn uses, marked in the `/model ` popup.
@@ -265,9 +268,7 @@ impl InputView {
         });
         let changes = cx.subscribe(&editor, |this, _, event, cx| {
             if matches!(event, EditorEvent::Change) {
-                this.palette_selected = 0;
-                this.palette_top = 0;
-                this.palette_hidden = false;
+                this.reset_palette();
                 let text = this.text(cx);
                 this.paths.request(&text, cx);
                 if this.models.wants_listing(&text) {
@@ -303,6 +304,7 @@ impl InputView {
             palette_top: 0,
             wheel_rest: 0.0,
             palette_hidden: false,
+            palette_group: None,
             paths: PathCompletion::default(),
             models: ModelCompletion::default(),
             current_model: None,

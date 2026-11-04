@@ -11,6 +11,7 @@ use gpui::{
 use gpui_component::v_flex;
 
 use super::completion::{PALETTE_ROWS, scroll_window, window_note};
+use super::groups;
 use super::palette::{Choice, choice};
 use super::*;
 use crate::session::ModelChoice;
@@ -162,9 +163,9 @@ fn the_palette_completes_and_runs_commands(cx: &mut TestAppContext) {
     assert!(take(&events).is_empty());
     view.read_with(cx, |view, cx| assert_eq!(view.text(cx), "/implement "));
     view.update_in(cx, |view, window, cx| view.set_text("", window, cx));
-    // Up/Down choose; Tab completes.
+    // Up/Down choose; Tab completes (a `/` alone lists the groups: Tab opens one).
     cx.simulate_input("/");
-    cx.simulate_keystrokes("down tab");
+    cx.simulate_keystrokes("tab down tab");
     view.read_with(cx, |view, cx| assert_eq!(view.text(cx), "/implement "));
     // Esc hides it until the text changes.
     view.update_in(cx, |view, window, cx| view.set_text("/h", window, cx));
@@ -508,7 +509,7 @@ fn popup_windows_say_what_is_left_and_scroll_with_the_choice() {
 fn arrows_reach_the_last_command_of_the_palette(cx: &mut TestAppContext) {
     let (view, cx, events) = input(cx);
     view.update(cx, |view, cx| view.set_commands(commands(20), cx));
-    cx.simulate_input("/");
+    cx.simulate_input("/cmd");
     let total = view.read_with(cx, |view, cx| view.palette(cx).len());
     assert!(total > PALETTE_ROWS, "more commands than rows: {total}");
     let last = view.read_with(cx, |view, cx| view.palette(cx)[total - 1].name.clone());
@@ -537,7 +538,7 @@ fn the_wheel_scrolls_the_palette(cx: &mut TestAppContext) {
     use gpui::{Modifiers, ScrollDelta, TouchPhase, point};
     let (view, cx, _) = input(cx);
     view.update(cx, |view, cx| view.set_commands(commands(20), cx));
-    cx.simulate_input("/");
+    cx.simulate_input("/cmd");
     cx.update(|window, _| window.refresh());
     cx.run_until_parked();
     let at = cx
@@ -773,7 +774,11 @@ fn the_palette_prefers_prefixes() {
             .map(|r| r.name.as_str())
             .collect()
     };
-    assert_eq!(names("/"), ["research", "clear", "mcp"]);
+    assert_eq!(
+        names("/"),
+        ["research", "clear", "mcp"],
+        "the rows behind the groups"
+    );
     assert_eq!(names("/c"), ["clear", "research", "mcp"]);
     assert_eq!(names("/re"), ["research"]);
     assert!(names("/research x").is_empty());
@@ -815,4 +820,65 @@ fn named_and_chorded_keys_keep_modifiers() {
 #[test]
 fn bare_modifiers_are_not_keys() {
     assert_eq!(key("shift"), None);
+}
+
+fn listed(view: &Entity<InputView>, cx: &mut VisualTestContext) -> (Vec<String>, Vec<String>) {
+    view.read_with(cx, |view, cx| {
+        let groups = view
+            .palette_groups(cx)
+            .iter()
+            .map(|g| format!("{} {}", g.label, g.count))
+            .collect();
+        (
+            groups,
+            view.palette(cx).iter().map(|r| r.name.clone()).collect(),
+        )
+    })
+}
+
+#[gpui::test]
+fn a_slash_alone_lists_groups_and_a_group_lists_its_commands(cx: &mut TestAppContext) {
+    let (view, cx, events) = input(cx);
+    view.update(cx, |view, cx| view.set_commands(groups::sample(), cx));
+    cx.simulate_input("/");
+    cx.update(|window, _| window.refresh());
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("input-popups").is_some(), "drawn");
+    let (groups, commands) = listed(&view, cx);
+    let wanted = ["Chat 2", "Model & permissions 1", "Workspace 2", "App 1"];
+    assert_eq!(groups[..4], wanted);
+    assert_eq!(groups[4], "Plugin · jira-tools 2");
+    assert!(commands.is_empty());
+    // Down to the second group, Right opens it; Left goes back with it chosen.
+    cx.simulate_keystrokes("down right");
+    assert_eq!(listed(&view, cx), (vec![], vec!["mode".to_string()]));
+    cx.simulate_keystrokes("left");
+    assert_eq!(listed(&view, cx).0.len(), 5);
+    view.read_with(cx, |view, _| assert_eq!(view.palette_selected, 1));
+    // Enter opens a group, Backspace goes back and keeps the slash.
+    cx.simulate_keystrokes("enter backspace");
+    assert_eq!(listed(&view, cx).0.len(), 5);
+    view.read_with(cx, |view, cx| assert_eq!(view.text(cx), "/"));
+    // On the groups, Backspace deletes the slash.
+    cx.simulate_keystrokes("backspace");
+    view.read_with(cx, |view, cx| assert_eq!(view.text(cx), ""));
+    // A command of an opened group runs as it does anywhere.
+    cx.simulate_input("/");
+    cx.simulate_keystrokes("tab enter");
+    assert_eq!(take(&events), [InputEvent::Command("clear".into())]);
+}
+
+#[gpui::test]
+fn typing_after_the_slash_searches_every_group(cx: &mut TestAppContext) {
+    let (view, cx, _) = input(cx);
+    view.update(cx, |view, cx| view.set_commands(groups::sample(), cx));
+    cx.simulate_input("/mo");
+    assert_eq!(listed(&view, cx), (vec![], vec!["mode".to_string()]));
+    view.update_in(cx, |view, window, cx| view.set_text("/mode ", window, cx));
+    assert_eq!(listed(&view, cx).1, ["mode plan"]);
+    // Opening a group and typing more leaves the group.
+    view.update_in(cx, |view, window, cx| view.set_text("/", window, cx));
+    cx.simulate_keystrokes("right");
+    cx.simulate_input("h");
+    assert_eq!(listed(&view, cx).1, ["help"]);
 }

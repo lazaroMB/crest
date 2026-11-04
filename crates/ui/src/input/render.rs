@@ -43,7 +43,7 @@ impl Render for InputView {
             }
         });
         let palette = if completion.is_none() {
-            let total = self.palette(cx).len();
+            let total = self.palette_len(cx);
             if total > 0 {
                 let selected = self.palette_selected.min(total - 1);
                 self.palette_top = palette_top(selected, self.palette_top, total);
