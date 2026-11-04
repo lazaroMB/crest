@@ -279,3 +279,24 @@ fn dispatch_leaves_the_session_commands_and_unknown_actions() {
     }
     assert!(fake.calls.lock().unwrap().is_empty());
 }
+
+#[test]
+fn every_group_is_used_and_the_shell_is_in_chat() {
+    for group in CommandGroup::ALL {
+        assert!(CATALOG.iter().any(|info| info.group == group), "{group:?}");
+    }
+    let shell = CATALOG.iter().find(|info| info.name == "!").unwrap();
+    assert_eq!(shell.group.label(), "Chat");
+    let labels = CommandGroup::ALL.map(CommandGroup::label);
+    assert_eq!(
+        labels,
+        [
+            "Chat",
+            "Flows",
+            "Stages",
+            "Model & permissions",
+            "Workspace",
+            "App"
+        ]
+    );
+}

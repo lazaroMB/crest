@@ -980,12 +980,12 @@ fn tool(name: &str, description: &str, source: ToolSource, effect: &str) -> Tool
 
 fn help_snapshot() -> HelpSnapshot {
     HelpSnapshot {
-        commands: vec![CommandRow {
-            name: "demo".into(),
-            usage: "/demo [chart|table|diagram|json|diff|ask]".into(),
-            description: "Tour of what plugins can show".into(),
-            source: "showcase".into(),
-        }],
+        commands: vec![CommandRow::of_plugin(
+            "showcase",
+            "demo",
+            "/demo [chart|table|diagram|json|diff|ask]",
+            "Tour of what plugins can show",
+        )],
         tools: vec![
             tool(
                 "read_file",

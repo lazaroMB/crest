@@ -2,6 +2,7 @@
 //! popups.
 
 use application_core::ports::events::{DomainEvent, NoticeLevel};
+use application_core::usecases::commands::CommandGroup;
 use domain::model::ModelId;
 use domain::permission::PermissionMode;
 use gpui::{Context, Window};
@@ -17,6 +18,7 @@ pub(super) fn mode_rows() -> Vec<crate::help::CommandRow> {
             usage: format!("/mode {mode}"),
             description: format!("Set the permission mode to {mode}"),
             source: crate::help::BUILTIN_SOURCE.into(),
+            group: CommandGroup::ModelAndPermissions.label().into(),
         })
         .collect()
 }

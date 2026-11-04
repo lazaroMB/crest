@@ -88,6 +88,7 @@ fn row(name: &str, usage: &str) -> CommandRow {
         usage: usage.into(),
         description: format!("does {name}"),
         source: "crest".into(),
+        group: "Chat".into(),
     }
 }
 
