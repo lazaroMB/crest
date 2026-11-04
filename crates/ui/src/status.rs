@@ -19,8 +19,13 @@ use gpui::{
 };
 use gpui_component::{ActiveTheme as _, h_flex};
 
+use crate::activity::{Entry, Log};
+
 /// How long a transient notice stays in the status bar.
 pub const NOTICE_TTL: Duration = Duration::from_secs(6);
+/// Most kept notices; past it the oldest goes. A retry storm adds a warning
+/// per attempt, and a list nobody reads would only bury the newest.
+pub const MAX_KEPT: usize = 20;
 
 /// Formats a cost in USD: two decimals from one dollar up, otherwise up to
 /// four (trailing zeros beyond the second dropped), so small sessions
@@ -62,6 +67,27 @@ pub struct Notice {
     pub expires_at: Instant,
 }
 
+/// An error or warning that stays until the person dismisses it, after the
+/// status bar has cleared it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct KeptNotice {
+    /// Grows with every kept notice and is never reused, so a view can tell
+    /// a new one from the last it saw.
+    pub id: u64,
+    /// Severity: only `Error` or `Warning`.
+    pub level: NoticeLevel,
+    /// Text to show.
+    pub message: String,
+    /// When it was added, for a brief preview.
+    pub added_at: Instant,
+}
+
+impl Entry for KeptNotice {
+    fn id(&self) -> u64 {
+        self.id
+    }
+}
+
 /// What the status bar shows.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StatusState {
@@ -76,6 +102,10 @@ pub struct StatusState {
     unpriced: Option<ModelId>,
     busy: bool,
     notice: Option<Notice>,
+    /// The kept notices, oldest first, in the order they were added. They
+    /// outlive [`NOTICE_TTL`] and leave only through [`Log::dismiss`] or the
+    /// [`MAX_KEPT`] cap.
+    pub kept: Log<KeptNotice, MAX_KEPT>,
 }
 
 impl StatusState {
@@ -92,6 +122,7 @@ impl StatusState {
             unpriced: None,
             busy: false,
             notice: None,
+            kept: Log::default(),
         }
     }
 
@@ -211,6 +242,14 @@ impl StatusState {
     }
 
     fn show(&mut self, level: NoticeLevel, message: String, now: Instant) {
+        if level != NoticeLevel::Info {
+            self.kept.push(|id| KeptNotice {
+                id,
+                level,
+                message: message.clone(),
+                added_at: now,
+            });
+        }
         self.notice = Some(Notice {
             level,
             message,
@@ -558,6 +597,32 @@ mod tests {
             notice,
             Some((NoticeLevel::Error, "turn failed: overloaded".into()))
         );
+        // Both are kept after the bar clears them, an info one is not, and
+        // dismissing one leaves the other; the list is capped.
+        let later = now + NOTICE_TTL;
+        state.apply(
+            &DomainEvent::Notice {
+                level: NoticeLevel::Info,
+                message: "i".into(),
+            },
+            later,
+        );
+        assert!(state.expire(later + NOTICE_TTL));
+        let kept: Vec<_> = state.kept.items().iter().map(|n| (n.id, n.level)).collect();
+        assert_eq!(kept, [(0, NoticeLevel::Warning), (1, NoticeLevel::Error)]);
+        assert!(state.kept.dismiss(0) && !state.kept.dismiss(0));
+        assert_eq!(state.kept.items().len(), 1);
+        for _ in 0..MAX_KEPT {
+            state.apply(
+                &DomainEvent::Retrying {
+                    attempt: 1,
+                    delay_ms: 0,
+                },
+                later,
+            );
+        }
+        assert_eq!(state.kept.items().len(), MAX_KEPT);
+        assert_eq!(state.kept.items()[0].id, 2, "the oldest went");
     }
 
     #[gpui::test]

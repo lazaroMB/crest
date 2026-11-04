@@ -36,6 +36,55 @@ pub const FRAME: Duration = Duration::from_millis(100);
 pub const SHOW_AFTER: Duration = Duration::from_millis(150);
 /// Characters of a queued prompt or a detail shown before an ellipsis.
 const MAX_CHARS: usize = 120;
+/// Most finished steps kept; past it the oldest goes.
+pub const MAX_STEPS: usize = 50;
+
+/// An entry of a [`Log`], told apart by its id.
+pub trait Entry {
+    /// The id [`Log::push`] gave it.
+    fn id(&self) -> u64;
+}
+
+/// Entries oldest first, each with an id that grows and is never reused,
+/// at most `CAP` of them: past it the oldest goes, so it cannot grow
+/// without bound.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Log<T, const CAP: usize> {
+    items: Vec<T>,
+    next_id: u64,
+}
+
+impl<T, const CAP: usize> Default for Log<T, CAP> {
+    fn default() -> Self {
+        Self {
+            items: Vec::new(),
+            next_id: 0,
+        }
+    }
+}
+
+impl<T: Entry, const CAP: usize> Log<T, CAP> {
+    /// Appends the entry `make` builds from its new id.
+    pub fn push(&mut self, make: impl FnOnce(u64) -> T) {
+        if self.items.len() == CAP {
+            self.items.remove(0);
+        }
+        self.items.push(make(self.next_id));
+        self.next_id += 1;
+    }
+
+    /// The entries, oldest first.
+    pub fn items(&self) -> &[T] {
+        &self.items
+    }
+
+    /// Removes the entry `id`, and only it; returns whether it was there.
+    pub fn dismiss(&mut self, id: u64) -> bool {
+        let before = self.items.len();
+        self.items.retain(|item| item.id() != id);
+        self.items.len() != before
+    }
+}
 
 /// What the session is busy with.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,19 +119,63 @@ struct Work {
     detail: Option<String>,
 }
 
+impl Work {
+    /// The step this work was, ended at `now`.
+    fn into_step(self, id: u64, now: Instant) -> Step {
+        let elapsed = now.saturating_duration_since(self.started);
+        let mut label = self.kind.verb();
+        if let Some(detail) = &self.detail {
+            label = format!("{label} · {}", truncate(detail, MAX_CHARS));
+        }
+        Step {
+            id,
+            label,
+            elapsed,
+            short: elapsed < SHOW_AFTER,
+        }
+    }
+}
+
+/// A finished step: one run of work from its start to its end.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Step {
+    /// Grows with every step and is never reused.
+    pub id: u64,
+    /// The verb and what was going on last, e.g. `Working · grep "foo"`.
+    pub label: String,
+    /// How long it ran.
+    pub elapsed: Duration,
+    /// It ended before [`SHOW_AFTER`], so the live line never showed it.
+    pub short: bool,
+}
+
+impl Entry for Step {
+    fn id(&self) -> u64 {
+        self.id
+    }
+}
+
 /// The model of the activity line and the queue.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ActivityState {
     work: Option<Work>,
     queue: Vec<String>,
+    /// The finished steps, oldest first, short ones included; dismiss one
+    /// with [`Log::dismiss`].
+    pub steps: Log<Step, MAX_STEPS>,
 }
 
 impl ActivityState {
     /// Starts, changes the kind of, or (`None`) ends the work. The start
-    /// time and progress of work that goes on are kept.
+    /// time and progress of work that goes on are kept. Ending work records
+    /// it as a [`Step`], measured from its start to `now`.
     pub fn set_work(&mut self, kind: Option<WorkKind>, now: Instant) {
         match (kind, &mut self.work) {
-            (None, _) => self.work = None,
+            (None, _) => {
+                if let Some(work) = self.work.take() {
+                    self.steps.push(|id| work.into_step(id, now));
+                }
+            }
             (Some(kind), Some(work)) => work.kind = kind,
             (Some(kind), None) => {
                 self.work = Some(Work {
@@ -364,6 +457,41 @@ mod tests {
         assert_eq!(
             state.line(now + Duration::from_secs(3), 0).as_deref(),
             Some("⠋ Working · 3s · Ctrl+C interrupts")
+        );
+    }
+
+    #[test]
+    fn every_finished_step_is_logged_and_short_ones_never_showed() {
+        let now = Instant::now();
+        let mut state = ActivityState::default();
+        state.set_work(None, now);
+        assert!(state.steps.items().is_empty(), "nothing ran");
+        state.set_work(Some(WorkKind::Turn), now);
+        state.apply(&tool("grep", "\"foo\""));
+        let end = now + SHOW_AFTER / 2;
+        assert_eq!(state.line(end, 0), None, "the live line never showed it");
+        state.set_work(None, end);
+        state.set_work(Some(WorkKind::Command("research".into())), end);
+        state.set_work(None, end + Duration::from_secs(3));
+        let steps: Vec<_> = state
+            .steps
+            .items()
+            .iter()
+            .map(|s| (s.id, s.short))
+            .collect();
+        assert_eq!(steps, [(0, true), (1, false)]);
+        assert_eq!(state.steps.items()[0].label, "Working · grep \"foo\"");
+        assert_eq!(state.steps.items()[1].elapsed, Duration::from_secs(3));
+        assert!(state.steps.dismiss(0) && !state.steps.dismiss(0));
+        assert_eq!(state.steps.items().len(), 1);
+        for _ in 0..MAX_STEPS + 3 {
+            state.set_work(Some(WorkKind::Turn), end);
+            state.set_work(None, end);
+        }
+        assert_eq!(state.steps.items().len(), MAX_STEPS);
+        assert_eq!(
+            state.steps.items().last().map(|s| s.id),
+            Some(MAX_STEPS as u64 + 4)
         );
     }
 
