@@ -130,7 +130,7 @@ pub const CATALOG: &[CommandInfo] = &[
     CommandInfo {
         name: "!",
         aliases: &[],
-        usage: "/! <command>",
+        usage: "! <command>",
         description: "Run a shell command in the workspace; its output is shown and goes to \
                       the model with the next prompt (also /!cmd)",
         handler: Handler::Controller,

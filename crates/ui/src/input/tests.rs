@@ -727,6 +727,11 @@ fn lines_are_prompts_or_commands() {
         classify_line("/!ls -la"),
         Some(Line::Command("!ls -la".into()))
     );
+    assert_eq!(
+        classify_line("  ! cat ~/file  "),
+        Some(Line::Command("! cat ~/file".into()))
+    );
+    assert_eq!(classify_line("!ls"), Some(Line::Command("!ls".into())));
 }
 
 #[test]
@@ -746,6 +751,10 @@ fn palette_choices_run_fixed_words_and_complete_arguments() {
     );
     assert_eq!(
         choice(&row("!", "/! <command>")),
+        Choice::Complete("/! ".into())
+    );
+    assert_eq!(
+        choice(&row("!", "! <command>")),
         Choice::Complete("/! ".into())
     );
 }

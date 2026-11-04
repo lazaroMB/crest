@@ -155,7 +155,8 @@ pub enum Line {
 }
 
 /// Splits a submitted line into a prompt or a `/command`; `//text` is the
-/// prompt `/text`. `None` for an empty line or a bare `/`.
+/// prompt `/text`; a line that starts with `!` is the shell command `!`
+/// (`! ls` is `/! ls`). `None` for an empty line or a bare `/`.
 pub fn classify_line(text: &str) -> Option<Line> {
     if text.trim().is_empty() {
         return None;
@@ -163,6 +164,9 @@ pub fn classify_line(text: &str) -> Option<Line> {
     let trimmed = text.trim_start();
     if let Some(literal) = trimmed.strip_prefix("//") {
         return Some(Line::Prompt(format!("/{literal}")));
+    }
+    if trimmed.starts_with('!') {
+        return Some(Line::Command(trimmed.trim_end().to_owned()));
     }
     match trimmed.strip_prefix('/') {
         Some(command) if command.trim().is_empty() => None,

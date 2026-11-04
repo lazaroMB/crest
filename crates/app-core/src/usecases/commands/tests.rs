@@ -133,10 +133,13 @@ fn the_controller_commands_read_their_arguments() {
 #[test]
 fn every_catalog_name_and_alias_is_a_command() {
     for info in CATALOG {
-        assert!(
-            info.usage.starts_with(&format!("/{}", info.name)),
-            "{info:?}"
-        );
+        // The shell command is typed as a bare `!` (`! ls`), not `/!`.
+        let typed = if info.name == "!" {
+            "!".to_owned()
+        } else {
+            format!("/{}", info.name)
+        };
+        assert!(info.usage.starts_with(&typed), "{info:?}");
         assert!(!info.description.is_empty(), "{info:?}");
         for name in std::iter::once(&info.name).chain(info.aliases) {
             let command = Command::parse(name);
