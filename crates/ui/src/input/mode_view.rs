@@ -3,7 +3,7 @@
 
 use gpui::{
     AnyElement, Context, InteractiveElement as _, IntoElement as _, ParentElement as _,
-    SharedString, StatefulInteractiveElement as _, Styled as _, canvas, div, px,
+    SharedString, StatefulInteractiveElement as _, Styled as _, div, px,
 };
 use gpui_component::{ActiveTheme as _, h_flex};
 
@@ -102,21 +102,7 @@ impl InputView {
         }
         let footer = "↑↓ choose · Enter pick · Esc close".to_owned();
         let menu = frame("mode-menu", rows, footer, cx.theme());
-        // Over the prompt row, out of the layout: no height is added, and it draws above the chat
-        // (the input comes after the timeline in the tree, so it paints later).
-        let area = self.mode_control.area.clone();
-        let measure = canvas(move |bounds, _, _| area.set(bounds), |_, (), _, _| {})
-            .absolute()
-            .top_0()
-            .left_0()
-            .size_full();
-        let overlay = div()
-            .absolute()
-            .bottom_full()
-            .left_0()
-            .child(menu)
-            .child(measure);
-        Some(overlay.into_any_element())
+        Some(h_flex().child(menu).into_any_element())
     }
 }
 

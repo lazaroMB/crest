@@ -158,17 +158,9 @@ pub(super) struct ModeControl {
     pub mode: ChatMode,
     /// The chosen row while the menu is open.
     pub menu: Option<usize>,
-    /// Where the open menu was drawn: it floats outside the input's own
-    /// bounds, so a click on it is not "outside" the input.
-    pub area: std::rc::Rc<std::cell::Cell<gpui::Bounds<gpui::Pixels>>>,
 }
 
 impl ModeControl {
-    /// Whether `at` is on the open menu.
-    pub fn holds(&self, at: gpui::Point<gpui::Pixels>) -> bool {
-        self.menu.is_some() && self.area.get().contains(&at)
-    }
-
     /// Opens the menu on the current mode, or closes it.
     pub fn toggle(&mut self) {
         let current = ChatMode::ALL.iter().position(|m| *m == self.mode);

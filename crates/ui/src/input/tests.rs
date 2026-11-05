@@ -1076,3 +1076,61 @@ fn a_click_away_closes_the_floating_menu(cx: &mut TestAppContext) {
     cx.simulate_click(gpui::point(px(900.), px(100.)), gpui::Modifiers::none());
     assert!(view.read_with(cx, |view, _| !view.mode_menu_open()));
 }
+
+#[gpui::test]
+fn every_popup_floats_above_the_prompt_and_adds_no_height(cx: &mut TestAppContext) {
+    use crate::session::ThemeChoice;
+    use application_testing::fs::{InMemoryFs, test_root};
+
+    let (view, cx, _events) = input(cx);
+    let models = (0..12).map(|i| ModelChoice {
+        alias: format!("anthropic:m{i}"),
+        model: ModelId::new(format!("anthropic:m{i}")),
+    });
+    let theme = |name: &str| ThemeChoice {
+        name: name.into(),
+        origin: "file".into(),
+        theme: crate::theme::default_theme(),
+    };
+    view.update(cx, |view, cx| {
+        view.set_commands(groups::sample(), cx);
+        view.set_file_search(Arc::new(InMemoryFs::new(test_root()).with_file("a.md", "")));
+        view.set_models(Ok(models.collect()), cx);
+        view.set_themes(Ok(vec![theme("a"), theme("b")]), cx);
+    });
+    cx.update(|window, _| window.refresh());
+    cx.run_until_parked();
+    let closed = cx.debug_bounds("crest-input").expect("drawn");
+    // (what is typed: the palette, the groups, `@`, models, themes, which-key)
+    for typed in ["/mo", "/", "@", "/model ", "/theme ", "ctrl-g"] {
+        if typed == "ctrl-g" {
+            cx.simulate_keystrokes(typed);
+        } else {
+            cx.simulate_input(typed);
+        }
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        let open = cx.debug_bounds("crest-input").expect("drawn");
+        // The line under the prompt that echoes a pending prefix is not a popup.
+        if typed != "ctrl-g" {
+            assert_eq!(open, closed, "{typed:?} takes no room in the layout");
+        }
+        let popups = cx.debug_bounds("input-popups").expect("popup drawn");
+        assert!(
+            popups.bottom() <= open.top(),
+            "{typed:?} is above the input"
+        );
+        cx.simulate_keystrokes("escape");
+        view.update_in(cx, |view, window, cx| view.set_text("", window, cx));
+    }
+}
+
+#[gpui::test]
+fn the_mode_menu_and_a_popup_are_never_open_together(cx: &mut TestAppContext) {
+    let (view, cx, _events) = input(cx);
+    view.update(cx, |view, cx| view.set_commands(groups::sample(), cx));
+    click("prompt-mode-button", cx);
+    cx.simulate_input("/");
+    assert!(view.read_with(cx, |view, _| !view.mode_menu_open()));
+    assert!(view.read_with(cx, |view, cx| !view.palette_groups(cx).is_empty()));
+}

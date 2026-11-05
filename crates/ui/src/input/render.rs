@@ -23,20 +23,12 @@ impl Render for InputView {
             })
             .clone();
         let tray = self.tray.render(mode_keys.as_deref(), cx);
-        let which_key = self.render_which_key(cx);
-        let mode_menu = self.render_mode_menu(cx);
         let mode_control = self.render_mode_control(cx);
-        let completion = self.render_completion(cx);
-        let palette = if completion.is_none() {
-            let total = self.palette_len(cx);
-            if total > 0 {
-                let selected = self.palette_selected.min(total - 1);
-                self.palette_top = palette_top(selected, self.palette_top, total);
-            }
-            self.render_palette(cx)
-        } else {
-            None
-        };
+        let popups = self.render_popups(cx);
+        let wide = !self.mode_menu_open();
+        let float = self
+            .float
+            .layer(popups, wide, window.viewport_size().height);
         let focused = self.owns_focus(window, cx);
         let theme = cx.theme();
         let (block, inverted, muted) = (theme.foreground, theme.background, theme.muted_foreground);
@@ -95,28 +87,43 @@ impl Render for InputView {
             .track_focus(&self.focus_handle)
             // A click anywhere else closes the popups.
             .on_mouse_down_out(cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
-                if !this.mode_control.holds(event.position) {
+                if !this.float.holds(event.position) {
                     this.hide_popups(cx);
                 }
             }))
             .font_family(theme.mono_font_family.clone())
-            .child(
-                // The wheel over a popup moves its window of rows.
-                v_flex()
-                    .id("input-popups")
-                    .debug_selector(|| "input-popups".to_owned())
-                    .on_scroll_wheel(cx.listener(Self::popup_wheel))
-                    .children(completion)
-                    .children(palette)
-                    .children(which_key),
-            )
+            .relative()
+            // The popups float above the input; the wheel over them moves their rows.
+            .children(float.map(|float| float.on_scroll_wheel(cx.listener(Self::popup_wheel))))
             .children(tray)
-            .child(div().relative().children(mode_menu).child(prompt))
+            .child(prompt)
             .children(status)
     }
 }
 
 impl InputView {
+    /// The popups to show, bottom-up as they stack above the prompt: the mode
+    /// menu, the completion list or the palette, the which-key hint.
+    fn render_popups(&mut self, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
+        let menu = self.render_mode_menu(cx);
+        let completion = self.render_completion(cx);
+        let palette = if completion.is_none() {
+            let total = self.palette_len(cx);
+            if total > 0 {
+                let selected = self.palette_selected.min(total - 1);
+                self.palette_top = palette_top(selected, self.palette_top, total);
+            }
+            self.render_palette(cx)
+        } else {
+            None
+        };
+        let which_key = self.render_which_key(cx);
+        [menu, completion, palette, which_key]
+            .into_iter()
+            .flatten()
+            .collect()
+    }
+
     /// The completion popup (`@`, `/model `, `/theme `), if one shows,
     /// after fitting its window of rows to the list.
     fn render_completion(&mut self, cx: &App) -> Option<gpui::AnyElement> {

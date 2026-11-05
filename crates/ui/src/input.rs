@@ -52,6 +52,7 @@
 pub mod attachments;
 pub mod completion;
 pub mod cursor;
+mod float;
 mod groups;
 pub mod history;
 mod keys;
@@ -85,6 +86,7 @@ use cursor::{BLINK_INTERVAL, Blink};
 
 use attachments::ImageMode;
 use domain::conversation::ImageAttachment;
+use float::Float;
 use history::PromptHistory;
 use mode::ModeControl;
 use model_popup::ModelCompletion;
@@ -244,6 +246,8 @@ pub struct InputView {
     tray: ImageTray,
     /// The prompt mode and its menu.
     mode_control: ModeControl,
+    /// Where the floating popups were drawn.
+    float: Float,
     /// The last step of the paste chain: images being prepared for the
     /// tray, or a prompt sent or an image mode switch pressed while some
     /// were, which waits for them.
@@ -314,6 +318,7 @@ impl InputView {
             theme_previewing: false,
             tray: ImageTray::default(),
             mode_control: ModeControl::default(),
+            float: Float::default(),
             attaching: None,
             pastes_pending: 0,
             history: PromptHistory::default(),
