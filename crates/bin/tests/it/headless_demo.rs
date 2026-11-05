@@ -124,6 +124,7 @@ async fn open_app(
         trust_plugins: Vec::new(),
         resume: false,
         session_id: None,
+        project: None,
     };
     let app = build_app(&config, frontend(&terminal, approval), overrides)
         .await
@@ -387,6 +388,7 @@ async fn app_with_init(init: &str) -> (tempfile::TempDir, App, Buffer) {
         trust_plugins: Vec::new(),
         resume: false,
         session_id: None,
+        project: None,
     };
     let app = build_app(&config, frontend(&terminal, approval), overrides)
         .await

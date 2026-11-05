@@ -117,6 +117,10 @@ impl SessionStorePort for SqliteSessionStore {
         self.run(move |conn| list(conn, &root)).await
     }
 
+    async fn list_all(&self) -> Result<Vec<SessionSummary>, StoreError> {
+        self.run(|conn| summaries(conn, "", [])).await
+    }
+
     async fn delete(&self, id: SessionId) -> Result<(), StoreError> {
         self.run(move |conn| delete(conn, id)).await
     }
@@ -381,28 +385,43 @@ pub(crate) fn latest_for_workspace(
 
 /// Lists the sessions of `root`, newest first, without decoding them.
 pub(crate) fn list(conn: &Connection, root: &str) -> Result<Vec<SessionSummary>, StoreError> {
+    summaries(conn, "WHERE workspace_root = ?1", [root])
+}
+
+/// The sessions `filter` keeps (a `WHERE` clause or nothing), newest first,
+/// without decoding them.
+fn summaries<P: rusqlite::Params>(
+    conn: &Connection,
+    filter: &str,
+    params: P,
+) -> Result<Vec<SessionSummary>, StoreError> {
     let sql = format!(
-        "SELECT id, title, workspace_root, updated_at, turn_count
-         FROM sessions WHERE workspace_root = ?1 {NEWEST_FIRST}"
+        "SELECT id, title, workspace_root, updated_at, turn_count, project_id
+         FROM sessions {filter} {NEWEST_FIRST}"
     );
     let mut stmt = conn.prepare(&sql).map_err(sql_error)?;
     let rows = stmt
-        .query_map([root], |row| {
+        .query_map(params, |row| {
             Ok((
                 row.get::<_, String>(0)?,
                 row.get::<_, Option<String>>(1)?,
                 row.get::<_, String>(2)?,
                 row.get::<_, i64>(3)?,
                 row.get::<_, i64>(4)?,
+                row.get::<_, Option<String>>(5)?,
             ))
         })
         .map_err(sql_error)?;
     rows.map(|row| {
-        let (id, title, workspace_root, updated_at, turns) = row.map_err(sql_error)?;
+        let (id, title, workspace_root, updated_at, turns, project) = row.map_err(sql_error)?;
         Ok(SessionSummary {
             id: parse_id(&id)?,
             title,
             workspace_root,
+            project_id: project
+                .as_deref()
+                .map(projects::parse_project_id)
+                .transpose()?,
             updated_at: from_i64(updated_at, "updated_at")?,
             turns: from_i64(turns, "turn_count")?,
         })
@@ -478,6 +497,9 @@ fn to_i64<T: TryInto<i64>>(value: T, field: &str) -> Result<i64, StoreError> {
         .try_into()
         .map_err(|_| StoreError::Backend(format!("{field} does not fit in SQLite")))
 }
+
+#[cfg(test)]
+mod listing_tests;
 
 #[cfg(test)]
 pub(crate) mod tests {
@@ -766,7 +788,7 @@ pub(crate) mod tests {
 
     use application_testing::system::InMemorySessionStore;
 
-    fn port(store: SqliteSessionStore) -> Arc<dyn SessionStorePort> {
+    pub(super) fn port(store: SqliteSessionStore) -> Arc<dyn SessionStorePort> {
         Arc::new(store)
     }
 

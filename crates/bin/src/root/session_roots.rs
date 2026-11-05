@@ -10,9 +10,11 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use adapter_fs::guard::canonical_root;
-use application::ports::store::SessionStorePort;
-use domain::conversation::Session;
+use application::ports::store::{SessionStorePort, StoreError};
+use application::usecases::sidebar::project_for_directory;
+use domain::conversation::{ProjectId, Session};
 use domain::permission::PermissionPolicy;
+use domain::project::Project;
 use domain::roots::WorkspaceRoots;
 use domain::workspace::WorkspaceRoot;
 use ui::timeline::TimelineState;
@@ -41,14 +43,66 @@ pub(super) async fn open_session(
 ) -> Opened {
     let permissions = Arc::new(Mutex::new(PermissionPolicy::new(config.mode)));
     let mut warnings = Vec::new();
-    let resumed = resume_session(store, config, root, timeline, &permissions, &mut warnings).await;
-    let roots = session_roots(store, &resumed.session, root, &mut warnings).await;
+    let mut resumed =
+        resume_session(store, config, root, timeline, &permissions, &mut warnings).await;
+    let roots = if config.is_standalone() {
+        WorkspaceRoots::default()
+    } else {
+        if let Some(store) = store
+            && let Err(warning) = join_project(store, config, &mut resumed).await
+        {
+            warnings.push(warning);
+        }
+        session_roots(store, &resumed.session, root, &mut warnings).await
+    };
     Opened {
         permissions,
         resumed,
         roots,
         warnings,
     }
+}
+
+/// Gives the session of a directory its project: the one `config` names for
+/// a new chat, else the one of the directory (made when there is none). A
+/// saved session that has none (saved before projects) is put in it. A store
+/// that fails is the warning to show, and leaves the session as it is.
+async fn join_project(
+    store: &Arc<dyn SessionStorePort>,
+    config: &Config,
+    opened: &mut Resumed,
+) -> Result<(), String> {
+    if opened.session.project_id.is_some() {
+        return Ok(());
+    }
+    let named = config.project.as_deref().and_then(ProjectId::parse);
+    let named = named.filter(|_| !opened.resumed);
+    let directory = &opened.session.workspace_root;
+    let project = project_to_join(store.as_ref(), named, directory)
+        .await
+        .map_err(|err| format!("the chat's project was not read: {err}"))?;
+    opened.session.project_id = Some(project.id);
+    if opened.resumed {
+        let moved = store
+            .move_session(opened.session.id, Some(project.id))
+            .await;
+        moved.map_err(|err| format!("the chat was not put in its project: {err}"))?;
+    }
+    Ok(())
+}
+
+/// The project `named` if the store has it, else the one of `directory`.
+async fn project_to_join(
+    store: &dyn SessionStorePort,
+    named: Option<ProjectId>,
+    directory: &str,
+) -> Result<Project, StoreError> {
+    if let Some(id) = named
+        && let Some(project) = store.projects().await?.into_iter().find(|p| p.id == id)
+    {
+        return Ok(project);
+    }
+    project_for_directory(store, directory).await
 }
 
 /// The roots of `session`, opened in `first`. A project directory that is

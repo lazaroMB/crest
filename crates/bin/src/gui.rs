@@ -37,7 +37,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use adapter_fs::LocalProjectBrowser;
-use adapter_search::RipgrepSearch;
 use application::decide::Decider;
 use application::flows::aside::{GateInfo, last_answer, preamble};
 use application::flows::implement::flow::{FlowError, FlowReply};
@@ -89,7 +88,7 @@ use futures::future::BoxFuture;
 use tokio::runtime::Handle;
 use tokio::task::AbortHandle;
 use ui::approval::UiApproval;
-use ui::chats::{ChatEntry, ProjectChats, SessionOpen, chat_label, project_name};
+use ui::chats::{Catalog, SessionOpen};
 use ui::form::UiForm;
 use ui::help::HelpSnapshot;
 use ui::session::{
@@ -1851,6 +1850,7 @@ pub fn session_parts(
             .then(crate::preferences::default_path)
             .flatten()
     });
+    let db_path = overrides.db_path.clone();
     let built = handle.block_on(build_app(config, frontend, overrides));
     let (mut parts, workspace) = match built {
         Ok(app) => {
@@ -1878,6 +1878,7 @@ pub fn session_parts(
             let prompt_history = app.prompt_history().clone();
             let needs_model = app.model_policy().needs_selection();
             let session_id = app.session.id.to_string();
+            let project_id = app.session.project_id.map(|id| id.to_string());
             let resume_pending = !app.session.pending_tool_uses().is_empty();
             let controller = Arc::new(
                 UiController::new(app, handle.clone()).with_api_keys(Arc::clone(&api_keys)),
@@ -1899,18 +1900,14 @@ pub fn session_parts(
             parts.prompt_history = prompt_history;
             parts.theme = theme;
             parts.session_id = Some(session_id);
+            parts.project_id = project_id;
             parts.resume_pending = resume_pending;
             (parts, workspace)
         }
         Err(err) => {
             let needs_login = err.chain().any(|e| e.is::<MissingApiKey>());
             let reason = format!("{err:#}");
-            let root = adapter_fs::guard::canonicalize_blocking(&config.workspace)
-                .map_err(anyhow::Error::from)
-                .and_then(|dir| WorkspaceRoot::new(dir).map_err(anyhow::Error::from))
-                // The workspace itself is the problem: report the original
-                // error, there is nothing to show.
-                .map_err(|_| err)?;
+            let root = fallback_root(config, db_path.as_deref()).map_err(|_| err)?;
             // Also on the terminal that started the window.
             eprintln!("warning: the agent is unavailable: {reason}");
             sink.emit(DomainEvent::BlockAdded {
@@ -1925,7 +1922,10 @@ pub fn session_parts(
                 }),
             });
             let workspace = root.as_path().to_path_buf();
-            let search = Arc::new(RipgrepSearch::new(root));
+            let search = Arc::new(crate::root::chat_home::search(
+                config.is_standalone(),
+                &root,
+            ));
             let files: Arc<dyn FileSearchPort> = search.clone();
             let content: Arc<dyn ContentSearchPort> = search;
             let controller = Arc::new(
@@ -1945,9 +1945,34 @@ pub fn session_parts(
         }
     };
     parts.forms = Some(forms);
-    parts.workspace_label = workspace_label(&workspace);
-    parts.workspace_dir = Some(workspace);
+    name_workspace(&mut parts, config, workspace);
     Ok(parts)
+}
+
+/// The workspace the window opens on when the agent is unavailable. The
+/// workspace itself being the problem is the caller's to report.
+fn fallback_root(
+    config: &Config,
+    db_path: Option<&std::path::Path>,
+) -> anyhow::Result<WorkspaceRoot> {
+    let dir = if config.is_standalone() {
+        crate::root::chat_home::home(db_path)
+    } else {
+        config.workspace.clone()
+    };
+    let dir = adapter_fs::guard::canonicalize_blocking(&dir)?;
+    Ok(WorkspaceRoot::new(dir)?)
+}
+
+/// What the status bar and the tree know of the workspace: for a chat with
+/// no directory, only a label (the folder crest keeps for it is not one).
+fn name_workspace(parts: &mut SessionParts, config: &Config, workspace: PathBuf) {
+    if config.is_standalone() {
+        parts.workspace_label = "Chat".into();
+    } else {
+        parts.workspace_label = workspace_label(&workspace);
+        parts.workspace_dir = Some(workspace);
+    }
 }
 
 /// The directory name shown in the title and the status bar.
@@ -2061,6 +2086,31 @@ impl Launcher {
             .or_else(adapter_store::path::default_db_path)
     }
 
+    /// What `read` makes of the session database, or the default of its
+    /// type when there is no database or it cannot be read.
+    fn read_store<T, F>(
+        &self,
+        read: impl FnOnce(adapter_store::SqliteSessionStore) -> F + Send + 'static,
+    ) -> BoxFuture<'static, T>
+    where
+        T: Default + Send + 'static,
+        F: std::future::Future<Output = T> + Send + 'static,
+    {
+        let path = self.session_db();
+        self.handle
+            .spawn(async move {
+                let Some(path) = path.filter(|path| path.exists()) else {
+                    return T::default();
+                };
+                match adapter_store::SqliteSessionStore::open(&path) {
+                    Ok(store) => read(store).await,
+                    Err(_) => T::default(),
+                }
+            })
+            .map(Result::unwrap_or_default)
+            .boxed()
+    }
+
     /// The same launcher listing directories with `browser` (tests).
     #[must_use]
     pub fn with_browser(mut self, browser: Arc<dyn ProjectBrowserPort>) -> Self {
@@ -2079,10 +2129,19 @@ impl ProjectOpener for Launcher {
         dir: PathBuf,
         which: SessionOpen,
     ) -> BoxFuture<'static, Result<SessionParts, String>> {
-        let mut config = Config::for_workspace(&self.args, dir);
+        let standalone = dir.as_os_str().is_empty() || which == SessionOpen::NewStandalone;
+        let mut config = if standalone {
+            Config::standalone(&self.args)
+        } else {
+            Config::for_workspace(&self.args, dir)
+        };
         match which {
             SessionOpen::Latest => {}
-            SessionOpen::New => config.resume = false,
+            SessionOpen::New | SessionOpen::NewStandalone => config.resume = false,
+            SessionOpen::NewIn(project) => {
+                config.resume = false;
+                config.project = Some(project);
+            }
             SessionOpen::Id(id) => {
                 config.resume = false;
                 config.session_id = Some(id);
@@ -2098,44 +2157,11 @@ impl ProjectOpener for Launcher {
             .boxed()
     }
 
-    fn catalog(&self) -> BoxFuture<'static, Vec<ProjectChats>> {
-        let path = self
-            .overrides
-            .db_path
-            .clone()
-            .or_else(adapter_store::path::default_db_path);
-        self.handle
-            .spawn(async move {
-                let Some(path) = path.filter(|path| path.exists()) else {
-                    return Vec::new();
-                };
-                let Ok(store) = adapter_store::SqliteSessionStore::open(&path) else {
-                    return Vec::new();
-                };
-                let Ok(workspaces) = store.recent_workspaces(RECENT_PROJECTS).await else {
-                    return Vec::new();
-                };
-                let mut projects = Vec::with_capacity(workspaces.len());
-                for workspace in workspaces {
-                    let Ok(sessions) = store.list(&workspace.root).await else {
-                        continue;
-                    };
-                    projects.push(ProjectChats {
-                        name: project_name(&workspace.root),
-                        root: workspace.root,
-                        chats: sessions
-                            .into_iter()
-                            .map(|session| ChatEntry {
-                                id: session.id.to_string(),
-                                title: chat_label(session.title.as_deref()),
-                            })
-                            .collect(),
-                    });
-                }
-                projects
-            })
-            .map(Result::unwrap_or_default)
-            .boxed()
+    fn catalog(&self) -> BoxFuture<'static, Catalog> {
+        self.read_store(|store| async move {
+            let listed = application::usecases::sidebar::sidebar(&store).await;
+            listed.map(crate::catalog::catalog_of).unwrap_or_default()
+        })
     }
 
     fn rename_chat(&self, id: String, title: String) -> BoxFuture<'static, Result<(), String>> {
@@ -2172,26 +2198,12 @@ impl ProjectOpener for Launcher {
     }
 
     fn recent(&self) -> BoxFuture<'static, Vec<RecentWorkspace>> {
-        let path = self
-            .overrides
-            .db_path
-            .clone()
-            .or_else(adapter_store::path::default_db_path);
-        self.handle
-            .spawn(async move {
-                let Some(path) = path.filter(|path| path.exists()) else {
-                    return Vec::new();
-                };
-                match adapter_store::SqliteSessionStore::open(&path) {
-                    Ok(store) => store
-                        .recent_workspaces(RECENT_PROJECTS)
-                        .await
-                        .unwrap_or_default(),
-                    Err(_) => Vec::new(),
-                }
-            })
-            .map(Result::unwrap_or_default)
-            .boxed()
+        self.read_store(|store| async move {
+            store
+                .recent_workspaces(RECENT_PROJECTS)
+                .await
+                .unwrap_or_default()
+        })
     }
 
     fn browser(&self) -> Arc<dyn ProjectBrowserPort> {

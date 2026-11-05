@@ -169,6 +169,7 @@ async fn demo(answers: &str, script: Vec<ScriptedResponse>) -> Demo {
         trust_plugins: Vec::new(),
         resume: false,
         session_id: None,
+        project: None,
     };
     let app = build_app(&config, frontend(&terminal, input.clone()), overrides)
         .await

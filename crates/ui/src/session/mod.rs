@@ -439,6 +439,8 @@ pub struct SessionParts {
     pub needs_model: bool,
     /// Id of the open session, so the chats panel can mark it.
     pub session_id: Option<String>,
+    /// Id of the project the open session is in, if any.
+    pub project_id: Option<String>,
     /// The saved session ends in an `ask_user` call nobody answered (the
     /// process ended while the form waited): the session asks it again as
     /// soon as it opens ([`SessionController::resume_pending`]).
@@ -473,6 +475,7 @@ impl SessionParts {
             needs_login: false,
             needs_model: false,
             session_id: None,
+            project_id: None,
             resume_pending: false,
         }
     }
@@ -616,8 +619,8 @@ impl Session {
             theme,
             needs_login,
             needs_model,
-            session_id: _,
             resume_pending,
+            ..
         } = parts;
         let timeline = cx.new(|cx| {
             let mut timeline = TimelineView::new(cx);

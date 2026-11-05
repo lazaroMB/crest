@@ -40,9 +40,11 @@ use gpui::{
 use gpui_component::ActiveTheme as _;
 
 use crate::app::{RootView, set_theme, window_title};
-use crate::chats::{ChatsCommand, ChatsEvent, ChatsPanel, ProjectChats, SessionOpen, SidebarWidth};
+use crate::chats::{Catalog, ChatsCommand, ChatsEvent, ChatsPanel, SessionOpen, SidebarWidth};
 use crate::project_picker::{ProjectPickerEvent, ProjectPickerView};
 use crate::session::{Session, SessionEvent, SessionParts};
+
+mod chat_ops;
 
 actions!(crest, [SwitchProject]);
 
@@ -67,9 +69,10 @@ pub trait ProjectOpener: Send + Sync {
         self.open(dir)
     }
 
-    /// Projects and their chats, newest first. The default is an empty list.
-    fn catalog(&self) -> BoxFuture<'static, Vec<ProjectChats>> {
-        futures::future::ready(Vec::new()).boxed()
+    /// The projects with their chats, and the chats in none. The default is
+    /// an empty list.
+    fn catalog(&self) -> BoxFuture<'static, Catalog> {
+        futures::future::ready(Catalog::default()).boxed()
     }
 
     /// Stores `title` on the chat `id`. The default fails.
@@ -89,8 +92,11 @@ pub trait ProjectOpener: Send + Sync {
 struct Live {
     root: Entity<RootView>,
     session: Entity<Session>,
+    /// Its first directory; empty for a chat with none.
     dir: PathBuf,
     session_id: Option<String>,
+    /// The project the chat is in, if any.
+    project_id: Option<String>,
     /// Workspace label, for the window title.
     label: String,
     _subscription: Subscription,
@@ -293,12 +299,11 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Content::Session(live) = &self.content else {
+        if !matches!(self.content, Content::Session(_)) {
             return;
-        };
-        let dir = live.dir.clone();
+        }
         match command {
-            ChatsCommand::New => self.switch_chat(dir, SessionOpen::New, window, cx),
+            ChatsCommand::New => self.new_chat_here(window, cx),
             ChatsCommand::Next | ChatsCommand::Prev => {
                 let step = if command == ChatsCommand::Next { 1 } else { -1 };
                 match self.chats.read(cx).neighbor(step) {
@@ -424,6 +429,7 @@ impl Workbench {
         set_theme(&parts.theme, cx);
         let label = parts.workspace_label.clone();
         let session_id = parts.session_id.clone();
+        let project_id = parts.project_id.clone();
         let dir = parts.workspace_dir.clone().unwrap_or(dir);
         let (root, session) = crate::session::open(parts, window, cx);
         let subscription = cx.subscribe_in(&session, window, Self::on_session);
@@ -433,6 +439,7 @@ impl Workbench {
                 session,
                 dir,
                 session_id,
+                project_id,
                 label,
                 _subscription: subscription,
             },
@@ -453,8 +460,9 @@ impl Workbench {
         let chats = self.chats.clone();
         live.root.update(cx, |root, cx| root.set_sidebar(chats, cx));
         let (root, id) = (live.dir.display().to_string(), live.session_id.clone());
+        let project = live.project_id.clone();
         self.chats
-            .update(cx, |chats, cx| chats.set_current(root, id, cx));
+            .update(cx, |chats, cx| chats.set_current(root, project, id, cx));
         self.content = Content::Session(live);
         cx.notify();
     }
@@ -541,10 +549,16 @@ impl Workbench {
         let Content::Session(live) = &self.content else {
             return;
         };
-        let (dir, open_id) = (live.dir.clone(), live.session_id.clone());
+        let open_id = live.session_id.clone();
         match event.clone() {
             ChatsEvent::Sidebar(_) => {}
-            ChatsEvent::New => self.switch_chat(dir, SessionOpen::New, window, cx),
+            ChatsEvent::New => self.new_chat_here(window, cx),
+            ChatsEvent::NewStandalone => {
+                self.switch_chat(PathBuf::new(), SessionOpen::NewStandalone, window, cx);
+            }
+            ChatsEvent::NewIn { project, root } => {
+                self.switch_chat(PathBuf::from(root), SessionOpen::NewIn(project), window, cx);
+            }
             ChatsEvent::Open { root, id } => {
                 if open_id.as_deref() == Some(id.as_str()) {
                     return;
@@ -619,131 +633,12 @@ impl Workbench {
         true
     }
 
-    /// Saves `title` on the chat `id` and refreshes the list. The list
-    /// already shows the title and the prompt has the focus back: the save
-    /// of a chat with a turn running waits for the turn.
-    fn rename_chat(
-        &mut self,
-        id: String,
-        title: String,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(session) = self.session().cloned() else {
-            return;
-        };
-        // The field is gone: a focus left nowhere (or in the list) goes
-        // back to the prompt; a click elsewhere keeps its target.
-        let lost = window.focused(cx).is_none()
-            || self.chats.focus_handle(cx).contains_focused(window, cx);
-        if lost {
-            session.update(cx, |session, cx| session.focus_input(window, cx));
-        }
-        let current = self.open_id().as_deref() == Some(id.as_str());
-        let opener = Arc::clone(&self.opener);
-        // The session of the chat, shown or parked, saves the title itself:
-        // a store written behind its back would be overwritten on its next
-        // save.
-        let primary = if current {
-            Some(session.read(cx).retitle(title.clone()))
-        } else {
-            self.parked
-                .get(&id)
-                .map(|live| live.session.read(cx).retitle(title.clone()))
-        };
-        let renamed = id.clone();
-        cx.spawn_in(window, async move |this, cx| {
-            let result = if let Some(primary) = primary {
-                match primary.await {
-                    Ok(()) => Ok(()),
-                    Err(_) => opener.rename_chat(id, title).await,
-                }
-            } else {
-                opener.rename_chat(id, title).await
-            };
-            this.update(cx, |this, cx| this.finish_rename(&renamed, result, cx))
-                .ok();
-        })
-        .detach();
-    }
-
-    fn finish_rename(&mut self, id: &str, result: Result<(), String>, cx: &mut Context<Self>) {
-        if let Err(err) = &result {
-            self.notify(format!("could not rename the chat: {err}"), cx);
-            self.chats
-                .update(cx, |chats, cx| chats.forget_title(id, cx));
-        }
-        self.reload_chats(cx);
-    }
-
-    /// Shows `message` as a warning in the shown session, if any.
-    fn notify(&self, message: String, cx: &mut Context<Self>) {
-        if let Some(session) = self.session().cloned() {
-            session.update(cx, |session, cx| {
-                session.show_notice(NoticeLevel::Warning, message, cx);
-            });
-        }
-    }
-
-    /// Removes the chat `id`. The open one is left for another chat of
-    /// `root`, or a new chat when it was the last.
-    fn delete_chat(
-        &mut self,
-        root: String,
-        id: String,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.parked.contains_key(&id) {
-            // Interrupting would not help: the turn saves when it ends and
-            // the chat would come back.
-            self.notify(
-                "that chat is still running; open it and Ctrl+C before deleting it".into(),
-                cx,
-            );
-            return;
-        }
-        let current = self.open_id().as_deref() == Some(id.as_str());
-        if current
-            && let Some(session) = self.session().cloned()
-            && session.read(cx).is_busy()
-        {
-            session.update(cx, |session, cx| {
-                let message = if session.is_running() {
-                    "a turn is running; Ctrl+C to interrupt it before deleting this chat"
-                } else {
-                    "a command is running; delete this chat once it stops"
-                };
-                session.show_notice(NoticeLevel::Warning, message.into(), cx);
-            });
-            return;
-        }
-        let next = self.chats.read(cx).next_chat(&root, &id);
-        let delete = self.opener.delete_chat(id);
-        cx.spawn_in(window, async move |this, cx| {
-            let result = delete.await;
-            this.update_in(cx, |this, window, cx| match result {
-                Ok(()) if current => {
-                    let which = next.map_or(SessionOpen::New, SessionOpen::Id);
-                    this.switch_chat(PathBuf::from(root), which, window, cx);
-                }
-                Ok(()) => this.reload_chats(cx),
-                Err(err) => {
-                    this.notify(format!("could not delete the chat: {err}"), cx);
-                    this.reload_chats(cx);
-                }
-            })
-            .ok();
-        })
-        .detach();
-    }
-
     fn reload_chats(&mut self, cx: &mut Context<Self>) {
         let chats = self.chats.clone();
         let catalog = self.opener.catalog();
         cx.spawn(async move |_, cx| {
             let projects = catalog.await;
-            chats.update(cx, |panel, cx| panel.set_projects(projects, cx));
+            chats.update(cx, |panel, cx| panel.set_catalog(projects, cx));
         })
         .detach();
     }
@@ -834,6 +729,9 @@ impl Render for Workbench {
 }
 
 #[cfg(test)]
+mod place_tests;
+
+#[cfg(test)]
 mod tests {
     use std::sync::{Mutex, PoisonError};
 
@@ -847,6 +745,7 @@ mod tests {
 
     use super::*;
     use crate::approval::UiApproval;
+    use crate::chats::ProjectChats;
     use crate::session::{ModelChoice, SessionController, TurnEnd, TurnRequest};
 
     /// A controller whose turns end only when interrupted, so a prompt
@@ -913,19 +812,26 @@ mod tests {
             dir: PathBuf,
             which: SessionOpen,
         ) -> BoxFuture<'static, Result<SessionParts, String>> {
+            let new = || {
+                let mut news = self.news.lock().unwrap_or_else(PoisonError::into_inner);
+                *news += 1;
+                format!("new-{}", *news)
+            };
+            let mut project = None;
             let id = match which {
                 SessionOpen::Latest => "latest".to_owned(),
                 SessionOpen::Id(id) => id,
-                SessionOpen::New => {
-                    let mut news = self.news.lock().unwrap_or_else(PoisonError::into_inner);
-                    *news += 1;
-                    format!("new-{}", *news)
+                SessionOpen::New | SessionOpen::NewStandalone => new(),
+                SessionOpen::NewIn(id) => {
+                    project = Some(id);
+                    new()
                 }
             };
             self.open(dir)
                 .map(move |parts| {
                     parts.map(|mut parts| {
                         parts.session_id = Some(id);
+                        parts.project_id = project;
                         parts
                     })
                 })
@@ -936,17 +842,22 @@ mod tests {
             futures::future::ready(Vec::new()).boxed()
         }
 
-        fn catalog(&self) -> BoxFuture<'static, Vec<ProjectChats>> {
+        fn catalog(&self) -> BoxFuture<'static, Catalog> {
             let titles = self.titles.lock().unwrap_or_else(PoisonError::into_inner);
             let chat = |id: &str| crate::chats::ChatEntry {
                 id: id.to_owned(),
                 title: titles.get(id).cloned().unwrap_or_else(|| id.to_owned()),
             };
-            futures::future::ready(vec![ProjectChats {
-                name: "proj".into(),
-                root: "/home/u/proj".into(),
-                chats: vec![chat("latest"), chat("second")],
-            }])
+            futures::future::ready(Catalog {
+                projects: vec![ProjectChats {
+                    id: "p1".into(),
+                    name: "proj".into(),
+                    root: "/home/u/proj".into(),
+                    dirs: 1,
+                    chats: vec![chat("latest"), chat("second")],
+                }],
+                chats: Vec::new(),
+            })
             .boxed()
         }
 
@@ -967,7 +878,9 @@ mod tests {
         }
     }
 
-    fn workbench(cx: &mut TestAppContext) -> (Entity<Workbench>, &mut VisualTestContext) {
+    pub(super) fn workbench(
+        cx: &mut TestAppContext,
+    ) -> (Entity<Workbench>, &mut VisualTestContext) {
         cx.update(gpui_component::init);
         let opener = Arc::new(Opener {
             opened: Mutex::new(Vec::new()),
@@ -1510,7 +1423,7 @@ mod tests {
     }
 
     /// [`open`], then the full sidebar (the window opens with it hidden).
-    fn open_full(view: &Entity<Workbench>, dir: &str, cx: &mut VisualTestContext) {
+    pub(super) fn open_full(view: &Entity<Workbench>, dir: &str, cx: &mut VisualTestContext) {
         open(view, dir, cx);
         show_sidebar(view, cx);
     }

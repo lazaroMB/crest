@@ -468,6 +468,15 @@ impl SessionStorePort for InMemorySessionStore {
             .collect())
     }
 
+    async fn list_all(&self) -> Result<Vec<SessionSummary>, StoreError> {
+        self.check_failure()?;
+        let mut all: Vec<StoredSession> = lock(&self.sessions).values().cloned().collect();
+        all.sort_by_key(|s| {
+            std::cmp::Reverse((s.session.updated_at, s.session.created_at, s.session.id))
+        });
+        Ok(all.iter().map(StoredSession::summary).collect())
+    }
+
     async fn delete(&self, id: SessionId) -> Result<(), StoreError> {
         self.check_failure()?;
         lock(&self.sessions)

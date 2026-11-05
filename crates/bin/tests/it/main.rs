@@ -4,6 +4,7 @@
 //! dependency tree again, which dominated the build time of `cargo test`.
 //! Add a new test file here as a module.
 
+mod chat_places;
 mod commands_during_turn;
 mod headless_demo;
 mod help_snapshot;

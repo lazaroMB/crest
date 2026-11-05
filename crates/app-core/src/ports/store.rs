@@ -33,6 +33,17 @@ pub struct StoredSession {
 }
 
 impl StoredSession {
+    /// A session with an empty timeline, no rules and no prompt history.
+    #[must_use]
+    pub fn new(session: Session) -> Self {
+        Self {
+            session,
+            timeline: Vec::new(),
+            permission_rules: Vec::new(),
+            prompt_history: Vec::new(),
+        }
+    }
+
     /// Builds the listing entry for this session.
     #[must_use]
     pub fn summary(&self) -> SessionSummary {
@@ -40,6 +51,7 @@ impl StoredSession {
             id: self.session.id,
             title: self.session.title.clone(),
             workspace_root: self.session.workspace_root.clone(),
+            project_id: self.session.project_id,
             updated_at: self.session.updated_at,
             turns: self.session.turns.len(),
         }
@@ -55,6 +67,8 @@ pub struct SessionSummary {
     pub title: Option<String>,
     /// Workspace the session belongs to.
     pub workspace_root: String,
+    /// The project it is in; `None` for a chat without a project.
+    pub project_id: Option<ProjectId>,
     /// Last update, in milliseconds since the Unix epoch.
     pub updated_at: u64,
     /// Number of turns.
@@ -101,6 +115,10 @@ pub trait SessionStorePort: ProjectStorePort {
 
     /// Lists the sessions of the workspace `root`, most recent first.
     async fn list(&self, root: &str) -> Result<Vec<SessionSummary>, StoreError>;
+
+    /// Lists every session, most recent first: what the sidebar groups by
+    /// project.
+    async fn list_all(&self) -> Result<Vec<SessionSummary>, StoreError>;
 
     /// Deletes the session `id`, or fails with [`StoreError::NotFound`].
     async fn delete(&self, id: SessionId) -> Result<(), StoreError>;

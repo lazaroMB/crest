@@ -18,5 +18,6 @@ pub mod resume;
 pub mod routing;
 pub mod run_turn;
 pub mod shell_command;
+pub mod sidebar;
 pub mod user_blocks;
 pub mod web_sources;

@@ -6,6 +6,7 @@
 
 pub mod args;
 pub mod aside;
+mod catalog;
 pub mod credentials;
 pub mod discovery;
 pub mod gui;

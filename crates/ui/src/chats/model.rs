@@ -8,7 +8,7 @@
 //! data yet: they join [`visible_projects`] (its input and output) when
 //! the store has them.
 
-use super::ProjectChats;
+use super::{Catalog, ChatEntry, ProjectChats, project_name, same_workspace};
 
 /// Width of the sidebar in each state, in pixels.
 pub const FULL_WIDTH: f32 = 240.0;
@@ -75,6 +75,92 @@ impl SidebarWidth {
     }
 }
 
+/// The chat that is open, as the list must show it even before the store
+/// lists it.
+#[derive(Debug, Clone, Copy)]
+pub struct CurrentChat<'a> {
+    /// Its first directory; empty for a chat with none.
+    pub root: &'a str,
+    /// Its project's id, when known.
+    pub project: Option<&'a str>,
+    /// Its id, once it has one.
+    pub id: Option<&'a str>,
+}
+
+impl CurrentChat<'_> {
+    /// Whether `project` is the open chat's: by id when it has one, else by
+    /// directory.
+    pub fn is_in(&self, project: &ProjectChats) -> bool {
+        match self.project {
+            Some(id) => project.id == id,
+            None => !self.root.is_empty() && same_workspace(&project.root, self.root),
+        }
+    }
+}
+
+/// `catalog` plus the open project and chat, when it does not list them
+/// yet: a chat with a directory goes in its project (made on the spot), one
+/// with none among the chats in no project.
+#[must_use]
+pub fn listed_with(mut catalog: Catalog, current: &CurrentChat<'_>) -> Catalog {
+    let id = current.id.filter(|id| !id.is_empty());
+    let loose = current.root.is_empty() && current.project.is_none();
+    if let Some(id) = id
+        && catalog
+            .projects
+            .iter()
+            .flat_map(|project| &project.chats)
+            .chain(&catalog.chats)
+            .any(|chat| chat.id == id)
+    {
+        return catalog;
+    }
+    let fresh = id.map(|id| ChatEntry {
+        id: id.to_owned(),
+        title: "New chat".into(),
+    });
+    if loose {
+        catalog.chats.splice(0..0, fresh);
+        return catalog;
+    }
+    if !catalog
+        .projects
+        .iter()
+        .any(|project| current.is_in(project))
+    {
+        let id = current.project.unwrap_or(current.root).to_owned();
+        catalog.projects.insert(
+            0,
+            ProjectChats {
+                id,
+                name: project_name(current.root),
+                root: current.root.to_owned(),
+                dirs: 1,
+                chats: Vec::new(),
+            },
+        );
+    }
+    if let Some(project) = catalog
+        .projects
+        .iter_mut()
+        .find(|project| current.is_in(project))
+    {
+        project.chats.splice(0..0, fresh);
+    }
+    catalog
+}
+
+/// The chats in no project that a search leaves: those whose title matches.
+#[must_use]
+pub fn visible_chats(chats: &[ChatEntry], query: &str) -> Vec<ChatEntry> {
+    let query = query.trim().to_lowercase();
+    chats
+        .iter()
+        .filter(|chat| chat.title.to_lowercase().contains(&query))
+        .cloned()
+        .collect()
+}
+
 /// The projects a search leaves, in their order. A query matching a
 /// project's name keeps all its chats; otherwise only the chats whose
 /// title matches, and a project with none disappears. Case is ignored; an
@@ -117,10 +203,19 @@ mod tests {
     use super::*;
     use crate::chats::ChatEntry;
 
+    fn chat(title: &str) -> ChatEntry {
+        ChatEntry {
+            id: title.into(),
+            title: title.into(),
+        }
+    }
+
     fn project(name: &str, titles: &[&str]) -> ProjectChats {
         ProjectChats {
+            id: format!("id-{name}"),
             name: name.into(),
             root: format!("/w/{name}"),
+            dirs: 1,
             chats: titles
                 .iter()
                 .map(|title| ChatEntry {
@@ -170,6 +265,12 @@ mod tests {
         );
         assert_eq!(names("notes"), [("notes".into(), vec!["Parser".into()])]);
         assert!(names("zzz").is_empty());
+        // The chats in no project filter by title alone.
+        let loose = [chat("Fix add"), chat("Parser")];
+        let kept = visible_chats(&loose, "  ADD ");
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].title, "Fix add");
+        assert_eq!(visible_chats(&loose, "").len(), 2);
     }
 
     #[test]

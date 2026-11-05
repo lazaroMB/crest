@@ -17,10 +17,11 @@ use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_component::input::Input;
 use gpui_component::{ActiveTheme as _, Icon, IconName, Sizable as _, v_flex};
 
+use super::model::CurrentChat;
 use super::model::{
     FULL_WIDTH, MARK_BAND, RailState, STRIP_WIDTH, SidebarWidth, initial, rail_tokens,
 };
-use super::{ChatsEvent, ChatsPanel, ProjectChats, label, same_workspace};
+use super::{ChatsEvent, ChatsPanel, ProjectChats, label};
 
 /// Width of the hidden state's mark zone while the rows are closed.
 const MARK_ZONE: f32 = 36.0;
@@ -96,25 +97,26 @@ impl ChatsPanel {
     }
 
     /// The strip's project under the pointer, or no longer.
-    fn hover_project(&mut self, root: &str, hovered: bool, cx: &mut Context<Self>) {
-        let on = self.pointer_on_project.as_deref() == Some(root);
+    fn hover_project(&mut self, id: &str, hovered: bool, cx: &mut Context<Self>) {
+        let on = self.pointer_on_project.as_deref() == Some(id);
         if hovered == on {
             return;
         }
-        self.pointer_on_project = hovered.then(|| root.to_owned());
+        self.pointer_on_project = hovered.then(|| id.to_owned());
         cx.notify();
     }
 
-    /// A project's initial: its newest chat, or a new one in the project
-    /// that is open.
+    /// A project's initial: its newest chat, or a new one in the project.
     fn open_project(&mut self, project: &ProjectChats, cx: &mut Context<Self>) {
         match project.chats.first() {
             Some(chat) => cx.emit(ChatsEvent::Open {
                 root: project.root.clone(),
                 id: chat.id.clone(),
             }),
-            None if same_workspace(&project.root, &self.current_root) => cx.emit(ChatsEvent::New),
-            None => {}
+            None => cx.emit(ChatsEvent::NewIn {
+                project: project.id.clone(),
+                root: project.root.clone(),
+            }),
         }
     }
 }
@@ -127,9 +129,9 @@ fn go(width: SidebarWidth) -> Click {
     Box::new(move |this, _, cx| this.set_width(width, cx))
 }
 
-/// A click that starts a new chat.
+/// A click that starts a chat with no project and no directory.
 fn new_chat() -> Click {
-    Box::new(|_, _, cx| cx.emit(ChatsEvent::New))
+    Box::new(|_, _, cx| cx.emit(ChatsEvent::NewStandalone))
 }
 
 /// A button of the rail: its id (also its debug selector), icon and label.
@@ -239,7 +241,7 @@ fn strip_rows(panel: &ChatsPanel, cx: &mut Context<ChatsPanel>) -> Vec<AnyElemen
             .border_color(border)
             .into_any_element(),
     ];
-    for (index, project) in panel.projects.iter().enumerate() {
+    for (index, project) in panel.listed.projects.iter().enumerate() {
         rows.push(project_initial(panel, index, project, cx));
     }
     rows
@@ -276,8 +278,13 @@ fn project_initial(
 ) -> AnyElement {
     let theme = cx.theme();
     let (border, ring) = (theme.border, theme.ring);
-    let open = same_workspace(&project.root, &panel.current_root);
-    let named = panel.pointer_on_project.as_deref() == Some(project.root.as_str());
+    let current = CurrentChat {
+        root: &panel.current_root,
+        project: panel.current_project.as_deref(),
+        id: None,
+    };
+    let open = current.is_in(project);
+    let named = panel.pointer_on_project.as_deref() == Some(project.id.as_str());
     let state = match (open, named) {
         (true, _) => RailState::Active,
         (false, true) => RailState::Hover,
@@ -290,7 +297,7 @@ fn project_initial(
         ring
     };
     let selector = format!("sidebar-initial-{index}");
-    let (hover_root, click_project) = (project.root.clone(), project.clone());
+    let (hover_id, click_project) = (project.id.clone(), project.clone());
     div()
         .id(SharedString::from(selector.clone()))
         .debug_selector(move || selector.clone())
@@ -307,7 +314,7 @@ fn project_initial(
         .text_color(ink)
         .cursor_pointer()
         .on_hover(cx.listener(move |this, hovered: &bool, _, cx| {
-            this.hover_project(&hover_root, *hovered, cx);
+            this.hover_project(&hover_id, *hovered, cx);
         }))
         .on_click(cx.listener(move |this, _, _, cx| this.open_project(&click_project, cx)))
         .child(initial(&project.name))
@@ -323,7 +330,6 @@ pub(super) fn full(
 ) -> AnyElement {
     let focused = panel.focus_handle.is_focused(window);
     let rows = panel.row_elements(focused, cx);
-    let muted = cx.theme().muted_foreground;
     let toggle: Click = Box::new(toggle_search);
     frame(panel, FULL_WIDTH, cx)
         .child(
@@ -343,15 +349,6 @@ pub(super) fn full(
                 .search
                 .as_ref()
                 .map(|input| div().px_2().pb_1().child(Input::new(input))),
-        )
-        .child(
-            div()
-                .px_2()
-                .pt_2()
-                .pb_1()
-                .text_xs()
-                .text_color(muted)
-                .child("PROJECTS"),
         )
         .child(crate::keyscroll::list("chats-list", &panel.scroll, rows).flex_1())
         .into_any_element()

@@ -20,20 +20,18 @@
 use std::collections::{HashMap, HashSet};
 
 use gpui::{
-    AnyElement, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable,
-    Global, InteractiveElement as _, IntoElement, KeyDownEvent, KeystrokeEvent, MouseButton,
-    MouseDownEvent, ParentElement as _, Render, ScrollHandle, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Subscription, WeakEntity, WeakFocusHandle,
-    Window, div, px,
+    App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, Global,
+    IntoElement, KeyDownEvent, KeystrokeEvent, ParentElement as _, Render, ScrollHandle,
+    SharedString, Styled as _, Subscription, WeakEntity, WeakFocusHandle, Window, div,
 };
-use gpui_component::input::{Input, InputEvent, InputState};
-use gpui_component::{ActiveTheme as _, h_flex, v_flex};
+use gpui_component::input::{InputEvent, InputState};
 
 mod model;
 mod rail;
+mod rows;
 mod search;
 
-use model::visible_projects;
+use model::{CurrentChat, listed_with, visible_chats, visible_projects};
 pub use model::{MARK_BAND, STRIP_WIDTH, SidebarWidth};
 
 /// Which session to open in a project.
@@ -41,8 +39,14 @@ pub use model::{MARK_BAND, STRIP_WIDTH, SidebarWidth};
 pub enum SessionOpen {
     /// The latest saved session, or a new one when the project has none.
     Latest,
-    /// A new empty session. The previous one stays saved.
+    /// A new empty session in the directory, joining the project the
+    /// directory has. The previous one stays saved.
     New,
+    /// A new empty session in the project with this id, in its first
+    /// directory.
+    NewIn(String),
+    /// A new empty session with no directory and no project.
+    NewStandalone,
     /// The session with this id.
     Id(String),
 }
@@ -59,19 +63,42 @@ pub struct ChatEntry {
 /// A project and its chats, newest first.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectChats {
-    /// Directory name shown on the row.
+    /// Project id, as printed (a directory without a project uses its root).
+    pub id: String,
+    /// Name shown on the row.
     pub name: String,
-    /// Workspace root, as stored.
+    /// Its first directory, as stored: where its chats open.
     pub root: String,
+    /// How many directories it has.
+    pub dirs: usize,
     /// Its chats, newest first.
+    pub chats: Vec<ChatEntry>,
+}
+
+/// What the sidebar lists: the projects in their order, and the chats that
+/// are in none, newest first.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Catalog {
+    /// Projects, in the order the sidebar shows them.
+    pub projects: Vec<ProjectChats>,
+    /// Chats with no project.
     pub chats: Vec<ChatEntry>,
 }
 
 /// What the panel asks the window to open.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChatsEvent {
-    /// An empty session in the project that is open.
+    /// An empty chat where the open one is: in its project, or in none.
     New,
+    /// An empty chat in no project and with no directory.
+    NewStandalone,
+    /// An empty chat in the project `project`, in its first directory `root`.
+    NewIn {
+        /// Project id.
+        project: String,
+        /// Its first directory.
+        root: String,
+    },
     /// The chat `id` of the project `root`.
     Open {
         /// Workspace root of the chat.
@@ -140,12 +167,12 @@ impl ChatsCommand {
 /// A row of the list, as the keyboard selects it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ChatRow {
-    /// The header of the project `root`.
+    /// The header of the project `id`.
     Project(String),
-    /// The chat `id` of the project `root`.
+    /// The chat `id`, of the project `project` or of none.
     Chat {
-        /// Workspace root.
-        root: String,
+        /// Project id; `None` for a chat in no project.
+        project: Option<String>,
         /// Session id.
         id: String,
     },
@@ -221,11 +248,11 @@ pub fn list_has_focus(window: &Window, cx: &App) -> bool {
 
 /// The sidebar of projects and chats.
 pub struct ChatsPanel {
-    /// The catalog as given; `projects` adds the open chat to it.
-    catalog: Vec<ProjectChats>,
-    projects: Vec<ProjectChats>,
-    /// What the search leaves of `projects`: the rows the list shows.
-    visible: Vec<ProjectChats>,
+    /// The catalog as given; `listed` adds the open chat to it.
+    catalog: Catalog,
+    listed: Catalog,
+    /// What the search leaves of `listed`: the rows the list shows.
+    visible: Catalog,
     /// How wide the sidebar is.
     width: SidebarWidth,
     /// The pointer is on the hidden sidebar's mark or its revealed rows.
@@ -239,6 +266,7 @@ pub struct ChatsPanel {
     _search_events: Option<Subscription>,
     expanded: HashSet<String>,
     current_root: String,
+    current_project: Option<String>,
     current_id: Option<String>,
     /// Chats with a turn running, by id: whether they wait on the user.
     activity: HashMap<String, bool>,
@@ -261,10 +289,15 @@ impl ChatsPanel {
     /// A panel for the session that is open. The catalog arrives with
     /// [`Self::set_projects`].
     pub fn new(current_root: String, current_id: Option<String>, cx: &mut Context<Self>) -> Self {
-        let projects = catalog_rows(Vec::new(), &current_root, current_id.as_deref());
+        let current = CurrentChat {
+            root: &current_root,
+            project: None,
+            id: current_id.as_deref(),
+        };
+        let listed = listed_with(Catalog::default(), &current);
         let mut expanded = HashSet::new();
-        if let Some(project) = projects.first() {
-            expanded.insert(project.root.clone());
+        if let Some(project) = listed.projects.first() {
+            expanded.insert(project.id.clone());
         }
         let weak = cx.entity().downgrade();
         let keys = cx.intercept_keystrokes(move |event, window, cx| {
@@ -276,9 +309,9 @@ impl ChatsPanel {
         lists.0.retain(|handle| handle.upgrade().is_some());
         lists.0.push(focus_handle.downgrade());
         Self {
-            catalog: Vec::new(),
-            visible: projects.clone(),
-            projects,
+            catalog: Catalog::default(),
+            visible: listed.clone(),
+            listed,
             width: SidebarWidth::default(),
             pointer_on_rail: false,
             pointer_on_project: None,
@@ -287,6 +320,7 @@ impl ChatsPanel {
             _search_events: None,
             expanded,
             current_root,
+            current_project: None,
             current_id,
             activity: HashMap::new(),
             action: None,
@@ -305,15 +339,19 @@ impl ChatsPanel {
     #[must_use]
     pub fn rows(&self) -> Vec<ChatRow> {
         let mut rows = Vec::new();
-        for project in &self.visible {
-            rows.push(ChatRow::Project(project.root.clone()));
-            if self.is_open(&project.root) {
+        for project in &self.visible.projects {
+            rows.push(ChatRow::Project(project.id.clone()));
+            if self.is_open(&project.id) {
                 rows.extend(project.chats.iter().map(|chat| ChatRow::Chat {
-                    root: project.root.clone(),
+                    project: Some(project.id.clone()),
                     id: chat.id.clone(),
                 }));
             }
         }
+        rows.extend(self.visible.chats.iter().map(|chat| ChatRow::Chat {
+            project: None,
+            id: chat.id.clone(),
+        }));
         rows
     }
 
@@ -373,53 +411,76 @@ impl ChatsPanel {
     #[must_use]
     pub fn neighbor(&self, step: isize) -> Option<(String, String)> {
         let id = self.current_id.as_deref()?;
-        let project = self
-            .projects
-            .iter()
-            .find(|project| same_workspace(&project.root, &self.current_root))?;
-        let len = project.chats.len();
-        let at = project.chats.iter().position(|chat| chat.id == id)?;
+        let (root, chats) = self.group_of(id)?;
+        let len = chats.len();
+        let at = chats.iter().position(|chat| chat.id == id)?;
         if len < 2 {
             return None;
         }
         let len = isize::try_from(len).ok()?;
         let at = isize::try_from(at).ok()?;
         let next = usize::try_from((at + step).rem_euclid(len)).ok()?;
-        let chat = &project.chats[next];
-        Some((project.root.clone(), chat.id.clone()))
+        Some((root.to_owned(), chats[next].id.clone()))
+    }
+
+    /// The chats the chat `id` is listed with (its project's, or the ones in
+    /// no project) and the directory they open in (empty without a project).
+    fn group_of(&self, id: &str) -> Option<(&str, &[ChatEntry])> {
+        let listed = |chats: &[ChatEntry]| chats.iter().any(|chat| chat.id == id);
+        let project = self
+            .listed
+            .projects
+            .iter()
+            .find(|project| listed(&project.chats));
+        match project {
+            Some(project) => Some((project.root.as_str(), project.chats.as_slice())),
+            None => listed(&self.listed.chats).then_some(("", self.listed.chats.as_slice())),
+        }
     }
 
     /// The title the list shows for the chat `id`, if listed.
     #[must_use]
     pub fn title_of(&self, id: &str) -> Option<String> {
-        self.projects
+        self.listed
+            .projects
             .iter()
             .flat_map(|project| &project.chats)
+            .chain(&self.listed.chats)
             .find(|chat| chat.id == id)
             .map(|chat| chat.title.clone())
     }
 
     /// Opens the name field of the open chat (`chat.rename`).
     pub fn rename_current(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(ChatRow::Chat { root, id }) = self.current_row() {
-            self.selected = Some(ChatRow::Chat {
-                root: root.clone(),
-                id: id.clone(),
-            });
-            self.act_on(root, id, ChatActionKind::Rename, window, cx);
+        if let Some(row @ ChatRow::Chat { .. }) = self.current_row() {
+            self.selected = Some(row.clone());
+            self.act_on_row(&row, ChatActionKind::Rename, window, cx);
         }
     }
 
     /// Asks to delete the open chat (`chat.delete`); the list takes the
     /// focus so `Enter` confirms and `Esc` cancels.
     pub fn delete_current(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(ChatRow::Chat { root, id }) = self.current_row() {
-            self.selected = Some(ChatRow::Chat {
-                root: root.clone(),
-                id: id.clone(),
-            });
-            self.act_on(root, id, ChatActionKind::ConfirmDelete, window, cx);
+        if let Some(row @ ChatRow::Chat { .. }) = self.current_row() {
+            self.selected = Some(row.clone());
+            self.act_on_row(&row, ChatActionKind::ConfirmDelete, window, cx);
             window.focus(&self.focus_handle, cx);
+        }
+    }
+
+    /// [`Self::act_on`] for a chat row (anything else does nothing).
+    fn act_on_row(
+        &mut self,
+        row: &ChatRow,
+        kind: ChatActionKind,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let ChatRow::Chat { id, .. } = row {
+            let root = self
+                .group_of(id)
+                .map_or_else(String::new, |(root, _)| root.to_owned());
+            self.act_on(root, id.clone(), kind, window, cx);
         }
     }
 
@@ -502,24 +563,33 @@ impl ChatsPanel {
                     self.toggle(&root, cx);
                 }
             }
-            ("left", ChatRow::Chat { root, .. }) => {
-                self.selected = Some(ChatRow::Project(root));
+            (
+                "left",
+                ChatRow::Chat {
+                    project: Some(project),
+                    ..
+                },
+            ) => {
+                self.selected = Some(ChatRow::Project(project));
                 self.reveal_selected();
                 cx.notify();
             }
-            ("enter", ChatRow::Chat { root, id }) => {
+            ("enter", ChatRow::Chat { id, .. }) => {
                 self.clear_action(cx);
                 if self.current_id.as_deref() == Some(id.as_str()) {
                     cx.emit(ChatsEvent::Dismissed);
                 } else {
+                    let root = self
+                        .group_of(&id)
+                        .map_or_else(String::new, |(root, _)| root.to_owned());
                     cx.emit(ChatsEvent::Open { root, id });
                 }
             }
-            ("f2" | "r", ChatRow::Chat { root, id }) => {
-                self.act_on(root, id, ChatActionKind::Rename, window, cx);
+            ("f2" | "r", row @ ChatRow::Chat { .. }) => {
+                self.act_on_row(&row, ChatActionKind::Rename, window, cx);
             }
-            ("delete", ChatRow::Chat { root, id }) => {
-                self.act_on(root, id, ChatActionKind::ConfirmDelete, window, cx);
+            ("delete", row @ ChatRow::Chat { .. }) => {
+                self.act_on_row(&row, ChatActionKind::ConfirmDelete, window, cx);
             }
             _ => {}
         }
@@ -534,9 +604,18 @@ impl ChatsPanel {
         }
     }
 
-    /// Marks the chat `id` of `root` as the open one.
-    pub fn set_current(&mut self, root: String, id: Option<String>, cx: &mut Context<Self>) {
+    /// Marks the chat `id` as the open one, in the project `project` (none
+    /// for a chat with no project) and the directory `root` (empty for a
+    /// chat with none).
+    pub fn set_current(
+        &mut self,
+        root: String,
+        project: Option<String>,
+        id: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
         self.current_root = root;
+        self.current_project = project;
         self.current_id = id;
         self.rebuild();
         cx.notify();
@@ -558,63 +637,69 @@ impl ChatsPanel {
         &self.scroll
     }
 
-    /// Another chat of `root` to open after deleting `id`, if one remains.
+    /// Another chat of the group of `id` to open after deleting it, if one
+    /// remains.
     #[must_use]
-    pub fn next_chat(&self, root: &str, id: &str) -> Option<String> {
-        let project = self
-            .projects
-            .iter()
-            .find(|project| same_workspace(&project.root, root))?;
-        next_chat_id(&project.chats, id).map(str::to_owned)
+    pub fn next_chat(&self, id: &str) -> Option<String> {
+        let (_, chats) = self.group_of(id)?;
+        next_chat_id(chats, id).map(str::to_owned)
     }
 
     /// Replaces the list. The open project stays expanded, and the open
     /// chat stays visible even before it has been saved.
-    pub fn set_projects(&mut self, projects: Vec<ProjectChats>, cx: &mut Context<Self>) {
+    pub fn set_catalog(&mut self, catalog: Catalog, cx: &mut Context<Self>) {
         // A saved title is the catalog's from now on.
         self.pending_titles.retain(|id, title| {
-            !projects
+            !catalog
+                .projects
                 .iter()
                 .flat_map(|project| &project.chats)
+                .chain(&catalog.chats)
                 .any(|chat| &chat.id == id && &chat.title == title)
         });
-        self.catalog = projects;
+        self.catalog = catalog;
         self.rebuild();
         cx.notify();
     }
 
     fn rebuild(&mut self) {
-        let mut projects = catalog_rows(
-            self.catalog.clone(),
-            &self.current_root,
-            self.current_id.as_deref(),
-        );
-        for chat in projects.iter_mut().flat_map(|project| &mut project.chats) {
+        let current = CurrentChat {
+            root: &self.current_root,
+            project: self.current_project.as_deref(),
+            id: self.current_id.as_deref(),
+        };
+        let mut listed = listed_with(self.catalog.clone(), &current);
+        let titled = listed
+            .projects
+            .iter_mut()
+            .flat_map(|project| &mut project.chats)
+            .chain(&mut listed.chats);
+        for chat in titled {
             if let Some(title) = self.pending_titles.get(&chat.id) {
                 chat.title.clone_from(title);
             }
         }
-        if let Some(project) = projects
-            .iter()
-            .find(|project| same_workspace(&project.root, &self.current_root))
-        {
-            self.expanded.insert(project.root.clone());
+        if let Some(project) = listed.projects.iter().find(|p| current.is_in(p)) {
+            self.expanded.insert(project.id.clone());
         }
-        self.projects = projects;
+        self.listed = listed;
         self.refilter();
     }
 
     /// Lists again what the search leaves; the selection stays if its row does.
     fn refilter(&mut self) {
-        self.visible = visible_projects(&self.projects, &self.query);
+        self.visible = Catalog {
+            projects: visible_projects(&self.listed.projects, &self.query),
+            chats: visible_chats(&self.listed.chats, &self.query),
+        };
         if self.selected_index().is_none() {
             self.selected = None;
         }
     }
 
-    fn toggle(&mut self, root: &str, cx: &mut Context<Self>) {
-        if !self.expanded.remove(root) {
-            self.expanded.insert(root.to_owned());
+    fn toggle(&mut self, project: &str, cx: &mut Context<Self>) {
+        if !self.expanded.remove(project) {
+            self.expanded.insert(project.to_owned());
         }
         cx.notify();
     }
@@ -796,291 +881,6 @@ impl ChatsPanel {
         self.drop_rename();
         cx.notify();
     }
-
-    /// One element per row of [`Self::rows`]: a project header (with its
-    /// "No chats yet" line) or a chat (with its open menu), so the scroll
-    /// can keep the selected row in view.
-    fn row_elements(&self, focused: bool, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        if self.visible.is_empty() {
-            let text = if self.searching() {
-                "No match"
-            } else {
-                "No chats yet"
-            };
-            return vec![no_chats(text, px(8.), cx)];
-        }
-        let mut out = Vec::new();
-        for (index, project) in self.visible.iter().enumerate() {
-            out.push(self.project_header(index, project, focused, cx));
-            if self.is_open(&project.root) {
-                for (row, chat) in project.chats.iter().enumerate() {
-                    out.push(self.chat_row(index, row, project, chat, focused, cx));
-                }
-            }
-        }
-        out
-    }
-
-    fn project_header(
-        &self,
-        index: usize,
-        project: &ProjectChats,
-        focused: bool,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let theme = cx.theme();
-        let (muted, active, ring) = (theme.muted_foreground, theme.list_active, theme.ring);
-        let expanded = self.is_open(&project.root);
-        let marker = if expanded { "▾" } else { "▸" };
-        let root = project.root.clone();
-        let keyed = focused && self.selected == Some(ChatRow::Project(project.root.clone()));
-        let mut header = h_flex()
-            .id(SharedString::from(format!("chats-project-{index}")))
-            .w_full()
-            .gap_1()
-            .px_2()
-            .py_1()
-            .border_1()
-            .border_color(gpui::transparent_black())
-            .cursor_pointer()
-            .hover(move |style| style.bg(active).rounded_sm())
-            .on_click(cx.listener(move |this, _, _, cx| this.toggle(&root, cx)))
-            .child(div().w(px(12.)).text_color(muted).child(marker))
-            .child(label(&project.name));
-        if keyed {
-            header = header.border_color(ring).rounded_sm();
-        }
-        let mut block = v_flex().child(header);
-        if expanded && project.chats.is_empty() {
-            block = block.child(no_chats("No chats yet", px(22.), cx));
-        }
-        block.into_any_element()
-    }
-
-    fn chat_row(
-        &self,
-        index: usize,
-        row: usize,
-        project: &ProjectChats,
-        chat: &ChatEntry,
-        focused: bool,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let theme = cx.theme();
-        let (muted, active, ring) = (theme.muted_foreground, theme.list_active, theme.ring);
-        let selected = self.current_id.as_deref() == Some(chat.id.as_str());
-        let keyed = focused
-            && self.selected
-                == Some(ChatRow::Chat {
-                    root: project.root.clone(),
-                    id: chat.id.clone(),
-                });
-        // A turn running out of sight: waiting on the user, or busy.
-        let badge = match self.activity.get(&chat.id) {
-            Some(true) => Some("⏳"),
-            Some(false) => Some("●"),
-            None => None,
-        };
-        let (root, id, title) = (project.root.clone(), chat.id.clone(), chat.title.clone());
-        let (menu_root, menu_id, menu_title) = (root.clone(), id.clone(), title.clone());
-        let menu_for_chat = self.action.as_ref().is_some_and(|action| action.id == id);
-        let selector = format!("chats-session-{index}-{row}");
-        let mut item = h_flex()
-            .id(SharedString::from(selector.clone()))
-            .debug_selector(move || selector.clone())
-            .w_full()
-            .pl(px(22.))
-            .pr_2()
-            .py_1()
-            .border_1()
-            .border_color(gpui::transparent_black())
-            .cursor_pointer()
-            .hover(move |style| style.bg(active).rounded_sm())
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(move |this, _: &MouseDownEvent, window, cx| {
-                    cx.stop_propagation();
-                    this.open_menu(
-                        menu_id.clone(),
-                        menu_root.clone(),
-                        menu_title.clone(),
-                        window,
-                        cx,
-                    );
-                }),
-            )
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.clear_action(cx);
-                if this.current_id.as_deref() == Some(id.as_str()) {
-                    return;
-                }
-                cx.emit(ChatsEvent::Open {
-                    root: root.clone(),
-                    id: id.clone(),
-                });
-            }))
-            .child(label(&chat.title))
-            .children(badge.map(|badge| {
-                div()
-                    .debug_selector(|| "chats-activity".to_owned())
-                    .text_xs()
-                    .text_color(muted)
-                    .child(badge)
-            }));
-        if selected {
-            item = item.bg(active).rounded_sm();
-        }
-        if keyed {
-            let selector = format!("chats-keyed-{index}-{row}");
-            item = item
-                .border_color(ring)
-                .rounded_sm()
-                .debug_selector(move || selector.clone());
-        }
-        let mut block = v_flex().child(item);
-        if menu_for_chat {
-            block = block.child(self.menu(index, row, cx));
-        }
-        block.into_any_element()
-    }
-
-    fn menu(&self, index: usize, row: usize, cx: &mut Context<Self>) -> AnyElement {
-        let Some(action) = &self.action else {
-            return div().into_any_element();
-        };
-        let theme = cx.theme();
-        let (popover, danger, border, muted, active) = (
-            theme.popover,
-            theme.danger,
-            theme.border,
-            theme.muted_foreground,
-            theme.list_active,
-        );
-        let mut menu = v_flex()
-            .id("chats-menu")
-            .debug_selector(|| "chats-menu".to_owned())
-            // A click elsewhere closes it (a right click on another chat
-            // opens that one's).
-            .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                if event.button == MouseButton::Left {
-                    this.click_outside(cx);
-                }
-            }))
-            // A click inside keeps the focus where it is (the rename
-            // field), instead of the list taking it and the field
-            // losing it.
-            .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
-            .mx_2()
-            .mb_1()
-            .py_1()
-            .border_1()
-            .border_color(border)
-            .rounded_md()
-            .bg(popover)
-            .text_sm();
-        match action.kind {
-            ChatActionKind::Menu => {
-                menu = menu
-                    .child(menu_row(
-                        format!("chats-rename-{index}-{row}"),
-                        "Rename",
-                        false,
-                        active,
-                        danger,
-                        cx.listener(|this, _, window, cx| this.begin_rename(window, cx)),
-                    ))
-                    .child(menu_row(
-                        format!("chats-delete-{index}-{row}"),
-                        "Delete",
-                        true,
-                        active,
-                        danger,
-                        cx.listener(|this, _, _, cx| this.ask_delete(cx)),
-                    ))
-                    .child(menu_row(
-                        format!("chats-cancel-{index}-{row}"),
-                        "Cancel",
-                        false,
-                        active,
-                        danger,
-                        cx.listener(|this, _, _, cx| this.cancel_action(cx)),
-                    ));
-            }
-            ChatActionKind::Rename => {
-                if let Some(input) = &self.rename_input {
-                    menu = menu
-                        .child(div().px_2().py_1().child(Input::new(input)))
-                        .child(
-                            div()
-                                .px_2()
-                                .text_xs()
-                                .text_color(muted)
-                                .child("Enter saves · Esc cancels"),
-                        )
-                        .child(menu_row(
-                            format!("chats-cancel-rename-{index}-{row}"),
-                            "Cancel",
-                            false,
-                            active,
-                            danger,
-                            cx.listener(|this, _, _, cx| this.cancel_action(cx)),
-                        ));
-                }
-            }
-            ChatActionKind::ConfirmDelete => {
-                menu = menu
-                    .child(
-                        div()
-                            .px_2()
-                            .py_1()
-                            .text_color(danger)
-                            .child("Delete this chat?"),
-                    )
-                    .child(menu_row(
-                        format!("chats-confirm-delete-{index}-{row}"),
-                        "Delete",
-                        true,
-                        active,
-                        danger,
-                        cx.listener(|this, _, _, cx| this.commit_delete(cx)),
-                    ))
-                    .child(menu_row(
-                        format!("chats-cancel-delete-{index}-{row}"),
-                        "Cancel",
-                        false,
-                        active,
-                        danger,
-                        cx.listener(|this, _, _, cx| this.cancel_action(cx)),
-                    ));
-            }
-        }
-        menu.into_any_element()
-    }
-}
-
-fn menu_row(
-    id: String,
-    text: &'static str,
-    danger: bool,
-    active: gpui::Hsla,
-    danger_color: gpui::Hsla,
-    click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-) -> AnyElement {
-    let selector = id.clone();
-    let mut row = h_flex()
-        .id(SharedString::from(id))
-        .debug_selector(move || selector.clone())
-        .w_full()
-        .px_2()
-        .py_1()
-        .cursor_pointer()
-        .hover(move |style| style.bg(active).rounded_sm())
-        .on_click(click)
-        .child(text);
-    if danger {
-        row = row.text_color(danger_color);
-    }
-    row.into_any_element()
 }
 
 impl EventEmitter<ChatsEvent> for ChatsPanel {}
@@ -1099,19 +899,6 @@ impl Render for ChatsPanel {
             SidebarWidth::Hidden => rail::hidden(self, window, cx),
         }
     }
-}
-
-/// The muted "No chats yet" line, indented by `indent`.
-fn no_chats(text: &'static str, indent: gpui::Pixels, cx: &App) -> AnyElement {
-    div()
-        .debug_selector(|| "chats-empty".to_owned())
-        .pl(indent)
-        .pr_2()
-        .py_1()
-        .text_sm()
-        .text_color(cx.theme().muted_foreground)
-        .child(text)
-        .into_any_element()
 }
 
 fn label(text: &str) -> impl IntoElement {
@@ -1166,47 +953,6 @@ pub fn chat_label(title: Option<&str>) -> String {
         .to_owned()
 }
 
-/// `projects` plus the open project and the open chat, when the catalog
-/// does not list them yet.
-#[must_use]
-pub fn catalog_rows(
-    mut projects: Vec<ProjectChats>,
-    current_root: &str,
-    current_id: Option<&str>,
-) -> Vec<ProjectChats> {
-    if current_root.is_empty() {
-        return projects;
-    }
-    if !projects
-        .iter()
-        .any(|project| same_workspace(&project.root, current_root))
-    {
-        projects.insert(
-            0,
-            ProjectChats {
-                name: project_name(current_root),
-                root: current_root.to_owned(),
-                chats: Vec::new(),
-            },
-        );
-    }
-    if let Some(id) = current_id.filter(|id| !id.is_empty())
-        && let Some(project) = projects
-            .iter_mut()
-            .find(|project| same_workspace(&project.root, current_root))
-        && !project.chats.iter().any(|chat| chat.id == id)
-    {
-        project.chats.insert(
-            0,
-            ChatEntry {
-                id: id.to_owned(),
-                title: "New chat".into(),
-            },
-        );
-    }
-    projects
-}
-
 /// The two roots name the same directory. Slashes are ignored; on Windows
 /// the comparison is case-insensitive.
 pub fn same_workspace(left: &str, right: &str) -> bool {
@@ -1220,9 +966,13 @@ pub fn same_workspace(left: &str, right: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use gpui::{TestAppContext, VisualTestContext};
+mod grouped_tests;
 
+#[cfg(test)]
+mod tests {
+    use gpui::{TestAppContext, VisualTestContext, px};
+
+    use super::grouped_tests::click;
     use super::*;
 
     fn panel<'a>(
@@ -1234,7 +984,7 @@ mod tests {
         let current_id = current_id.map(str::to_owned);
         let (view, cx) = cx.add_window_view(move |_, cx| {
             let mut panel = ChatsPanel::new("/work/crest".into(), current_id, cx);
-            panel.set_projects(projects, cx);
+            panel.set_catalog(catalog(projects), cx);
             panel.set_width(SidebarWidth::Full, cx);
             panel
         });
@@ -1336,12 +1086,12 @@ mod tests {
         );
         // The catalog catches up; a stale one does not undo it.
         view.update(cx, |panel, cx| {
-            panel.set_projects(vec![project("/work/crest", &["a", "b"])], cx);
+            panel.set_catalog(catalog(vec![project("/work/crest", &["a", "b"])]), cx);
         });
         assert_eq!(listed_title(&view, "a", cx), "Nuevo nombre");
         let mut saved = project("/work/crest", &["a", "b"]);
         saved.chats[0].title = "Nuevo nombre".into();
-        view.update(cx, |panel, cx| panel.set_projects(vec![saved], cx));
+        view.update(cx, |panel, cx| panel.set_catalog(catalog(vec![saved]), cx));
         view.read_with(cx, |panel, _| assert!(panel.pending_titles.is_empty()));
         // A failed save shows the catalog's title again.
         view.update(cx, |panel, cx| {
@@ -1464,7 +1214,7 @@ mod tests {
             [
                 ChatRow::Project("/other".into()),
                 ChatRow::Chat {
-                    root: "/other".into(),
+                    project: Some("/other".into()),
                     id: "gamma".into()
                 }
             ],
@@ -1487,13 +1237,6 @@ mod tests {
             })
             .detach();
         });
-        let click = |selector: &'static str, cx: &mut VisualTestContext| {
-            cx.update(|window, _| window.refresh());
-            cx.run_until_parked();
-            let bounds = cx.debug_bounds(selector).expect(selector);
-            cx.simulate_click(bounds.center(), gpui::Modifiers::none());
-            cx.run_until_parked();
-        };
         view.update(cx, |panel, cx| panel.set_width(SidebarWidth::Strip, cx));
         click("sidebar-initial-0", cx);
         click("sidebar-new", cx);
@@ -1509,17 +1252,26 @@ mod tests {
                     root: "/work/crest".into(),
                     id: "a".into()
                 },
-                ChatsEvent::New,
+                ChatsEvent::NewStandalone,
                 ChatsEvent::Sidebar(SidebarWidth::Full),
                 ChatsEvent::Sidebar(SidebarWidth::Hidden),
             ]
         );
     }
 
+    fn catalog(projects: Vec<ProjectChats>) -> Catalog {
+        Catalog {
+            projects,
+            chats: Vec::new(),
+        }
+    }
+
     fn project(root: &str, chats: &[&str]) -> ProjectChats {
         ProjectChats {
+            id: root.into(),
             name: project_name(root),
             root: root.into(),
+            dirs: 1,
             chats: chats
                 .iter()
                 .map(|id| ChatEntry {
@@ -1553,30 +1305,5 @@ mod tests {
         assert_eq!(next_chat_id(&chats, "new"), Some("old"));
         assert_eq!(next_chat_id(&chats, "missing"), Some("new"));
         assert!(next_chat_id(&chats[..1], "new").is_none());
-    }
-
-    #[test]
-    fn the_open_project_and_chat_stay_on_the_list() {
-        let rows = catalog_rows(Vec::new(), r"C:\work\crest", Some("abc"));
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].name, "crest");
-        assert_eq!(rows[0].chats[0].id, "abc");
-        assert_eq!(rows[0].chats[0].title, "New chat");
-
-        let listed = catalog_rows(
-            vec![
-                project("C:/work/crest", &["abc"]),
-                project("/other", &["z"]),
-            ],
-            r"C:\work\crest",
-            Some("abc"),
-        );
-        assert_eq!(listed.len(), 2);
-        assert_eq!(listed[0].chats.len(), 1, "the saved chat is not repeated");
-
-        let added = catalog_rows(vec![project("/other", &["z"])], "/work/crest", Some("new"));
-        assert_eq!(added[0].root, "/work/crest");
-        assert_eq!(added[0].chats[0].id, "new");
-        assert!(catalog_rows(vec![project("/other", &[])], "", None).len() == 1);
     }
 }
