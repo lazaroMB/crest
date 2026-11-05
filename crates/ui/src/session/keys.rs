@@ -83,9 +83,10 @@ impl Session {
         if self.input.read(cx).owns_focus(window, cx) {
             return;
         }
-        // The chat rename field is a text input outside the prompt. Its
-        // keys stay there; a printable key must not fall into the prompt.
-        if crate::chats::rename_has_focus(window, cx) {
+        // The chat rename and search fields are text inputs outside the
+        // prompt. Their keys stay there; a printable key must not fall into
+        // the prompt.
+        if crate::chats::field_has_focus(window, cx) {
             return;
         }
         let Some(key) = key_from_keystroke(&event.keystroke) else {
@@ -264,7 +265,7 @@ impl Session {
                 .update(cx, |view, cx| view.select_last_if_none(cx));
         } else if in_timeline && tree_shown {
             self.tree.update(cx, |tree, cx| tree.focus(window, cx));
-        } else if (in_timeline || in_tree) && self.chats_shown {
+        } else if (in_timeline || in_tree) && self.sidebar != crate::chats::SidebarWidth::Strip {
             cx.emit(SessionEvent::Chats(crate::chats::ChatsCommand::Focus));
         } else {
             self.focus_input(window, cx);

@@ -35,12 +35,12 @@ use futures::future::BoxFuture;
 use gpui::{
     AnyElement, App, AppContext as _, Context, Entity, FocusHandle, Focusable,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString, Styled as _,
-    Subscription, Window, actions, div, prelude::FluentBuilder as _,
+    Subscription, Window, actions, div,
 };
-use gpui_component::{ActiveTheme as _, h_flex};
+use gpui_component::ActiveTheme as _;
 
 use crate::app::{RootView, set_theme, window_title};
-use crate::chats::{ChatsCommand, ChatsEvent, ChatsPanel, ProjectChats, SessionOpen};
+use crate::chats::{ChatsCommand, ChatsEvent, ChatsPanel, ProjectChats, SessionOpen, SidebarWidth};
 use crate::project_picker::{ProjectPickerEvent, ProjectPickerView};
 use crate::session::{Session, SessionEvent, SessionParts};
 
@@ -111,9 +111,8 @@ pub struct Workbench {
     parked: HashMap<String, Live>,
     /// The session `/project` left, until a project is chosen.
     back: Option<Live>,
+    /// The sidebar, which holds its own width (`panel.chats` cycles it).
     chats: Entity<ChatsPanel>,
-    /// The chats sidebar is on screen (`panel.chats`).
-    chats_shown: bool,
     focus_handle: FocusHandle,
     _chats: Subscription,
     _keys: Subscription,
@@ -139,7 +138,6 @@ impl Workbench {
             parked: HashMap::new(),
             back: None,
             chats,
-            chats_shown: true,
             focus_handle: cx.focus_handle(),
             _chats: subscription,
             _keys: keys,
@@ -221,9 +219,9 @@ impl Workbench {
         self.parked.len()
     }
 
-    /// Whether the chats sidebar is on screen.
-    pub fn chats_shown(&self) -> bool {
-        self.chats_shown
+    /// How wide the chats sidebar is.
+    pub fn sidebar(&self, cx: &App) -> SidebarWidth {
+        self.chats.read(cx).width()
     }
 
     /// The chats sidebar.
@@ -262,20 +260,30 @@ impl Workbench {
         cx.stop_propagation();
     }
 
-    /// Shows or hides the chats sidebar; hidden, it cannot keep the focus.
-    pub fn toggle_chats(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// The sidebar changed width: the session hears of it, and the prompt
+    /// takes the keyboard from a list that is no longer there.
+    fn sidebar_changed(
+        &mut self,
+        width: SidebarWidth,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let had_focus = self.chats.focus_handle(cx).contains_focused(window, cx);
-        self.chats_shown = !self.chats_shown;
-        let shown = self.chats_shown;
         if let Some(session) = self.session().cloned() {
             session.update(cx, |session, cx| {
-                session.set_chats_shown(shown);
-                if !shown && had_focus {
+                session.set_sidebar(width);
+                if width != SidebarWidth::Full && had_focus {
                     session.focus_input(window, cx);
                 }
             });
         }
         cx.notify();
+    }
+
+    /// Makes sure the full list is on screen (a rename or a delete needs it).
+    fn show_full_sidebar(&mut self, cx: &mut Context<Self>) {
+        self.chats
+            .update(cx, |chats, cx| chats.set_width(SidebarWidth::Full, cx));
     }
 
     /// Runs what a key asked the session about the chats.
@@ -301,9 +309,7 @@ impl Workbench {
                 }
             }
             ChatsCommand::Rename | ChatsCommand::Delete => {
-                if !self.chats_shown {
-                    self.toggle_chats(window, cx);
-                }
+                self.show_full_sidebar(cx);
                 self.chats.update(cx, |chats, cx| {
                     if command == ChatsCommand::Rename {
                         chats.rename_current(window, cx);
@@ -312,9 +318,9 @@ impl Workbench {
                     }
                 });
             }
-            ChatsCommand::TogglePanel => self.toggle_chats(window, cx),
+            ChatsCommand::TogglePanel => self.chats.update(cx, ChatsPanel::cycle),
             ChatsCommand::Focus => {
-                if self.chats_shown {
+                if self.sidebar(cx) != SidebarWidth::Strip {
                     self.chats.update(cx, |chats, cx| chats.focus(window, cx));
                 } else if let Some(session) = self.session().cloned() {
                     session.update(cx, |session, cx| session.focus_input(window, cx));
@@ -439,11 +445,13 @@ impl Workbench {
     /// Puts `live` on screen: new, or back from the parked ones.
     fn show_live(&mut self, live: Live, window: &mut Window, cx: &mut Context<Self>) {
         window.set_window_title(&window_title(&live.label));
-        let chats_shown = self.chats_shown;
+        let width = self.sidebar(cx);
         live.session.update(cx, |session, cx| {
-            session.set_chats_shown(chats_shown);
+            session.set_sidebar(width);
             session.set_shown(true, window, cx);
         });
+        let chats = self.chats.clone();
+        live.root.update(cx, |root, cx| root.set_sidebar(chats, cx));
         let (root, id) = (live.dir.display().to_string(), live.session_id.clone());
         self.chats
             .update(cx, |chats, cx| chats.set_current(root, id, cx));
@@ -526,11 +534,16 @@ impl Workbench {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let ChatsEvent::Sidebar(width) = event {
+            self.sidebar_changed(*width, window, cx);
+            return;
+        }
         let Content::Session(live) = &self.content else {
             return;
         };
         let (dir, open_id) = (live.dir.clone(), live.session_id.clone());
         match event.clone() {
+            ChatsEvent::Sidebar(_) => {}
             ChatsEvent::New => self.switch_chat(dir, SessionOpen::New, window, cx),
             ChatsEvent::Open { root, id } => {
                 if open_id.as_deref() == Some(id.as_str()) {
@@ -794,10 +807,12 @@ impl Render for Workbench {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body: AnyElement = match &self.content {
             Content::Picker(picker) => picker.clone().into_any_element(),
-            Content::Session(live) => h_flex()
+            // The sidebar is drawn by the root, so the prompt and the
+            // status bar can span the window under it.
+            Content::Session(live) => div()
                 .size_full()
-                .when(self.chats_shown, |row| row.child(self.chats.clone()))
-                .child(div().flex_1().h_full().min_w_0().child(live.root.clone()))
+                .min_w_0()
+                .child(live.root.clone())
                 .into_any_element(),
             Content::Opening(dir) => div()
                 .size_full()
@@ -999,7 +1014,7 @@ mod tests {
     #[gpui::test]
     fn switching_chats_parks_a_busy_session_and_brings_it_back(cx: &mut TestAppContext) {
         let (view, cx) = workbench(cx);
-        open(&view, "/home/u/proj", cx);
+        open_full(&view, "/home/u/proj", cx);
         let first = shown(&view, cx);
         first.update(cx, |session, cx| session.submit("hola".into(), cx));
         cx.run_until_parked();
@@ -1139,7 +1154,7 @@ mod tests {
     fn the_chat_menu_cancels_by_button_esc_or_click_outside(cx: &mut TestAppContext) {
         let (view, cx) = workbench(cx);
         cx.update(|window, _| window.activate_window());
-        open(&view, "/home/u/proj", cx);
+        open_full(&view, "/home/u/proj", cx);
         let session = shown(&view, cx);
         let chats = view.read_with(cx, |view, _| view.chats.clone());
         let redraw = |cx: &mut VisualTestContext| {
@@ -1202,7 +1217,7 @@ mod tests {
     fn a_renamed_chat_shows_its_name_even_while_its_save_waits(cx: &mut TestAppContext) {
         let (view, cx) = workbench(cx);
         cx.update(|window, _| window.activate_window());
-        open(&view, "/home/u/proj", cx);
+        open_full(&view, "/home/u/proj", cx);
         let session = shown(&view, cx);
         let chats = view.read_with(cx, |view, _| view.chats.clone());
         let redraw = |cx: &mut VisualTestContext| {
@@ -1320,22 +1335,194 @@ mod tests {
         cx.simulate_keystrokes("ctrl-g c");
         cx.run_until_parked();
         assert_eq!(shown_id(&view, cx).as_deref(), Some("new-1"));
-        // The sidebar hides and comes back; hidden, the cycle skips it.
-        cx.simulate_keystrokes("ctrl-g s");
-        assert!(!view.read_with(cx, |view, _| view.chats_shown()));
+        // The window opens hidden; the key cycles full, strip, hidden, full.
+        let width = |cx: &mut VisualTestContext| view.read_with(cx, |view, cx| view.sidebar(cx));
+        assert_eq!(width(cx), SidebarWidth::Hidden);
+        for expected in [
+            SidebarWidth::Full,
+            SidebarWidth::Strip,
+            SidebarWidth::Hidden,
+            SidebarWidth::Full,
+        ] {
+            cx.simulate_keystrokes("ctrl-g s");
+            assert_eq!(width(cx), expected);
+        }
         draw(&view, cx);
-        assert!(cx.debug_bounds("chats-empty").is_none());
-        cx.simulate_keystrokes("ctrl-tab ctrl-tab");
-        assert!(!list_focused(cx));
+        assert!(cx.debug_bounds("chats-empty").is_none(), "no empty project");
+        // The session keeps the keys: it was told each width.
         cx.simulate_keystrokes("ctrl-g s");
-        assert!(view.read_with(cx, |view, _| view.chats_shown()));
+        cx.simulate_keystrokes("ctrl-tab ctrl-tab");
+        assert!(!list_focused(cx), "the strip has no focus stop");
+    }
+
+    /// Resizes the window and lays the workbench out, as the window shows it.
+    fn draw_at(_: &Entity<Workbench>, width: f32, cx: &mut VisualTestContext) {
+        cx.simulate_resize(gpui::size(gpui::px(width), gpui::px(800.)));
+        cx.update(|window, _| {
+            window.activate_window();
+            window.refresh();
+        });
+        cx.run_until_parked();
+    }
+
+    /// Puts the pointer far from the sidebar: the test window starts it at
+    /// the corner, on the hidden mark. Needs a frame to have been drawn.
+    fn pointer_away(cx: &mut VisualTestContext) {
+        let away = gpui::point(gpui::px(700.), gpui::px(300.));
+        cx.simulate_mouse_move(away, None, gpui::Modifiers::none());
+        cx.run_until_parked();
+    }
+
+    fn set_sidebar(view: &Entity<Workbench>, width: SidebarWidth, cx: &mut VisualTestContext) {
+        view.read_with(cx, |view, _| view.chats.clone())
+            .update(cx, |chats, cx| chats.set_width(width, cx));
+        cx.run_until_parked();
+    }
+
+    /// A workbench on `/home/u/proj`, drawn at 1280 px with the pointer
+    /// away from the sidebar.
+    fn at_rest(cx: &mut TestAppContext) -> (Entity<Workbench>, &mut VisualTestContext) {
+        let (view, cx) = workbench(cx);
+        open(&view, "/home/u/proj", cx);
+        draw_at(&view, 1280.0, cx);
+        pointer_away(cx);
+        (view, cx)
+    }
+
+    #[gpui::test]
+    fn the_conversation_keeps_its_room_and_the_prompt_spans_the_window(cx: &mut TestAppContext) {
+        use gpui::Pixels;
+        let (view, cx) = at_rest(cx);
+        // (width, window width, share of the window the conversation keeps)
+        let cases = [
+            (SidebarWidth::Full, 1280.0, 0.75),
+            (SidebarWidth::Strip, 1024.0, 0.90),
+            (SidebarWidth::Hidden, 1280.0, 1.0),
+        ];
+        for (width, window, share) in cases {
+            set_sidebar(&view, width, cx);
+            draw_at(&view, window, cx);
+            pointer_away(cx);
+            let conversation = cx.debug_bounds("conversation").expect("conversation");
+            let kept = conversation.size.width / Pixels::from(window);
+            assert!(kept >= share, "{width:?}: the conversation keeps {kept}");
+            let prompt = cx.debug_bounds("prompt-row").expect("prompt");
+            assert_eq!(
+                prompt.size.width,
+                Pixels::from(window),
+                "{width:?}: the prompt spans the window"
+            );
+            if let Some(sidebar) = cx.debug_bounds("chats-panel") {
+                assert!(
+                    sidebar.bottom() <= prompt.top(),
+                    "{width:?}: the sidebar ends at the prompt"
+                );
+            }
+        }
+        // Hidden: the conversation starts below the mark, not beside it.
+        let conversation = cx.debug_bounds("conversation").expect("conversation");
+        let mark = cx.debug_bounds("sidebar-mark").expect("the mark");
+        assert!(
+            conversation.top() >= mark.bottom(),
+            "no block under the mark"
+        );
+    }
+
+    #[gpui::test]
+    fn hovering_the_hidden_mark_shifts_the_conversation_and_leaving_restores_it(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = at_rest(cx);
+        let mark = cx.debug_bounds("sidebar-mark").expect("the mark").center();
+        let left = |cx: &mut VisualTestContext| {
+            cx.debug_bounds("conversation")
+                .expect("conversation")
+                .left()
+        };
+        assert_eq!(left(cx), gpui::px(0.), "closed: the full width");
+        cx.simulate_mouse_move(mark, None, gpui::Modifiers::none());
+        cx.run_until_parked();
+        assert_eq!(left(cx), gpui::px(48.), "open: the rows push it aside");
+        assert!(cx.debug_bounds("sidebar-new").is_some(), "the rows show");
+        pointer_away(cx);
+        assert_eq!(left(cx), gpui::px(0.), "leaving closes the rows");
+        assert_eq!(
+            view.read_with(cx, |view, cx| view.sidebar(cx)),
+            SidebarWidth::Hidden
+        );
+    }
+
+    #[gpui::test]
+    fn keyboard_focus_on_the_hidden_mark_reveals_the_rows_and_enter_opens_the_sidebar(
+        cx: &mut TestAppContext,
+    ) {
+        let (view, cx) = at_rest(cx);
+        // prompt → timeline → the mark.
+        cx.simulate_keystrokes("ctrl-tab ctrl-tab");
+        cx.run_until_parked();
+        assert!(list_focused(cx), "the mark has the keyboard");
+        let left = cx
+            .debug_bounds("conversation")
+            .expect("conversation")
+            .left();
+        assert_eq!(
+            left,
+            gpui::px(48.),
+            "the rows show and push the conversation"
+        );
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        assert_eq!(
+            view.read_with(cx, |view, cx| view.sidebar(cx)),
+            SidebarWidth::Full
+        );
+        assert!(list_focused(cx), "the list keeps the keyboard");
+        // Esc from the mark gives the prompt the keyboard back.
+        cx.simulate_keystrokes("ctrl-g s ctrl-g s ctrl-tab ctrl-tab");
+        assert!(list_focused(cx));
+        cx.simulate_keystrokes("escape");
+        assert!(!list_focused(cx));
+    }
+
+    #[gpui::test]
+    fn the_strip_names_a_project_while_the_pointer_is_on_its_initial(cx: &mut TestAppContext) {
+        let (view, cx) = workbench(cx);
+        open(&view, "/home/u/proj", cx);
+        set_sidebar(&view, SidebarWidth::Strip, cx);
+        draw_at(&view, 1024.0, cx);
+        assert!(cx.debug_bounds("sidebar-initial-name").is_none());
+        let initial = cx
+            .debug_bounds("sidebar-initial-0")
+            .expect("an initial")
+            .center();
+        cx.simulate_mouse_move(initial, None, gpui::Modifiers::none());
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("sidebar-initial-name").is_some(),
+            "the name shows"
+        );
+        pointer_away(cx);
+        assert!(cx.debug_bounds("sidebar-initial-name").is_none());
+    }
+
+    /// [`open`], then the full sidebar (the window opens with it hidden).
+    fn open_full(view: &Entity<Workbench>, dir: &str, cx: &mut VisualTestContext) {
+        open(view, dir, cx);
+        show_sidebar(view, cx);
+    }
+
+    /// Opens the full sidebar, as `ctrl-g s` does from the hidden state.
+    fn show_sidebar(view: &Entity<Workbench>, cx: &mut VisualTestContext) {
+        view.read_with(cx, |view, _| view.chats.clone())
+            .update(cx, |chats, cx| chats.set_width(SidebarWidth::Full, cx));
+        cx.run_until_parked();
     }
 
     #[gpui::test]
     fn the_chats_list_takes_the_keyboard(cx: &mut TestAppContext) {
         let (view, cx) = workbench(cx);
         cx.update(|window, _| window.activate_window());
-        open(&view, "/home/u/proj", cx);
+        open_full(&view, "/home/u/proj", cx);
         let chats = view.read_with(cx, |view, _| view.chats.clone());
         let session = shown(&view, cx);
         // prompt → timeline → (no tree) → chats, on the open chat.
@@ -1400,9 +1587,12 @@ mod tests {
         assert!(cx.update(|window, cx| crate::chats::rename_has_focus(window, cx)));
         cx.simulate_keystrokes("escape");
         cx.run_until_parked();
-        // Hidden, the sidebar comes back to ask.
-        cx.simulate_keystrokes("ctrl-g s ctrl-g x");
-        assert!(view.read_with(cx, |view, _| view.chats_shown()));
+        // Hidden again (full, strip, hidden), the sidebar comes back to ask.
+        cx.simulate_keystrokes("ctrl-g s ctrl-g s ctrl-g x");
+        assert_eq!(
+            view.read_with(cx, |view, cx| view.sidebar(cx)),
+            SidebarWidth::Full
+        );
         assert!(chats.read_with(cx, |c, _| c.menu_open()), "asks first");
         assert!(list_focused(cx), "so Enter confirms");
         cx.simulate_keystrokes("enter");

@@ -29,6 +29,13 @@ use gpui::{
 use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
+mod model;
+mod rail;
+mod search;
+
+use model::visible_projects;
+pub use model::{MARK_BAND, STRIP_WIDTH, SidebarWidth};
+
 /// Which session to open in a project.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SessionOpen {
@@ -86,6 +93,9 @@ pub enum ChatsEvent {
         /// Session id.
         id: String,
     },
+    /// The sidebar changed width (a click on the mark, the cycle key):
+    /// the window tells the session and moves the keyboard if needed.
+    Sidebar(SidebarWidth),
     /// The menu was cancelled (`Esc`, **Cancel**): the prompt takes the
     /// focus back from the rename field.
     Dismissed,
@@ -105,7 +115,7 @@ pub enum ChatsCommand {
     Rename,
     /// `chat.delete`: asks to delete the open chat.
     Delete,
-    /// `panel.chats`: shows or hides the sidebar.
+    /// `panel.chats`: the next width (full, strip, hidden).
     TogglePanel,
     /// `focus.next` reached the list.
     Focus,
@@ -161,20 +171,34 @@ struct ChatAction {
     kind: ChatActionKind,
 }
 
-/// Width of the panel, beside the session.
-const PANEL_WIDTH: f32 = 240.0;
-
 /// The rename field, while it exists. The prompt leaves its keys alone
 /// when this field has the focus.
 struct ChatRename(WeakEntity<InputState>);
 
 impl Global for ChatRename {}
 
+/// The search field, while it exists (same rule as [`ChatRename`]).
+struct ChatSearch(WeakEntity<InputState>);
+
+impl Global for ChatSearch {}
+
+fn focused_input(input: Option<&WeakEntity<InputState>>, window: &Window, cx: &App) -> bool {
+    input
+        .and_then(WeakEntity::upgrade)
+        .is_some_and(|input| input.read(cx).focus_handle(cx).is_focused(window))
+}
+
 /// Whether the rename field is the focused text input.
 pub fn rename_has_focus(window: &Window, cx: &App) -> bool {
-    cx.try_global::<ChatRename>()
-        .and_then(|active| active.0.upgrade())
-        .is_some_and(|input| input.read(cx).focus_handle(cx).is_focused(window))
+    let active = cx.try_global::<ChatRename>();
+    focused_input(active.map(|active| &active.0), window, cx)
+}
+
+/// Whether a text field of the sidebar (rename or search) has the focus.
+/// The prompt leaves the keys of both alone.
+pub fn field_has_focus(window: &Window, cx: &App) -> bool {
+    let search = cx.try_global::<ChatSearch>();
+    rename_has_focus(window, cx) || focused_input(search.map(|active| &active.0), window, cx)
 }
 
 /// The focus handles of the chats lists (one per window). The prompt
@@ -200,6 +224,19 @@ pub struct ChatsPanel {
     /// The catalog as given; `projects` adds the open chat to it.
     catalog: Vec<ProjectChats>,
     projects: Vec<ProjectChats>,
+    /// What the search leaves of `projects`: the rows the list shows.
+    visible: Vec<ProjectChats>,
+    /// How wide the sidebar is.
+    width: SidebarWidth,
+    /// The pointer is on the hidden sidebar's mark or its revealed rows.
+    pointer_on_rail: bool,
+    /// The strip's project (its root) under the pointer.
+    pointer_on_project: Option<String>,
+    /// The search field, while it is open (full width only), and what it holds.
+    search: Option<Entity<InputState>>,
+    query: String,
+    /// The search field's events; dropped with it.
+    _search_events: Option<Subscription>,
     expanded: HashSet<String>,
     current_root: String,
     current_id: Option<String>,
@@ -240,7 +277,14 @@ impl ChatsPanel {
         lists.0.push(focus_handle.downgrade());
         Self {
             catalog: Vec::new(),
+            visible: projects.clone(),
             projects,
+            width: SidebarWidth::default(),
+            pointer_on_rail: false,
+            pointer_on_project: None,
+            search: None,
+            query: String::new(),
+            _search_events: None,
             expanded,
             current_root,
             current_id,
@@ -261,9 +305,9 @@ impl ChatsPanel {
     #[must_use]
     pub fn rows(&self) -> Vec<ChatRow> {
         let mut rows = Vec::new();
-        for project in &self.projects {
+        for project in &self.visible {
             rows.push(ChatRow::Project(project.root.clone()));
-            if self.expanded.contains(&project.root) {
+            if self.is_open(&project.root) {
                 rows.extend(project.chats.iter().map(|chat| ChatRow::Chat {
                     root: project.root.clone(),
                     id: chat.id.clone(),
@@ -416,6 +460,10 @@ impl ChatsPanel {
         if m.control || m.alt || m.platform {
             return;
         }
+        if self.width != SidebarWidth::Full {
+            self.on_rail_key(event.keystroke.key.as_str(), cx);
+            return;
+        }
         let confirming = self
             .action
             .as_ref()
@@ -553,6 +601,12 @@ impl ChatsPanel {
             self.expanded.insert(project.root.clone());
         }
         self.projects = projects;
+        self.refilter();
+    }
+
+    /// Lists again what the search leaves; the selection stays if its row does.
+    fn refilter(&mut self) {
+        self.visible = visible_projects(&self.projects, &self.query);
         if self.selected_index().is_none() {
             self.selected = None;
         }
@@ -570,9 +624,20 @@ impl ChatsPanel {
     /// arrives as [`InputEvent::PressEnter`] ([`Self::on_rename_event`]),
     /// which does not depend on a focus check made before the key reaches
     /// the field.
-    fn on_key(&mut self, event: &KeystrokeEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        if event.keystroke.key == "escape" && self.action.is_some() {
+    fn on_key(&mut self, event: &KeystrokeEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if event.keystroke.key != "escape" {
+            return;
+        }
+        if self.action.is_some() {
             self.cancel_action(cx);
+            cx.stop_propagation();
+        } else if focused_input(
+            self.search.as_ref().map(Entity::downgrade).as_ref(),
+            window,
+            cx,
+        ) {
+            self.close_search(cx);
+            cx.emit(ChatsEvent::Dismissed);
             cx.stop_propagation();
         }
     }
@@ -736,13 +801,18 @@ impl ChatsPanel {
     /// "No chats yet" line) or a chat (with its open menu), so the scroll
     /// can keep the selected row in view.
     fn row_elements(&self, focused: bool, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        if self.projects.is_empty() {
-            return vec![no_chats(px(8.), cx)];
+        if self.visible.is_empty() {
+            let text = if self.searching() {
+                "No match"
+            } else {
+                "No chats yet"
+            };
+            return vec![no_chats(text, px(8.), cx)];
         }
         let mut out = Vec::new();
-        for (index, project) in self.projects.iter().enumerate() {
+        for (index, project) in self.visible.iter().enumerate() {
             out.push(self.project_header(index, project, focused, cx));
-            if self.expanded.contains(&project.root) {
+            if self.is_open(&project.root) {
                 for (row, chat) in project.chats.iter().enumerate() {
                     out.push(self.chat_row(index, row, project, chat, focused, cx));
                 }
@@ -760,7 +830,7 @@ impl ChatsPanel {
     ) -> AnyElement {
         let theme = cx.theme();
         let (muted, active, ring) = (theme.muted_foreground, theme.list_active, theme.ring);
-        let expanded = self.expanded.contains(&project.root);
+        let expanded = self.is_open(&project.root);
         let marker = if expanded { "▾" } else { "▸" };
         let root = project.root.clone();
         let keyed = focused && self.selected == Some(ChatRow::Project(project.root.clone()));
@@ -782,7 +852,7 @@ impl ChatsPanel {
         }
         let mut block = v_flex().child(header);
         if expanded && project.chats.is_empty() {
-            block = block.child(no_chats(px(22.), cx));
+            block = block.child(no_chats("No chats yet", px(22.), cx));
         }
         block.into_any_element()
     }
@@ -1023,45 +1093,16 @@ impl Focusable for ChatsPanel {
 
 impl Render for ChatsPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let focused = self.focus_handle.is_focused(window);
-        let rows = self.row_elements(focused, cx);
-        let theme = cx.theme();
-        let (sidebar, foreground, muted, border, active) = (
-            theme.sidebar,
-            theme.sidebar_foreground,
-            theme.muted_foreground,
-            theme.border,
-            theme.list_active,
-        );
-        v_flex()
-            .id("chats-panel")
-            .track_focus(&self.focus_handle)
-            .on_key_down(cx.listener(Self::on_list_key))
-            .w(px(PANEL_WIDTH))
-            .h_full()
-            .flex_none()
-            .border_r_1()
-            .border_color(border)
-            .bg(sidebar)
-            .text_color(foreground)
-            .child(div().px_2().py_1().text_color(muted).child("Chats"))
-            .child(
-                h_flex()
-                    .id("chats-new")
-                    .w_full()
-                    .px_2()
-                    .py_1()
-                    .cursor_pointer()
-                    .hover(move |style| style.bg(active).rounded_sm())
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(ChatsEvent::New)))
-                    .child(label("New chat")),
-            )
-            .child(crate::keyscroll::list("chats-list", &self.scroll, rows).flex_1())
+        match self.width {
+            SidebarWidth::Full => rail::full(self, window, cx),
+            SidebarWidth::Strip => rail::strip(self, cx),
+            SidebarWidth::Hidden => rail::hidden(self, window, cx),
+        }
     }
 }
 
 /// The muted "No chats yet" line, indented by `indent`.
-fn no_chats(indent: gpui::Pixels, cx: &App) -> AnyElement {
+fn no_chats(text: &'static str, indent: gpui::Pixels, cx: &App) -> AnyElement {
     div()
         .debug_selector(|| "chats-empty".to_owned())
         .pl(indent)
@@ -1069,7 +1110,7 @@ fn no_chats(indent: gpui::Pixels, cx: &App) -> AnyElement {
         .py_1()
         .text_sm()
         .text_color(cx.theme().muted_foreground)
-        .child("No chats yet")
+        .child(text)
         .into_any_element()
 }
 
@@ -1194,6 +1235,7 @@ mod tests {
         let (view, cx) = cx.add_window_view(move |_, cx| {
             let mut panel = ChatsPanel::new("/work/crest".into(), current_id, cx);
             panel.set_projects(projects, cx);
+            panel.set_width(SidebarWidth::Full, cx);
             panel
         });
         cx.update(|window, _| window.refresh());
@@ -1400,6 +1442,78 @@ mod tests {
         cx.simulate_keystrokes("enter");
         cx.run_until_parked();
         assert_eq!(renamed(&events), [("a".into(), "Por tecla".into())]);
+    }
+
+    #[gpui::test]
+    fn the_search_filters_the_rows_and_escape_closes_it(cx: &mut TestAppContext) {
+        let projects = vec![
+            project("/work/crest", &["alpha", "beta"]),
+            project("/other", &["gamma"]),
+        ];
+        let (view, cx) = panel(projects, Some("alpha"), cx);
+        cx.update(|window, _| window.activate_window());
+        let rows = |cx: &mut VisualTestContext| view.read_with(cx, |panel, _| panel.rows());
+        assert_eq!(rows(cx).len(), 4, "crest unfolded, other folded");
+        view.update_in(cx, |panel, window, cx| panel.open_search(window, cx));
+        cx.run_until_parked();
+        assert!(cx.update(|window, cx| field_has_focus(window, cx)));
+        cx.simulate_input("gam");
+        cx.run_until_parked();
+        assert_eq!(
+            rows(cx),
+            [
+                ChatRow::Project("/other".into()),
+                ChatRow::Chat {
+                    root: "/other".into(),
+                    id: "gamma".into()
+                }
+            ],
+            "a search unfolds what matches and hides the rest"
+        );
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        assert_eq!(rows(cx).len(), 4, "closing the search lists everything");
+        assert!(!cx.update(|window, cx| field_has_focus(window, cx)));
+    }
+
+    #[gpui::test]
+    fn the_strip_and_the_hidden_rows_reach_the_same_actions(cx: &mut TestAppContext) {
+        let (view, cx) = panel(vec![project("/work/crest", &["a"])], Some("a"), cx);
+        let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let sink = std::rc::Rc::clone(&events);
+        cx.update(|_, cx| {
+            cx.subscribe(&view, move |_, event: &ChatsEvent, _| {
+                sink.borrow_mut().push(event.clone());
+            })
+            .detach();
+        });
+        let click = |selector: &'static str, cx: &mut VisualTestContext| {
+            cx.update(|window, _| window.refresh());
+            cx.run_until_parked();
+            let bounds = cx.debug_bounds(selector).expect(selector);
+            cx.simulate_click(bounds.center(), gpui::Modifiers::none());
+            cx.run_until_parked();
+        };
+        view.update(cx, |panel, cx| panel.set_width(SidebarWidth::Strip, cx));
+        click("sidebar-initial-0", cx);
+        click("sidebar-new", cx);
+        // The mark of the strip opens the full sidebar, and the one of the
+        // full sidebar hides it (not the strip).
+        click("sidebar-mark", cx);
+        click("sidebar-mark", cx);
+        assert_eq!(
+            *events.borrow(),
+            [
+                ChatsEvent::Sidebar(SidebarWidth::Strip),
+                ChatsEvent::Open {
+                    root: "/work/crest".into(),
+                    id: "a".into()
+                },
+                ChatsEvent::New,
+                ChatsEvent::Sidebar(SidebarWidth::Full),
+                ChatsEvent::Sidebar(SidebarWidth::Hidden),
+            ]
+        );
     }
 
     fn project(root: &str, chats: &[&str]) -> ProjectChats {

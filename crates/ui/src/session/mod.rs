@@ -536,8 +536,9 @@ pub struct Session {
     git: Option<Task<()>>,
     /// The `/login` key being checked; dropping it cancels the check.
     login_check: Option<Task<()>>,
-    /// The window shows the chats sidebar: `focus.next` goes through it.
-    chats_shown: bool,
+    /// How wide the window's sidebar is: `focus.next` goes through it
+    /// unless it is the strip, which has no focus stop.
+    sidebar: crate::chats::SidebarWidth,
     /// When quitting was asked during a turn: a second ask within
     /// [`QUIT_CONFIRM`] quits.
     quit_asked_at: Option<Instant>,
@@ -758,7 +759,7 @@ impl Session {
             theme_choices: Vec::new(),
             git: None,
             login_check: None,
-            chats_shown: false,
+            sidebar: crate::chats::SidebarWidth::default(),
             quit_asked_at: None,
             permissions_events: None,
             _git_timer: Self::git_timer(cx),
@@ -929,10 +930,10 @@ impl Session {
         self.notice(level, message, cx);
     }
 
-    /// Tells the session whether the window shows the chats sidebar, so
+    /// Tells the session how wide the window's sidebar is, so
     /// `focus.next` goes through it.
-    pub fn set_chats_shown(&mut self, shown: bool) {
-        self.chats_shown = shown;
+    pub fn set_sidebar(&mut self, width: crate::chats::SidebarWidth) {
+        self.sidebar = width;
     }
 
     /// `app.quit` and `/quit`. While a turn runs the first ask only warns;

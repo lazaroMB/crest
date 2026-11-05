@@ -1865,10 +1865,13 @@ fn chat_keys_reach_the_window_and_focus_next_goes_through_the_chats(cx: &mut Tes
         chats(&h),
         [C::New, C::Next, C::Prev, C::Rename, C::TogglePanel]
     );
-    // Without the sidebar the cycle skips it.
+    // The strip has no focus stop: the cycle skips it.
+    h.session
+        .update(cx, |s, _| s.set_sidebar(crate::chats::SidebarWidth::Strip));
     cx.simulate_keystrokes("ctrl-tab ctrl-tab");
     assert_eq!(chats(&h).len(), 5);
-    h.session.update(cx, |s, _| s.set_chats_shown(true));
+    h.session
+        .update(cx, |s, _| s.set_sidebar(crate::chats::SidebarWidth::Full));
     cx.simulate_keystrokes("ctrl-tab ctrl-tab");
     assert_eq!(chats(&h).last(), Some(&C::Focus), "the timeline hands over");
 }
