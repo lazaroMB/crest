@@ -108,8 +108,7 @@ mark, new chat, search, projects, and one initial per project.
 `Hidden` holds only the Crest mark, in the top left, and the rail ends where the prompt starts
 (`mock/src/app.js` lays the prompt under the whole window). While it is closed the session uses the
 full width and starts below the mark, so there is no empty column and the mark never paints over a
-block. Pointer hover or keyboard focus on the mark reveals the strip's rows and shifts the session
-aside; the rows stay inside the body's height and never cross the prompt. Leaving hides them again
+block. Pointer hover or keyboard focus on the mark reveals the strip's rows as a bar that floats over the session (the session does not move); the rows stay inside the body's height and never cross the prompt. Leaving hides them again
 without changing the state. Clicking the mark sets `Full`. The mark in the full sidebar sets
 `Hidden`, not `Strip`. A project initial shows the project's name beside it while the pointer is on it.
 `<C-g>s` still cycles `Full`, `Strip`, `Hidden`, and back to `Full` (`nextSidebar`); the existing keymap
@@ -206,8 +205,8 @@ Screenshots of each state are in `mock/spikes/evidence/` (`S05-full-1280.png`, `
   `remove_root` on the last root is an error (S02 criteria 2 and 3). A path under any root resolves,
   and a path under none fails with "outside the workspace".
 - The window opens hidden. The hidden mark sits in the top left and the session uses the full width,
-  starting below the mark. Hovering the mark shows new chat, search, and projects and shifts the
-  session aside; the rows end at the prompt, and leaving hides them. The
+  starting below the mark. Hovering the mark shows new chat, search, and projects as a bar that floats
+  over the session, which does not move; the rows end at the prompt, and leaving hides them. The
   Crest mark opens the full sidebar, and the mark in the full sidebar returns to hidden. `<C-g>s` still
   cycles full, strip, and hidden. The strip is at most 56 px, and at 1024 px the session keeps at least
   90 percent of the window (S05, refined in the mock after that spike).

@@ -429,7 +429,7 @@ fn slot(
 }
 
 impl Render for RootView {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (prompt, status) = footer(self, cx);
         div()
             .id("crest-root")
@@ -439,7 +439,7 @@ impl Render for RootView {
             .child(
                 v_flex()
                     .size_full()
-                    .child(body(self, window, cx))
+                    .child(body(self, cx))
                     .child(prompt)
                     .child(status),
             )
@@ -487,8 +487,9 @@ fn footer(root: &RootView, cx: &App) -> (impl IntoElement, impl IntoElement) {
 
 /// What is above the prompt: the sidebar, the tree and the conversation.
 /// The sidebar is an overlay on the top left, drawn last so it paints over
-/// the band and the column the layout keeps free for it.
-fn body(root: &RootView, window: &Window, cx: &App) -> impl IntoElement {
+/// the band and the column the layout keeps free for it; the hidden state
+/// floats its rows over the conversation without taking any room.
+fn body(root: &RootView, cx: &App) -> impl IntoElement {
     let side_panel = root.side_panel.as_ref().map(|panel| {
         let width = (panel.width)(cx);
         panel
@@ -499,7 +500,7 @@ fn body(root: &RootView, window: &Window, cx: &App) -> impl IntoElement {
     let room = root
         .sidebar
         .as_ref()
-        .map(|sidebar| sidebar.read(cx).layout(window));
+        .map(|sidebar| sidebar.read(cx).layout());
     div()
         .id("crest-body")
         .relative()

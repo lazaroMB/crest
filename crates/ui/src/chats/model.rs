@@ -17,6 +17,29 @@ pub const STRIP_WIDTH: f32 = 48.0;
 /// Height of the band the Crest mark takes while the sidebar is hidden.
 pub const MARK_BAND: f32 = 28.0;
 
+/// A state of a control on the rail (an icon button or a project initial).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RailState {
+    /// Nothing on it.
+    Idle,
+    /// The pointer is on it.
+    Hover,
+    /// It is the open project, or it is pressed.
+    Active,
+}
+
+/// The theme tokens a rail control is drawn with in `state`: its ink
+/// (icon or initial) and the fill under it. The ink is one token in every
+/// state and only the fill changes, so no state can paint the ink in the
+/// colour of its own fill; a test checks the contrast in every theme.
+#[must_use]
+pub const fn rail_tokens(state: RailState) -> (&'static str, &'static str) {
+    match state {
+        RailState::Idle => ("sidebar.fg", "sidebar.bg"),
+        RailState::Hover | RailState::Active => ("sidebar.fg", "list.selected.bg"),
+    }
+}
+
 /// How much of the window the sidebar takes.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum SidebarWidth {

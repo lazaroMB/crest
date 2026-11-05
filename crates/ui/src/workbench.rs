@@ -1429,23 +1429,29 @@ mod tests {
     }
 
     #[gpui::test]
-    fn hovering_the_hidden_mark_shifts_the_conversation_and_leaving_restores_it(
-        cx: &mut TestAppContext,
-    ) {
+    fn hovering_the_hidden_mark_floats_the_rows_and_leaving_hides_them(cx: &mut TestAppContext) {
         let (view, cx) = at_rest(cx);
         let mark = cx.debug_bounds("sidebar-mark").expect("the mark").center();
-        let left = |cx: &mut VisualTestContext| {
-            cx.debug_bounds("conversation")
-                .expect("conversation")
-                .left()
-        };
-        assert_eq!(left(cx), gpui::px(0.), "closed: the full width");
+        let closed = cx.debug_bounds("conversation").expect("conversation");
+        assert_eq!(closed.left(), gpui::px(0.), "closed: the full width");
+        assert!(cx.debug_bounds("sidebar-new").is_none(), "closed: no rows");
         cx.simulate_mouse_move(mark, None, gpui::Modifiers::none());
         cx.run_until_parked();
-        assert_eq!(left(cx), gpui::px(48.), "open: the rows push it aside");
+        let conversation = cx.debug_bounds("conversation").expect("conversation");
+        assert_eq!(conversation, closed, "the conversation does not move");
         assert!(cx.debug_bounds("sidebar-new").is_some(), "the rows show");
+        let bar = cx.debug_bounds("chats-panel").expect("the sidebar");
+        assert_eq!(bar.left(), conversation.left(), "over its left edge");
+        assert!(bar.right() > conversation.left(), "over the conversation");
+        let prompt = cx.debug_bounds("prompt-row").expect("prompt");
+        assert!(bar.bottom() <= prompt.top(), "above the prompt");
         pointer_away(cx);
-        assert_eq!(left(cx), gpui::px(0.), "leaving closes the rows");
+        assert_eq!(
+            cx.debug_bounds("conversation"),
+            Some(closed),
+            "leaving moves nothing"
+        );
+        assert!(cx.debug_bounds("sidebar-new").is_none(), "the rows hide");
         assert_eq!(
             view.read_with(cx, |view, cx| view.sidebar(cx)),
             SidebarWidth::Hidden
@@ -1457,18 +1463,16 @@ mod tests {
         cx: &mut TestAppContext,
     ) {
         let (view, cx) = at_rest(cx);
+        let closed = cx.debug_bounds("conversation").expect("conversation");
         // prompt → timeline → the mark.
         cx.simulate_keystrokes("ctrl-tab ctrl-tab");
         cx.run_until_parked();
         assert!(list_focused(cx), "the mark has the keyboard");
-        let left = cx
-            .debug_bounds("conversation")
-            .expect("conversation")
-            .left();
-        assert_eq!(
-            left,
-            gpui::px(48.),
-            "the rows show and push the conversation"
+        let rows = cx.debug_bounds("sidebar-new").expect("the rows show");
+        let moved = cx.debug_bounds("conversation") != Some(closed);
+        assert!(
+            !moved && rows.left() < closed.right(),
+            "rows float, nothing moves"
         );
         cx.simulate_keystrokes("enter");
         cx.run_until_parked();

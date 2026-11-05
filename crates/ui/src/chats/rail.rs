@@ -3,20 +3,23 @@
 //!
 //! The panel is always laid out as an overlay on the top left of the
 //! window's body (`absolute`); [`SidebarLayout`] tells the window how much
-//! room to leave beside it, so the conversation never sits under it. That
-//! keeps hidden free: no column, and the rows that hover or focus reveal
-//! push the conversation aside instead of covering it.
+//! room to leave beside it, so the conversation never sits under the strip
+//! or the full list. Hidden keeps no column: the rows that hover or focus
+//! reveal are a floating bar over the conversation, which does not move.
 
+use gpui::Hsla;
 use gpui::{
     AnyElement, App, Context, InteractiveElement as _, IntoElement, ParentElement as _, Pixels,
     SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, Window, deferred, div,
     prelude::FluentBuilder as _, px,
 };
-use gpui_component::button::{Button, ButtonVariants as _};
+use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants as _};
 use gpui_component::input::Input;
 use gpui_component::{ActiveTheme as _, Icon, IconName, Sizable as _, v_flex};
 
-use super::model::{FULL_WIDTH, MARK_BAND, STRIP_WIDTH, SidebarWidth, initial};
+use super::model::{
+    FULL_WIDTH, MARK_BAND, RailState, STRIP_WIDTH, SidebarWidth, initial, rail_tokens,
+};
 use super::{ChatsEvent, ChatsPanel, ProjectChats, label, same_workspace};
 
 /// Width of the hidden state's mark zone while the rows are closed.
@@ -66,11 +69,12 @@ impl ChatsPanel {
             && (self.pointer_on_rail || self.focus_handle.is_focused(window))
     }
 
-    /// The room the window leaves for the sidebar now.
+    /// The room the window leaves for the sidebar now: its column, or for
+    /// hidden a band under the mark. Showing the rows of the hidden state
+    /// takes none, they float.
     #[must_use]
-    pub fn layout(&self, window: &Window) -> SidebarLayout {
+    pub fn layout(&self) -> SidebarLayout {
         let (reserve, band) = match self.width {
-            SidebarWidth::Hidden if self.revealed(window) => (STRIP_WIDTH, 0.0),
             SidebarWidth::Hidden => (0.0, MARK_BAND),
             width => (width.column(), 0.0),
         };
@@ -172,6 +176,23 @@ fn frame(panel: &ChatsPanel, width: f32, cx: &mut Context<ChatsPanel>) -> Statef
         .text_color(foreground)
 }
 
+/// The ink and the fill of a rail control in `state`, from the theme.
+fn rail_colors(state: RailState, cx: &App) -> (Hsla, Hsla) {
+    let (ink, fill) = rail_tokens(state);
+    (crate::theme::token(cx, ink), crate::theme::token(cx, fill))
+}
+
+/// The look of a rail button: the same ink in every state, a fill under
+/// the pointer and while pressed. Set from tokens so the icon never takes
+/// the colour of the fill behind it.
+fn rail_look(cx: &App) -> ButtonCustomVariant {
+    let (ink, hover) = rail_colors(RailState::Hover, cx);
+    ButtonCustomVariant::new(cx)
+        .foreground(ink)
+        .hover(hover)
+        .active(hover)
+}
+
 /// The Crest mark as a button that sets the width `to`; `title` says so.
 fn mark_button(title: &'static str, to: SidebarWidth, cx: &mut Context<ChatsPanel>) -> AnyElement {
     let click = go(to);
@@ -179,7 +200,7 @@ fn mark_button(title: &'static str, to: SidebarWidth, cx: &mut Context<ChatsPane
         .debug_selector(|| "sidebar-mark".to_owned())
         .child(
             Button::new("sidebar-mark")
-                .ghost()
+                .custom(rail_look(cx))
                 .small()
                 .tooltip(title)
                 .child(crate::brand::mark(13.0))
@@ -194,7 +215,7 @@ fn icon_button(item: RailItem, click: Click, cx: &mut Context<ChatsPanel>) -> An
         .debug_selector(|| item.id.to_owned())
         .child(
             Button::new(item.id)
-                .ghost()
+                .custom(rail_look(cx))
                 .icon(item.icon)
                 .tooltip(item.title)
                 .on_click(cx.listener(move |this, _, window, cx| click(this, window, cx))),
@@ -254,18 +275,19 @@ fn project_initial(
     cx: &mut Context<ChatsPanel>,
 ) -> AnyElement {
     let theme = cx.theme();
-    let (border, ring, muted, foreground) = (
-        theme.border,
-        theme.ring,
-        theme.muted_foreground,
-        theme.foreground,
-    );
+    let (border, ring) = (theme.border, theme.ring);
     let open = same_workspace(&project.root, &panel.current_root);
     let named = panel.pointer_on_project.as_deref() == Some(project.root.as_str());
-    let (edge, ink) = if open || named {
-        (ring, foreground)
+    let state = match (open, named) {
+        (true, _) => RailState::Active,
+        (false, true) => RailState::Hover,
+        (false, false) => RailState::Idle,
+    };
+    let (ink, fill) = rail_colors(state, cx);
+    let edge = if state == RailState::Idle {
+        border
     } else {
-        (border, muted)
+        ring
     };
     let selector = format!("sidebar-initial-{index}");
     let (hover_root, click_project) = (project.root.clone(), project.clone());
@@ -280,6 +302,7 @@ fn project_initial(
         .border_1()
         .border_color(edge)
         .rounded_md()
+        .when(state != RailState::Idle, |item| item.bg(fill))
         .text_sm()
         .text_color(ink)
         .cursor_pointer()
@@ -381,9 +404,10 @@ pub(super) fn strip(panel: &ChatsPanel, cx: &mut Context<ChatsPanel>) -> AnyElem
 }
 
 /// Hidden: only the mark, top left. Pointer hover or keyboard focus on it
-/// opens the strip's rows over a column the window leaves free; leaving
-/// closes them without changing the width. Clicking the mark opens the full
-/// sidebar.
+/// shows the strip's rows as a floating bar over the conversation (its own
+/// fill, edge and shadow, never taller than the body); the window leaves no
+/// column for it, so nothing moves. Leaving hides them without changing the
+/// width. Clicking the mark opens the full sidebar.
 pub(super) fn hidden(
     panel: &ChatsPanel,
     window: &Window,
@@ -397,7 +421,16 @@ pub(super) fn hidden(
     };
     let mark = mark_button("Show the sidebar", SidebarWidth::Full, cx);
     let zone = if open {
+        // Floating: as tall as its rows, at most the body, and it takes the
+        // pointer so the conversation under it does not.
         frame(panel, STRIP_WIDTH, cx)
+            .h_auto()
+            .max_h_full()
+            .pb_1()
+            .border_1()
+            .rounded_br_md()
+            .shadow_md()
+            .occlude()
     } else {
         // Closed: no frame, just the mark's own corner.
         frame(panel, MARK_ZONE, cx)
@@ -413,6 +446,42 @@ pub(super) fn hidden(
             cx.notify();
         }))
         .child(mark)
-        .children(rows)
+        .child(
+            // The rows scroll when the body is too short for them.
+            v_flex()
+                .id("sidebar-hidden-rows")
+                .items_center()
+                .gap_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .children(rows),
+        )
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use application_core::theme::{BUILTIN_NAMES, ThemeCatalog};
+
+    use super::super::model::{RailState, rail_tokens};
+
+    /// In every built-in theme and every state, a rail control's ink is not
+    /// its own fill and reads on it, the fill laid over the bar's own
+    /// background (the sidebar's).
+    #[test]
+    fn a_rail_control_never_paints_its_ink_in_the_colour_of_its_fill() {
+        for name in BUILTIN_NAMES {
+            let theme = ThemeCatalog::new().resolve_or_default(name, None).theme;
+            let bar = theme.color("sidebar.bg");
+            for state in [RailState::Idle, RailState::Hover, RailState::Active] {
+                let (ink, fill) = rail_tokens(state);
+                assert_ne!(ink, fill, "{name} {state:?}: one token for both");
+                let ink = theme.color(ink);
+                let surface = theme.color(fill).over(bar);
+                assert_ne!(ink, surface, "{name} {state:?}: ink is its fill");
+                let ratio = ink.contrast_ratio(surface);
+                assert!(ratio >= 4.5, "{name} {state:?}: contrast {ratio:.2}");
+            }
+        }
+    }
 }
