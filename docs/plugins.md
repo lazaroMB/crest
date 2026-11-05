@@ -121,6 +121,7 @@ These are the builtin actions valid as a string:
 | `block.toggle_view` | Alternate view (chart ↔ table, document ↔ source). |
 | `block.yank` | Copies the block to the clipboard. |
 | `image.mode` | Switches pasted images between sending them to the model and the chat only. |
+| `prompt.mode` | Cycles the prompt mode: chat, research, deep research. |
 | `picker.files`, `picker.grep` | Opens a picker. |
 | `panel.tree` | Shows or hides the tree. |
 | `model.pick` | Model menu for the next turn. |

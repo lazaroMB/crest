@@ -24,24 +24,9 @@ impl Render for InputView {
             .clone();
         let tray = self.tray.render(mode_keys.as_deref(), cx);
         let which_key = self.render_which_key(cx);
-        let completion = self.completion(cx).map(|shown| {
-            // The list may have arrived or shrunk since the last key.
-            let len = shown.len();
-            if len > 0 {
-                let selected = self.palette_selected.min(len - 1);
-                self.palette_top = palette_top(selected, self.palette_top, len);
-            }
-            let (selected, top) = (self.palette_selected, self.palette_top);
-            match shown {
-                Completion::Path(popup) => path_popup::render(popup, selected, top, cx),
-                Completion::Model(popup) => {
-                    model_popup::render(popup, selected, top, self.current_model.as_ref(), cx)
-                }
-                Completion::Theme(popup) => {
-                    theme_popup::render(popup, selected, top, &self.current_theme, cx)
-                }
-            }
-        });
+        let mode_menu = self.render_mode_menu(cx);
+        let mode_control = self.render_mode_control(cx);
+        let completion = self.render_completion(cx);
         let palette = if completion.is_none() {
             let total = self.palette_len(cx);
             if total > 0 {
@@ -74,6 +59,7 @@ impl Render for InputView {
         .size_full();
         let prompt = h_flex()
             .items_start()
+            .child(mode_control)
             .child(
                 div()
                     .pt_2()
@@ -104,11 +90,14 @@ impl Render for InputView {
         });
         v_flex()
             .id("crest-input")
+            .debug_selector(|| "crest-input".to_owned())
             .key_context("CrestInput")
             .track_focus(&self.focus_handle)
             // A click anywhere else closes the popups.
-            .on_mouse_down_out(cx.listener(|this, _: &gpui::MouseDownEvent, _, cx| {
-                this.hide_popups(cx);
+            .on_mouse_down_out(cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
+                if !this.mode_control.holds(event.position) {
+                    this.hide_popups(cx);
+                }
             }))
             .font_family(theme.mono_font_family.clone())
             .child(
@@ -122,12 +111,34 @@ impl Render for InputView {
                     .children(which_key),
             )
             .children(tray)
-            .child(prompt)
+            .child(div().relative().children(mode_menu).child(prompt))
             .children(status)
     }
 }
 
 impl InputView {
+    /// The completion popup (`@`, `/model `, `/theme `), if one shows,
+    /// after fitting its window of rows to the list.
+    fn render_completion(&mut self, cx: &App) -> Option<gpui::AnyElement> {
+        let shown = self.completion(cx)?;
+        // The list may have arrived or shrunk since the last key.
+        let len = shown.len();
+        if len > 0 {
+            let selected = self.palette_selected.min(len - 1);
+            self.palette_top = palette_top(selected, self.palette_top, len);
+        }
+        let (selected, top) = (self.palette_selected, self.palette_top);
+        Some(match shown {
+            Completion::Path(popup) => path_popup::render(popup, selected, top, cx),
+            Completion::Model(popup) => {
+                model_popup::render(popup, selected, top, self.current_model.as_ref(), cx)
+            }
+            Completion::Theme(popup) => {
+                theme_popup::render(popup, selected, top, &self.current_theme, cx)
+            }
+        })
+    }
+
     /// The keys that can follow the pending prefix (the leader), for the
     /// which-key popup. Empty when nothing is pending.
     pub fn which_key(&self) -> Vec<crate::help::NextKey> {

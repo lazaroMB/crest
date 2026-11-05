@@ -26,6 +26,10 @@
 //! - `Up` on the first line of the prompt brings back the line sent before
 //!   ([`history`]), and `Down` on the last line the one after, then the
 //!   text that was being written; elsewhere they move the cursor.
+//! - A round button before the prompt opens a menu of the prompt mode (chat,
+//!   research, deep research) and of `@` and `/` inserts ([`mode`]); outside chat
+//!   a chip names the mode and `Enter` sends `/research <text>` (or
+//!   `/research --deep <text>`). `prompt.mode` ([`PROMPT_MODE_ACTION`]) cycles it.
 //! - `Ctrl+C` ([`CANCEL_ACTION`]) copies the selected text; with none it
 //!   clears the prompt into the history (`Up` brings it back), and in an
 //!   empty prompt it asks to interrupt the turn.
@@ -51,6 +55,8 @@ pub mod cursor;
 mod groups;
 pub mod history;
 mod keys;
+mod mode;
+mod mode_view;
 pub mod model_popup;
 mod palette;
 mod paste;
@@ -62,6 +68,7 @@ pub mod theme_popup;
 pub mod tray;
 
 pub use keys::key_from_keystroke;
+pub use mode::{ChatMode, PROMPT_MODE_ACTION};
 pub use palette::palette_matches;
 
 use std::cell::RefCell;
@@ -79,12 +86,13 @@ use cursor::{BLINK_INTERVAL, Blink};
 use attachments::ImageMode;
 use domain::conversation::ImageAttachment;
 use history::PromptHistory;
+use mode::ModeControl;
 use model_popup::ModelCompletion;
 pub use model_popup::ModelPopup;
 use path_popup::PathCompletion;
 pub use path_popup::PathPopup;
+use theme_popup::ThemeCompletion;
 pub use theme_popup::ThemePopup;
-use theme_popup::{ThemeCompletion, theme_query};
 use tray::ImageTray;
 
 use crate::help::CommandRow;
@@ -180,6 +188,11 @@ pub fn classify_line(text: &str) -> Option<Line> {
 /// (`Ask crest…  (/ for commands · Ctrl+G ff files · Ctrl+G fg text)`),
 /// so they can be found without the help.
 pub fn prompt_placeholder(keymap: &Keymap<Action>) -> String {
+    placeholder_with(ChatMode::Chat, keymap)
+}
+
+/// [`prompt_placeholder`] for `mode`: its question, then the same key hints.
+fn placeholder_with(mode: ChatMode, keymap: &Keymap<Action>) -> String {
     let mut hints = vec!["/ for commands".to_owned()];
     for (action, what) in [
         (crate::picker::FILES_ACTION, "files"),
@@ -189,7 +202,7 @@ pub fn prompt_placeholder(keymap: &Keymap<Action>) -> String {
             hints.push(format!("{keys} {what}"));
         }
     }
-    format!("Ask crest…  ({})", hints.join(" · "))
+    format!("{}  ({})", mode.placeholder(), hints.join(" · "))
 }
 
 /// The prompt input.
@@ -229,6 +242,8 @@ pub struct InputView {
     /// Whether the `/theme ` popup is showing another theme.
     theme_previewing: bool,
     tray: ImageTray,
+    /// The prompt mode and its menu.
+    mode_control: ModeControl,
     /// The last step of the paste chain: images being prepared for the
     /// tray, or a prompt sent or an image mode switch pressed while some
     /// were, which waits for them.
@@ -268,21 +283,7 @@ impl InputView {
         });
         let changes = cx.subscribe(&editor, |this, _, event, cx| {
             if matches!(event, EditorEvent::Change) {
-                this.reset_palette();
-                let text = this.text(cx);
-                this.paths.request(&text, cx);
-                if this.models.wants_listing(&text) {
-                    cx.emit(InputEvent::ModelsWanted);
-                }
-                if this.themes.wants_listing(&text) {
-                    cx.emit(InputEvent::ThemesWanted);
-                }
-                if theme_query(&text).is_none() {
-                    this.end_theme_preview(cx);
-                    // Theme files may change: list them again next time.
-                    this.themes.forget();
-                }
-                cx.notify();
+                this.on_change(cx);
             }
         });
         let focus_handle = cx.focus_handle();
@@ -312,6 +313,7 @@ impl InputView {
             current_theme: String::new(),
             theme_previewing: false,
             tray: ImageTray::default(),
+            mode_control: ModeControl::default(),
             attaching: None,
             pastes_pending: 0,
             history: PromptHistory::default(),
@@ -324,6 +326,7 @@ impl InputView {
     /// Hides the `/`, `@`, `/model` and `/theme` popups (until the text
     /// changes), ending a theme preview.
     pub fn hide_popups(&mut self, cx: &mut Context<Self>) {
+        self.mode_control.menu = None;
         if self.palette_hidden {
             return;
         }

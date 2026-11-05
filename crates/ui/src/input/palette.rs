@@ -331,7 +331,7 @@ fn group_title(label: &str, theme: &Theme) -> gpui::AnyElement {
 }
 
 /// Small muted text at the end of a row (a count, a group).
-fn small_note(text: String, theme: &Theme) -> Div {
+pub(super) fn small_note(text: String, theme: &Theme) -> Div {
     div()
         .flex_none()
         .text_xs()
@@ -340,7 +340,7 @@ fn small_note(text: String, theme: &Theme) -> Div {
 }
 
 /// The text of a row that takes the room left, cut off at its end.
-fn muted_cell(text: String, theme: &Theme) -> Div {
+pub(super) fn muted_cell(text: String, theme: &Theme) -> Div {
     div()
         .flex_1()
         .min_w_0()

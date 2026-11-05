@@ -3,10 +3,11 @@
 //! searches every command (see [`super::palette`] for the keys).
 
 use application_core::keymap::{Key, KeyCode};
-use gpui::App;
+use gpui::{App, Context};
 
-use super::InputView;
 use super::completion::palette_top;
+use super::theme_popup::theme_query;
+use super::{InputEvent, InputView};
 use crate::help::CommandRow;
 
 /// Which rows the palette lists for a line.
@@ -165,6 +166,25 @@ impl InputView {
         self.palette_selected = at.unwrap_or(0);
         self.palette_top = palette_top(self.palette_selected, 0, self.palette_len(cx));
         true
+    }
+
+    /// The text changed: the popups start over and ask for what the new text needs.
+    pub(super) fn on_change(&mut self, cx: &mut Context<Self>) {
+        self.reset_palette();
+        let text = self.text(cx);
+        self.paths.request(&text, cx);
+        if self.models.wants_listing(&text) {
+            cx.emit(InputEvent::ModelsWanted);
+        }
+        if self.themes.wants_listing(&text) {
+            cx.emit(InputEvent::ThemesWanted);
+        }
+        if theme_query(&text).is_none() {
+            self.end_theme_preview(cx);
+            // Theme files may change: list them again next time.
+            self.themes.forget();
+        }
+        cx.notify();
     }
 
     /// A change of the text starts the palette over: the first row, the

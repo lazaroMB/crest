@@ -105,6 +105,7 @@ When a widget has nothing left for `Esc` to clear, `Esc` gives the keys back to 
 | `Ctrl+G t` | `block.toggle_view` | Alternate view of the block (see [Blocks](#blocks)). |
 | `Ctrl+G y` | `block.yank` | Copies the block's content to the clipboard. |
 | `Ctrl+G i` | `image.mode` | Switches [pasted images](#pasted-images) between **→ Model** and **Chat only**. |
+| `Ctrl+G M` | `prompt.mode` | Cycles the [prompt mode](#prompt-mode-the--button): Chat, Research, Deep research. |
 | `Ctrl+G ff` | `picker.files` | File picker (fzf). |
 | `Ctrl+G fg` | `picker.grep` | Text search (rg). |
 | `Ctrl+G e` | `panel.tree` | Shows or hides the workspace tree (shown, it takes the focus). |
@@ -212,6 +213,12 @@ A path with spaces is quoted: `@"My Docs/notes v2.md"`. Completion switches to t
 A 3D model (OBJ, ASCII or binary STL, ASCII or binary PLY) opens in a viewer with an orbit camera, fitted to the model. Drag orbits; right-drag, middle-drag or `Shift`+drag pans; `Ctrl`/`Cmd` + wheel zooms (a plain wheel keeps scrolling the chat, as over maps and DXF drawings, which zoom the same way). With the viewer focused (click it), `+`/`-` zoom, `0` fits the model again, `i` switches to the isometric view and `u` swaps the up axis (STL and PLY start with Z up, OBJ with Y up); the buttons in the corner do the same. Only the geometry is shown, flat shaded: materials, textures and colours are ignored. The line under the viewer gives the vertices, triangles and size in the file's units. Without a GPU (or with `CREST_RENDER3D=off`) the model is drawn with 2D paths, at most 20 000 triangles of it.
 
 It follows the file tools' rules: a path outside the workspace (`..`, an absolute path elsewhere, a symlink pointing out) or matching the sensitive-path patterns is refused, and so are directories, binaries that are not pictures or models and files over 2 MiB (64 MiB and a million triangles for a model). Files longer than 20 000 lines are cut, and the title says so. The status bar says why a file did not open.
+
+### Prompt mode (the `+` button)
+
+A round `+` button at the start of the prompt opens a menu above it with the **mode** of the prompt (Chat, Research, Deep research, each with what it does) and two **inserts**: `@` (a workspace file) and `/` (a command), which type that character and open its completion. In the menu `Up`/`Down` choose, `Enter` picks and `Esc` closes it; any other key closes it and is typed.
+
+While the mode is not Chat a chip with its name and a `×` sits next to the button, and the empty prompt asks for a problem (`Describe the problem to research…`). Enter then sends `/research <text>` in Research and `/research --deep <text>` in Deep research, the same lines you can type; a line that starts with `/` or `!` is sent as typed, never wrapped. The history keeps what you typed. The mode stays until you change it back: the chip's `×`, `Backspace` in an empty prompt, or Chat in the menu return to Chat, and `Ctrl+G M` (`prompt.mode`) cycles Chat, Research, Deep research without the mouse. The button and the chip together are at most 160 px wide.
 
 ### Pasted images
 

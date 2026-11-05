@@ -18,9 +18,25 @@ use crate::session::ModelChoice;
 
 type Events = Rc<RefCell<Vec<InputEvent>>>;
 
+/// The input at the bottom of a 1280 px wide column, as in the app: what is
+/// above it is a spacer, so a popup that pushes or floats shows in the bounds.
+struct AtBottom(Entity<InputView>);
+
+impl Render for AtBottom {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .w(px(1280.))
+            .h_full()
+            .child(div().flex_1())
+            .child(self.0.clone())
+    }
+}
+
 fn input(cx: &mut TestAppContext) -> (Entity<InputView>, &mut VisualTestContext, Events) {
     cx.update(gpui_component::init);
-    let (view, cx) = cx.add_window_view(InputView::new);
+    let (root, cx) =
+        cx.add_window_view(|window, cx| AtBottom(cx.new(|cx| InputView::new(window, cx))));
+    let view = root.read_with(cx, |root, _| root.0.clone());
     let events = Events::default();
     let recorded = events.clone();
     cx.update(|window, cx| {
@@ -881,4 +897,182 @@ fn typing_after_the_slash_searches_every_group(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("right");
     cx.simulate_input("h");
     assert_eq!(listed(&view, cx).1, ["help"]);
+}
+
+/// Draws the window again (the clicks and keys of the test draw it too).
+fn draw(_: &Entity<InputView>, _: f32, cx: &mut VisualTestContext) {
+    cx.update(|window, _| window.refresh());
+    cx.run_until_parked();
+}
+
+fn set_mode(view: &Entity<InputView>, mode: ChatMode, cx: &mut VisualTestContext) {
+    view.update_in(cx, |view, window, cx| view.set_chat_mode(mode, window, cx));
+}
+
+fn click(selector: &'static str, cx: &mut VisualTestContext) {
+    let bounds = cx.debug_bounds(selector).expect("drawn");
+    cx.simulate_click(bounds.center(), gpui::Modifiers::none());
+}
+
+fn mode_of(view: &Entity<InputView>, cx: &mut VisualTestContext) -> ChatMode {
+    view.read_with(cx, |view, _| view.chat_mode())
+}
+
+#[gpui::test]
+fn a_mode_sends_its_command_and_stays_until_changed_back(cx: &mut TestAppContext) {
+    let (view, cx, events) = input(cx);
+    let command = |line: &str| InputEvent::Command(line.into());
+    // (mode, typed, what the input emits)
+    let table = [
+        (ChatMode::Research, "why", Some(command("research why"))),
+        (ChatMode::Deep, "why", Some(command("research --deep why"))),
+        (ChatMode::Deep, "!ls", Some(command("!ls"))),
+        (ChatMode::Deep, "/help", Some(command("help"))),
+        (ChatMode::Research, "", None),
+        (
+            ChatMode::Chat,
+            "why",
+            Some(InputEvent::Submit("why".into())),
+        ),
+    ];
+    for (mode, typed, sent) in table {
+        set_mode(&view, mode, cx);
+        cx.simulate_input(typed);
+        cx.simulate_keystrokes("enter");
+        assert_eq!(
+            take(&events),
+            sent.into_iter().collect::<Vec<_>>(),
+            "{mode:?} {typed:?}"
+        );
+        assert_eq!(mode_of(&view, cx), mode, "the mode stays after a send");
+    }
+    // The history keeps what was typed.
+    view.read_with(cx, |view, _| {
+        assert_eq!(view.history(), ["why", "!ls", "/help", "why"]);
+    });
+}
+
+#[gpui::test]
+fn the_x_backspace_and_chat_in_the_menu_go_back_to_chat(cx: &mut TestAppContext) {
+    let (view, cx, _events) = input(cx);
+    set_mode(&view, ChatMode::Deep, cx);
+    draw(&view, 1280., cx);
+    click("prompt-mode-clear", cx);
+    assert_eq!(mode_of(&view, cx), ChatMode::Chat);
+    set_mode(&view, ChatMode::Research, cx);
+    cx.simulate_input("x");
+    cx.simulate_keystrokes("backspace");
+    assert_eq!(
+        mode_of(&view, cx),
+        ChatMode::Research,
+        "the prompt had text"
+    );
+    cx.simulate_keystrokes("backspace");
+    assert_eq!(mode_of(&view, cx), ChatMode::Chat);
+    set_mode(&view, ChatMode::Deep, cx);
+    draw(&view, 1280., cx);
+    click("prompt-mode-button", cx);
+    draw(&view, 1280., cx);
+    click("mode-menu-0", cx);
+    assert_eq!(mode_of(&view, cx), ChatMode::Chat);
+    assert!(view.read_with(cx, |view, _| !view.mode_menu_open()));
+}
+
+#[gpui::test]
+fn the_button_opens_a_keyboard_menu_of_modes_and_inserts(cx: &mut TestAppContext) {
+    let (view, cx, _events) = input(cx);
+    draw(&view, 1280., cx);
+    click("prompt-mode-button", cx);
+    draw(&view, 1280., cx);
+    for (ix, row) in ROWS.into_iter().enumerate() {
+        assert!(cx.debug_bounds(row).is_some(), "row {ix}");
+    }
+    cx.simulate_keystrokes("down down enter");
+    assert_eq!(mode_of(&view, cx), ChatMode::Deep);
+    assert!(view.read_with(cx, |view, _| !view.mode_menu_open()));
+    click("prompt-mode-button", cx);
+    cx.simulate_keystrokes("escape");
+    assert!(view.read_with(cx, |view, _| !view.mode_menu_open()));
+    assert_eq!(mode_of(&view, cx), ChatMode::Deep, "Esc changes nothing");
+    draw(&view, 1280., cx);
+    // The inserts type their character, which opens its completion.
+    click("prompt-mode-button", cx);
+    assert!(view.read_with(cx, |view, _| view.mode_menu_open()), "open");
+    cx.simulate_keystrokes("down down enter");
+    view.read_with(cx, |view, cx| assert_eq!(view.text(cx), "/"));
+}
+
+#[gpui::test]
+fn prompt_mode_cycles_and_the_placeholder_follows(cx: &mut TestAppContext) {
+    let (view, cx, events) = input(cx);
+    let keymap = default_keymap();
+    let hints = "  (/ for commands · Ctrl+G ff files · Ctrl+G fg text)";
+    for mode in [ChatMode::Research, ChatMode::Deep, ChatMode::Chat] {
+        cx.simulate_keystrokes("ctrl-g shift-m");
+        assert_eq!(mode_of(&view, cx), mode);
+        assert_eq!(
+            placeholder_with(mode, &keymap),
+            format!("{}{hints}", mode.placeholder())
+        );
+    }
+    assert!(
+        take(&events).is_empty(),
+        "the input handles prompt.mode itself"
+    );
+}
+
+#[gpui::test]
+fn the_button_and_the_chip_take_at_most_160_px_at_1280(cx: &mut TestAppContext) {
+    let (view, cx, _events) = input(cx);
+    for mode in ChatMode::ALL {
+        set_mode(&view, mode, cx);
+        draw(&view, 1280., cx);
+        let control = cx.debug_bounds("prompt-mode-control").expect("drawn");
+        let width = f32::from(control.size.width);
+        assert!(
+            width <= mode_view::CONTROL_MAX_PX,
+            "{mode:?} takes {width} px"
+        );
+        let chip = cx
+            .debug_bounds("prompt-mode-chip")
+            .map(|b| f32::from(b.size.width));
+        assert_eq!(chip.is_some(), mode != ChatMode::Chat);
+    }
+}
+
+const ROWS: [&str; 5] = [
+    "mode-menu-0",
+    "mode-menu-1",
+    "mode-menu-2",
+    "mode-menu-3",
+    "mode-menu-4",
+];
+
+#[gpui::test]
+fn the_open_menu_floats_above_the_prompt_and_adds_no_height(cx: &mut TestAppContext) {
+    let (view, cx, _events) = input(cx);
+    draw(&view, 1280., cx);
+    let closed = cx.debug_bounds("crest-input").expect("drawn");
+    click("prompt-mode-button", cx);
+    draw(&view, 1280., cx);
+    let open = cx.debug_bounds("crest-input").expect("drawn");
+    assert_eq!(open, closed, "the menu takes no room in the layout");
+    let row = cx.debug_bounds(ROWS[0]).expect("menu drawn");
+    let control = cx.debug_bounds("prompt-mode-control").expect("drawn");
+    assert!(
+        row.bottom() <= control.top(),
+        "the menu is above the prompt row"
+    );
+    assert!(
+        row.top() < open.top(),
+        "and it reaches over what is above the input"
+    );
+}
+
+#[gpui::test]
+fn a_click_away_closes_the_floating_menu(cx: &mut TestAppContext) {
+    let (view, cx, _events) = input(cx);
+    click("prompt-mode-button", cx);
+    cx.simulate_click(gpui::point(px(900.), px(100.)), gpui::Modifiers::none());
+    assert!(view.read_with(cx, |view, _| !view.mode_menu_open()));
 }

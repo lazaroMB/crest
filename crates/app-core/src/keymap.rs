@@ -782,6 +782,11 @@ const DEFAULTS: &[(&str, &str, &str)] = &[
         "Open or close the list of your questions in this chat",
     ),
     (
+        "<leader>M",
+        "prompt.mode",
+        "Cycle the prompt mode: chat, research, deep research",
+    ),
+    (
         "<leader>i",
         "image.mode",
         "Switch pasted images between sending them to the model and adding them to the chat only",
