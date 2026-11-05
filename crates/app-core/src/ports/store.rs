@@ -7,8 +7,9 @@
 
 use async_trait::async_trait;
 use domain::block::Block;
-use domain::conversation::{Session, SessionId};
+use domain::conversation::{ProjectId, Session, SessionId};
 use domain::permission::PermissionRule;
+use domain::project::{Project, ProjectError};
 use serde::{Deserialize, Serialize};
 
 use super::projects::RecentWorkspace;
@@ -66,6 +67,13 @@ pub enum StoreError {
     /// No session with that id.
     #[error("session {0} not found")]
     NotFound(SessionId),
+    /// No project with that id.
+    #[error("project {0} not found")]
+    ProjectNotFound(ProjectId),
+    /// A change to a project that its rules refuse; the message is fit to
+    /// show.
+    #[error(transparent)]
+    Project(#[from] ProjectError),
     /// The stored data could not be decoded (corrupt or from a newer version).
     #[error("stored session is corrupt: {0}")]
     Corrupt(String),
@@ -76,7 +84,7 @@ pub enum StoreError {
 
 /// Persists sessions by workspace.
 #[async_trait]
-pub trait SessionStorePort: Send + Sync {
+pub trait SessionStorePort: ProjectStorePort {
     /// Inserts or replaces the session with the same id, updating its
     /// listing entry. Must be atomic: a crash leaves the old or new version.
     /// Takes the session by value: callers build it for the save, and an
@@ -100,6 +108,39 @@ pub trait SessionStorePort: Send + Sync {
     /// The workspaces with saved sessions, the most recently saved first,
     /// at most `limit`.
     async fn recent_workspaces(&self, limit: usize) -> Result<Vec<RecentWorkspace>, StoreError>;
+}
+
+/// Projects: named sets of directories that sessions can belong to. Every
+/// session store is a project store, so one handle serves both.
+#[async_trait]
+pub trait ProjectStorePort: Send + Sync {
+    /// Every project, in the order they were created.
+    async fn projects(&self) -> Result<Vec<Project>, StoreError>;
+
+    /// Creates a project with `roots` (normalized, repeats dropped).
+    /// Refused without a name or without a directory.
+    async fn create_project(&self, name: &str, roots: &[String]) -> Result<Project, StoreError>;
+
+    /// Adds a directory to a project; one it already has changes nothing.
+    async fn add_root(&self, id: ProjectId, root: &str) -> Result<Project, StoreError>;
+
+    /// Removes a directory from a project; refused for the last one.
+    async fn remove_root(&self, id: ProjectId, root: &str) -> Result<Project, StoreError>;
+
+    /// Renames a project; refused for an empty name.
+    async fn rename_project(&self, id: ProjectId, name: &str) -> Result<Project, StoreError>;
+
+    /// Pins or unpins a project.
+    async fn pin_project(&self, id: ProjectId, pinned: bool) -> Result<Project, StoreError>;
+
+    /// Puts a session in a project, or out of any with `None`, keeping its
+    /// id and its whole history. Does not change the session's
+    /// `workspace_root`.
+    async fn move_session(
+        &self,
+        id: SessionId,
+        project: Option<ProjectId>,
+    ) -> Result<(), StoreError>;
 }
 
 #[cfg(test)]

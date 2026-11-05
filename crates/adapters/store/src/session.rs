@@ -10,16 +10,20 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use application_core::ports::projects::RecentWorkspace;
-use application_core::ports::store::{SessionStorePort, SessionSummary, StoreError, StoredSession};
+use application_core::ports::store::{
+    ProjectStorePort, SessionStorePort, SessionSummary, StoreError, StoredSession,
+};
 use async_trait::async_trait;
 use domain::block::Block;
-use domain::conversation::{Session, SessionId};
+use domain::conversation::{ProjectId, Session, SessionId};
 use domain::permission::{PermissionRule, RuleScope};
+use domain::project::Project;
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::de::DeserializeOwned;
 
 use crate::db::{self, sql_error};
 use crate::path::default_db_path;
+use crate::projects;
 
 /// [`SessionStorePort`] over one SQLite database.
 ///
@@ -122,7 +126,61 @@ impl SessionStorePort for SqliteSessionStore {
     }
 }
 
+#[async_trait]
+impl ProjectStorePort for SqliteSessionStore {
+    async fn projects(&self) -> Result<Vec<Project>, StoreError> {
+        self.run(|conn| projects::list(conn)).await
+    }
+
+    async fn create_project(&self, name: &str, roots: &[String]) -> Result<Project, StoreError> {
+        let (name, roots) = (name.to_owned(), roots.to_vec());
+        self.run(move |conn| projects::create(conn, &name, &roots))
+            .await
+    }
+
+    async fn add_root(&self, id: ProjectId, root: &str) -> Result<Project, StoreError> {
+        let root = root.to_owned();
+        self.run(move |conn| projects::edit(conn, id, |p| p.add_root(&root).map(drop)))
+            .await
+    }
+
+    async fn remove_root(&self, id: ProjectId, root: &str) -> Result<Project, StoreError> {
+        let root = root.to_owned();
+        self.run(move |conn| projects::edit(conn, id, |p| p.remove_root(&root).map(drop)))
+            .await
+    }
+
+    async fn rename_project(&self, id: ProjectId, name: &str) -> Result<Project, StoreError> {
+        let name = name.to_owned();
+        self.run(move |conn| projects::edit(conn, id, |p| p.rename(&name)))
+            .await
+    }
+
+    async fn pin_project(&self, id: ProjectId, pinned: bool) -> Result<Project, StoreError> {
+        self.run(move |conn| {
+            projects::edit(conn, id, |p| {
+                p.pinned = pinned;
+                Ok(())
+            })
+        })
+        .await
+    }
+
+    async fn move_session(
+        &self,
+        id: SessionId,
+        project: Option<ProjectId>,
+    ) -> Result<(), StoreError> {
+        self.run(move |conn| projects::move_session(conn, id, project))
+            .await
+    }
+}
+
 /// Inserts or replaces `stored`, its timeline and its rules, atomically.
+///
+/// A session that exists keeps its `project_id` column: only `move_session`
+/// changes it, so saving a copy loaded before a move cannot undo the move. A
+/// new session gets its project when that project exists, else none.
 pub(crate) fn save(conn: &mut Connection, stored: &StoredSession) -> Result<(), StoreError> {
     let session = &stored.session;
     let id = session.id.to_string();
@@ -133,8 +191,9 @@ pub(crate) fn save(conn: &mut Connection, stored: &StoredSession) -> Result<(), 
     tx.execute(
         "INSERT INTO sessions
              (id, workspace_root, title, created_at, updated_at, turn_count, data_json,
-              prompt_history_json)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+              prompt_history_json, project_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
+                 (SELECT id FROM projects WHERE id = ?9))
          ON CONFLICT (id) DO UPDATE SET
              workspace_root = excluded.workspace_root,
              title = excluded.title,
@@ -152,6 +211,7 @@ pub(crate) fn save(conn: &mut Connection, stored: &StoredSession) -> Result<(), 
             to_i64(session.turns.len(), "turn_count")?,
             data_json,
             to_json(&stored.prompt_history)?,
+            session.project_id.map(|p| p.to_string()),
         ],
     )
     .map_err(sql_error)?;
@@ -238,16 +298,22 @@ pub(crate) fn load(conn: &mut Connection, id: SessionId) -> Result<StoredSession
     // A read transaction so the three reads see the same save.
     let tx = conn.transaction().map_err(sql_error)?;
     let key = id.to_string();
-    let row: Option<(String, String)> = tx
+    let row: Option<(String, String, Option<String>)> = tx
         .query_row(
-            "SELECT data_json, prompt_history_json FROM sessions WHERE id = ?1",
+            "SELECT data_json, prompt_history_json, project_id FROM sessions WHERE id = ?1",
             [&key],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )
         .optional()
         .map_err(sql_error)?;
-    let (data_json, history_json) = row.ok_or(StoreError::NotFound(id))?;
-    let session: Session = from_json(&data_json, "session")?;
+    let (data_json, history_json, project) = row.ok_or(StoreError::NotFound(id))?;
+    let mut session: Session = from_json(&data_json, "session")?;
+    // The column is the truth: the JSON of a session saved before projects
+    // existed has no project, and one saved before a move has the old one.
+    session.project_id = project
+        .as_deref()
+        .map(projects::parse_project_id)
+        .transpose()?;
     let prompt_history = from_json(&history_json, "prompt history")?;
     if session.id != id {
         return Err(StoreError::Corrupt(format!(

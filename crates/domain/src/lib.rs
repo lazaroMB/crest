@@ -21,6 +21,7 @@ pub mod model3d;
 pub mod permission;
 pub mod plan;
 pub mod plot;
+pub mod project;
 pub mod report;
 pub mod research;
 pub mod science;

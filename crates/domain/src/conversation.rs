@@ -12,6 +12,8 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+pub use crate::project::Project;
+
 macro_rules! uuid_id {
     ($(#[$meta:meta])* $name:ident) => {
         $(#[$meta])*
@@ -64,6 +66,10 @@ macro_rules! uuid_id {
 uuid_id!(
     /// Identifies a [`Session`].
     SessionId
+);
+uuid_id!(
+    /// Identifies a [`Project`].
+    ProjectId
 );
 uuid_id!(
     /// Identifies a [`Turn`] within a session.
@@ -390,6 +396,10 @@ pub struct Session {
     pub id: SessionId,
     /// Workspace root as text; the domain does no I/O on it.
     pub workspace_root: String,
+    /// The project the session belongs to; `None` for a standalone chat,
+    /// which has no directory (its `workspace_root` is empty).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<ProjectId>,
     /// Human-readable title, if one has been set or generated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
@@ -410,6 +420,7 @@ impl Session {
         Self {
             id: SessionId::new(),
             workspace_root: workspace_root.into(),
+            project_id: None,
             title: None,
             turns: Vec::new(),
             created_at: now_ms,

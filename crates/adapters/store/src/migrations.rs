@@ -55,6 +55,11 @@ pub const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../migrations/0006_discovery_summary.sql"),
         after: Some(crate::discovery::backfill_summaries),
     },
+    Migration {
+        name: "0007_projects",
+        sql: include_str!("../migrations/0007_projects.sql"),
+        after: Some(crate::projects::backfill),
+    },
 ];
 
 /// Version a fully migrated database has.
@@ -196,6 +201,8 @@ mod tests {
                 "discovery_sources",
                 "flow_sessions",
                 "permission_rules",
+                "project_roots",
+                "projects",
                 "sessions",
                 "timeline_blocks"
             ]

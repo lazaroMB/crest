@@ -7,6 +7,7 @@ pub mod discovery;
 pub mod graphflow;
 pub mod migrations;
 pub mod path;
+pub mod projects;
 pub mod session;
 
 pub use discovery::SqliteDiscoveryStore;
