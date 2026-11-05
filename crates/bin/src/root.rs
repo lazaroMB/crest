@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::research::Research;
+use adapter_fs::guard::canonical_root;
 use adapter_fs::{LocalFs, WorkspaceGuard};
 use adapter_lua::{HostOptions, LuaHost, default_sources};
 use adapter_search::RipgrepSearch;
@@ -52,7 +53,8 @@ use application::usecases::simulate::Simulator;
 use domain::block::Block;
 use domain::conversation::Session;
 use domain::model::{ModelPolicy, ModelRole, ProviderId};
-use domain::permission::{PermissionMode, PermissionPolicy};
+use domain::permission::PermissionMode;
+use domain::roots::WorkspaceRoots;
 use domain::workspace::WorkspaceRoot;
 use ui::timeline::TimelineState;
 
@@ -66,11 +68,13 @@ use crate::research;
 use crate::startup::{self};
 
 mod llm_ports;
+mod session_roots;
 mod stores;
 mod tool_registry;
 
 use llm_ports::{Models, resolve_models};
-use stores::{Checkpoint, Resumed, open_flow_storage, open_store, resume_session};
+use session_roots::open_session;
+use stores::{Checkpoint, Resumed, open_flow_storage, open_store};
 use tool_registry::{ToolInputs, Tools, register_tools};
 
 /// What the command line decided.
@@ -449,13 +453,15 @@ pub async fn build_app(
     frontend: Frontend,
     overrides: Overrides,
 ) -> anyhow::Result<App> {
-    let guard = WorkspaceGuard::open(&config.workspace).map_err(|err| {
+    let root = canonical_root(&config.workspace).map_err(|err| {
         anyhow!(
             "cannot open the workspace {}: {err}",
             config.workspace.display()
         )
     })?;
-    let root = guard.root().clone();
+    // The session's other directories join once it is known (below); until
+    // then the opened directory is the only root.
+    let guard = WorkspaceGuard::new(WorkspaceRoots::new([root.clone()]));
     // Image files named by plugins are checked like the file tools' paths;
     // the configured sensitive-path rules replace the defaults below.
     let image_guard: SharedGuard = Arc::new(RwLock::new(guard.clone()));
@@ -516,7 +522,7 @@ pub async fn build_app(
     let guard = guard.with_sensitive_rules(rules.clone());
     *image_guard.write().unwrap_or_else(PoisonError::into_inner) = guard.clone();
 
-    let search = RipgrepSearch::new(root.clone()).with_sensitive_rules(rules);
+    let search = RipgrepSearch::new(root.clone()).with_sensitive_rules(rules.clone());
 
     // The steps below do not depend on each other: they run together, and
     // their warnings are added in a fixed order afterwards. Files and the
@@ -605,6 +611,20 @@ pub async fn build_app(
         }
     };
 
+    // A project session opens with all the directories its project has now;
+    // a project that gains or loses one later reaches the sessions already
+    // open the next time they open.
+    let opened = open_session(store.as_ref(), config, &root, &timeline).await;
+    warnings.extend(opened.warnings);
+    let permissions = opened.permissions;
+    let Resumed {
+        session,
+        notice: resumed_notice,
+        prompt_history,
+    } = opened.resumed;
+    let guard = WorkspaceGuard::new(opened.roots).with_sensitive_rules(rules);
+    *image_guard.write().unwrap_or_else(PoisonError::into_inner) = guard.clone();
+
     let search = Arc::new(search);
     let file_search: Arc<dyn FileSearchPort> = search.clone();
     let content_search: Arc<dyn ContentSearchPort> = search.clone();
@@ -667,20 +687,6 @@ pub async fn build_app(
     });
     warnings.extend(mcp_warnings);
 
-    let permissions = Arc::new(Mutex::new(PermissionPolicy::new(config.mode)));
-    let Resumed {
-        session,
-        notice: resumed_notice,
-        prompt_history,
-    } = resume_session(
-        store.as_ref(),
-        config,
-        &root,
-        &timeline,
-        &permissions,
-        &mut warnings,
-    )
-    .await;
     // The project's rules join the restored session ones; "always in
     // project" answers are written back to the same file.
     let (project_rules, project_warnings) =

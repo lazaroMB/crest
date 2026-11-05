@@ -192,6 +192,7 @@ pub(crate) fn edit(
 ) -> Result<Project, StoreError> {
     let tx = begin(conn)?;
     let mut project = find(&tx, id)?;
+    let first_before = project.roots.first().cloned();
     change(&mut project)?;
     let created_at = tx
         .query_row(
@@ -201,25 +202,45 @@ pub(crate) fn edit(
         )
         .map_err(sql_error)?;
     write(&tx, &project, created_at, now_ms()).map_err(sql_error)?;
+    if project.roots.first() != first_before.as_ref() {
+        // The first directory changed (the old one was removed): the
+        // sessions in the project follow it, as `move_session` sets.
+        tx.execute(
+            "UPDATE sessions SET workspace_root = ?2 WHERE project_id = ?1",
+            params![id.to_string(), first_root(&project)],
+        )
+        .map_err(sql_error)?;
+    }
     tx.commit().map_err(sql_error)?;
     Ok(project)
 }
 
-/// Sets the project of session `id`; the session's row is otherwise
-/// untouched, so its blocks and history stay.
+/// The `workspace_root` of a session in `project`: its first directory.
+fn first_root(project: &Project) -> String {
+    project.roots.first().cloned().unwrap_or_default()
+}
+
+/// Sets the project of session `id`, and its `workspace_root` to the project's
+/// first directory (empty without a project, as a standalone chat has). The
+/// row is otherwise untouched, so its blocks and history stay.
 pub(crate) fn move_session(
     conn: &mut Connection,
     id: SessionId,
     project: Option<ProjectId>,
 ) -> Result<(), StoreError> {
     let tx = begin(conn)?;
-    if let Some(project) = project {
-        find(&tx, project)?;
-    }
+    let workspace_root = match project {
+        Some(project) => first_root(&find(&tx, project)?),
+        None => String::new(),
+    };
     let moved = tx
         .execute(
-            "UPDATE sessions SET project_id = ?2 WHERE id = ?1",
-            params![id.to_string(), project.map(|p| p.to_string())],
+            "UPDATE sessions SET project_id = ?2, workspace_root = ?3 WHERE id = ?1",
+            params![
+                id.to_string(),
+                project.map(|p| p.to_string()),
+                workspace_root
+            ],
         )
         .map_err(sql_error)?;
     if moved == 0 {
@@ -477,6 +498,12 @@ mod tests {
             // A copy loaded before the move and saved after must not undo it.
             store.save(with_dir.clone()).await.unwrap();
             log.push(format!("saved stale: {}", where_is(store, &with_dir).await));
+            // A project that loses its first directory moves its sessions to the
+            // next one: `workspace_root` stays the project's first directory.
+            store.add_root(docs.id, "/docs2").await.unwrap();
+            store.remove_root(docs.id, "/docs").await.unwrap();
+            let moved = where_is(store, &with_dir).await;
+            log.push(format!("first directory removed: {moved}"));
             log.push(format!(
                 "{} projects",
                 store.projects().await.unwrap().len()
@@ -508,13 +535,14 @@ mod tests {
                 r#"core ["/third/docs"] pinned=true"#,
                 "refused: no such project",
                 r#"orphan: None root="/ws" blocks=1"#,
-                r#"moved: Some("core") root="" blocks=3"#,
-                r#"moved: None root="/src/api" blocks=8"#,
-                r#"moved: Some("docs") root="/src/api" blocks=8"#,
-                r#"no such project: Some("core") root="" blocks=3"#,
+                r#"moved: Some("core") root="/third/docs" blocks=3"#,
+                r#"moved: None root="" blocks=8"#,
+                r#"moved: Some("docs") root="/docs" blocks=8"#,
+                r#"no such project: Some("core") root="/third/docs" blocks=3"#,
                 r#"moved: None root="" blocks=3"#,
                 "no such session",
-                r#"saved stale: Some("docs") root="/src/api" blocks=8"#,
+                r#"saved stale: Some("docs") root="/docs" blocks=8"#,
+                r#"first directory removed: Some("docs") root="/docs2" blocks=8"#,
                 "2 projects",
             ];
             assert_eq!(real, expected);

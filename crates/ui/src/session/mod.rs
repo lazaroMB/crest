@@ -653,7 +653,7 @@ impl Session {
         });
         let activity = cx.new(|_| ActivityView::new());
         let tree = cx.new(|cx| TreePanel::new(files.clone(), cx));
-        let workspace_root = fs.as_ref().map(|fs| fs.root().clone());
+        let workspace_root = fs.as_ref().and_then(|fs| fs.roots().first().cloned());
         let picker = cx.new(|cx| {
             let mut picker = PickerView::new(files, content, window, cx);
             picker.set_file_system(fs);

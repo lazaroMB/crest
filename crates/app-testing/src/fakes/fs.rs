@@ -18,6 +18,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use async_trait::async_trait;
+use domain::roots::WorkspaceRoots;
 use domain::workspace::{PathError, SensitivePathRules, WorkspacePath, WorkspaceRoot};
 
 use crate::ports::fs::{
@@ -46,23 +47,37 @@ pub fn test_root() -> WorkspaceRoot {
 /// them, as in a file listing, so empty directories do not exist.
 #[derive(Debug)]
 pub struct InMemoryFs {
-    root: WorkspaceRoot,
+    roots: WorkspaceRoots,
     rules: SensitivePathRules,
     max_read_bytes: u64,
     escaping: BTreeSet<WorkspacePath>,
     files: Mutex<BTreeMap<WorkspacePath, Vec<u8>>>,
 }
 
+/// A workspace with no directory, as a standalone chat has: every operation
+/// fails with [`PathError::NoRoots`].
+#[must_use]
+pub fn standalone_fs() -> InMemoryFs {
+    over(WorkspaceRoots::default())
+}
+
+/// An empty workspace over `roots`. The files live in one namespace of
+/// relative paths (the first root's); absolute paths are not modelled and
+/// count as outside.
+fn over(roots: WorkspaceRoots) -> InMemoryFs {
+    InMemoryFs {
+        roots,
+        rules: SensitivePathRules::default(),
+        max_read_bytes: MAX_READ_BYTES,
+        escaping: BTreeSet::new(),
+        files: Mutex::new(BTreeMap::new()),
+    }
+}
+
 impl InMemoryFs {
     /// An empty workspace at `root` with the default sensitive-path rules.
     pub fn new(root: WorkspaceRoot) -> Self {
-        Self {
-            root,
-            rules: SensitivePathRules::default(),
-            max_read_bytes: MAX_READ_BYTES,
-            escaping: BTreeSet::new(),
-            files: Mutex::new(BTreeMap::new()),
-        }
+        over(WorkspaceRoots::new([root]))
     }
 
     /// Adds a text file.
@@ -155,6 +170,14 @@ impl InMemoryFs {
 
     /// Fails when `path` is at or below an escaping link.
     fn check_inside(&self, path: &WorkspacePath) -> Result<(), PathError> {
+        if self.roots.is_empty() {
+            return Err(PathError::NoRoots);
+        }
+        if path.is_absolute() {
+            return Err(PathError::OutsideWorkspace {
+                path: path.to_string(),
+            });
+        }
         if self.escaping.iter().any(|link| is_within(path, link)) {
             return Err(PathError::OutsideWorkspace {
                 path: path.to_string(),
@@ -211,8 +234,8 @@ fn as_text(bytes: &[u8]) -> Option<&str> {
 
 #[async_trait]
 impl FileSystemPort for InMemoryFs {
-    fn root(&self) -> &WorkspaceRoot {
-        &self.root
+    fn roots(&self) -> &WorkspaceRoots {
+        &self.roots
     }
 
     async fn read_file(&self, request: ReadFileRequest) -> Result<FileContent, FsError> {
@@ -801,7 +824,7 @@ mod tests {
     #[tokio::test]
     async fn reads_a_slice_of_a_text_file() {
         let fs = fs();
-        assert_eq!(fs.root(), &test_root());
+        assert_eq!(fs.roots().first(), Some(&test_root()));
         let request = ReadFileRequest {
             offset: Some(2),
             limit: Some(1),

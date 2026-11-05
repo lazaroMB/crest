@@ -134,8 +134,10 @@ pub trait ProjectStorePort: Send + Sync {
     async fn pin_project(&self, id: ProjectId, pinned: bool) -> Result<Project, StoreError>;
 
     /// Puts a session in a project, or out of any with `None`, keeping its
-    /// id and its whole history. Does not change the session's
-    /// `workspace_root`.
+    /// id and its whole history. Sets the session's `workspace_root` to the
+    /// project's first directory, or to empty without a project; saving the
+    /// session later does not undo it. A project that loses its first
+    /// directory moves its sessions to the next one the same way.
     async fn move_session(
         &self,
         id: SessionId,

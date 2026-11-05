@@ -29,7 +29,7 @@ use application_core::ports::search::{
     GrepRequest, GrepResult, ListFilesRequest, SearchError, TreeNode, TreeRequest,
 };
 use async_trait::async_trait;
-use domain::workspace::{SensitivePathRules, WorkspaceRoot};
+use domain::workspace::{PathError, SensitivePathRules, WorkspaceRoot};
 
 use tokio::sync::OnceCell;
 
@@ -47,7 +47,9 @@ mod test_support;
 /// Search adapter backed by `rg` and `fzf`.
 #[derive(Debug, Clone)]
 pub struct RipgrepSearch {
-    root: WorkspaceRoot,
+    /// `None` for a chat without a directory, where every search fails with
+    /// [`PathError::NoRoots`].
+    root: Option<WorkspaceRoot>,
     rg: OsString,
     fzf: OsString,
     timeout: Duration,
@@ -57,19 +59,30 @@ pub struct RipgrepSearch {
     fzf_status: Arc<OnceCell<ToolStatus>>,
 }
 
+/// An adapter over `root` with the default tools, timeout and rules.
+fn open(root: Option<WorkspaceRoot>) -> RipgrepSearch {
+    RipgrepSearch {
+        root,
+        rg: Tool::Ripgrep.program().into(),
+        fzf: Tool::Fzf.program().into(),
+        timeout: DEFAULT_SEARCH_TIMEOUT,
+        rules: SensitivePathRules::default(),
+        fzf_status: Arc::default(),
+    }
+}
+
+/// The directory searches run in: the first root of the session. Searches
+/// stay in it even when the session has more.
+pub(crate) fn directory(search: &RipgrepSearch) -> Result<&WorkspaceRoot, PathError> {
+    search.root.as_ref().ok_or(PathError::NoRoots)
+}
+
 impl RipgrepSearch {
     /// An adapter for `root` (already canonicalized) using `rg` and `fzf`
     /// from `PATH`, [`DEFAULT_SEARCH_TIMEOUT`] and the default sensitive
     /// path rules.
     pub fn new(root: WorkspaceRoot) -> Self {
-        Self {
-            root,
-            rg: Tool::Ripgrep.program().into(),
-            fzf: Tool::Fzf.program().into(),
-            timeout: DEFAULT_SEARCH_TIMEOUT,
-            rules: SensitivePathRules::default(),
-            fzf_status: Arc::default(),
-        }
+        open(Some(root))
     }
 
     /// Uses `program` (a name looked up in `PATH`, or a path) as `rg`.
@@ -101,9 +114,11 @@ impl RipgrepSearch {
         self
     }
 
-    /// The workspace root.
-    pub fn root(&self) -> &WorkspaceRoot {
-        &self.root
+    /// An adapter without a directory (a standalone chat): every search
+    /// fails with [`PathError::NoRoots`], and nothing is searched in the
+    /// process's own working directory.
+    pub fn standalone() -> Self {
+        open(None)
     }
 
     /// Checks the configured `rg` and `fzf` (meant for startup; see
@@ -145,6 +160,25 @@ mod tests {
 
     use super::*;
     use crate::test_support::Workspace;
+
+    /// No directory, no search: nothing is searched in crest's own directory.
+    #[tokio::test]
+    async fn a_standalone_search_finds_nothing_and_asks_for_a_directory() {
+        let search = RipgrepSearch::standalone();
+        let expected = SearchError::Path(PathError::NoRoots);
+        assert_eq!(
+            search.grep(GrepRequest::new("needle")).await,
+            Err(expected.clone())
+        );
+        assert_eq!(
+            search.list_files(ListFilesRequest::default()).await,
+            Err(expected.clone())
+        );
+        assert_eq!(
+            search.find_file(FindFileRequest::new("a")).await,
+            Err(expected)
+        );
+    }
 
     #[tokio::test]
     async fn greps_through_the_port() {

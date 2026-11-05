@@ -178,8 +178,9 @@ impl ProjectStorePort for SqliteSessionStore {
 
 /// Inserts or replaces `stored`, its timeline and its rules, atomically.
 ///
-/// A session that exists keeps its `project_id` column: only `move_session`
-/// changes it, so saving a copy loaded before a move cannot undo the move. A
+/// A session that exists keeps its `project_id` and `workspace_root` columns:
+/// only `move_session` (and a project losing its first directory) changes
+/// them, so saving a copy loaded before a move cannot undo the move. A
 /// new session gets its project when that project exists, else none.
 pub(crate) fn save(conn: &mut Connection, stored: &StoredSession) -> Result<(), StoreError> {
     let session = &stored.session;
@@ -195,7 +196,6 @@ pub(crate) fn save(conn: &mut Connection, stored: &StoredSession) -> Result<(), 
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
                  (SELECT id FROM projects WHERE id = ?9))
          ON CONFLICT (id) DO UPDATE SET
-             workspace_root = excluded.workspace_root,
              title = excluded.title,
              created_at = excluded.created_at,
              updated_at = excluded.updated_at,
@@ -298,22 +298,25 @@ pub(crate) fn load(conn: &mut Connection, id: SessionId) -> Result<StoredSession
     // A read transaction so the three reads see the same save.
     let tx = conn.transaction().map_err(sql_error)?;
     let key = id.to_string();
-    let row: Option<(String, String, Option<String>)> = tx
+    let row: Option<(String, String, Option<String>, String)> = tx
         .query_row(
-            "SELECT data_json, prompt_history_json, project_id FROM sessions WHERE id = ?1",
+            "SELECT data_json, prompt_history_json, project_id, workspace_root
+             FROM sessions WHERE id = ?1",
             [&key],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .optional()
         .map_err(sql_error)?;
-    let (data_json, history_json, project) = row.ok_or(StoreError::NotFound(id))?;
+    let (data_json, history_json, project, workspace_root) = row.ok_or(StoreError::NotFound(id))?;
     let mut session: Session = from_json(&data_json, "session")?;
-    // The column is the truth: the JSON of a session saved before projects
-    // existed has no project, and one saved before a move has the old one.
+    // The columns are the truth: the JSON of a session saved before projects
+    // existed has no project, and one saved before a move has the old project
+    // and directory.
     session.project_id = project
         .as_deref()
         .map(projects::parse_project_id)
         .transpose()?;
+    session.workspace_root = workspace_root;
     let prompt_history = from_json(&history_json, "prompt history")?;
     if session.id != id {
         return Err(StoreError::Corrupt(format!(

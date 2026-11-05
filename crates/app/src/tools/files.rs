@@ -13,7 +13,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use domain::block::{BlockKind, DiffSpec};
 use domain::permission::ToolEffect;
-use domain::workspace::PathError;
+use domain::workspace::{PathError, WorkspacePath};
 use futures::FutureExt;
 
 use super::budget::ResultBudget;
@@ -423,7 +423,7 @@ fn fs_error_message(err: &FsError) -> String {
 const READ_FILE_DESCRIPTION: &str = "\
 Reads a text file of the workspace. Lines are returned numbered as `cat -n` does (line \
 number, a tab, the line); the numbers are not part of the file.
-- `path` is relative to the workspace root.
+- `path` is relative to the workspace root (the first directory of a project); an absolute path names a file under any of its directories.
 - Returns up to 2000 lines by default. For long files pass `offset` (1-based first line) and \
 `limit` (number of lines) to read a range; a cut result ends with the offset to continue.
 - Binary files are rejected, and files over 2 MB can only be read with an explicit range.
@@ -478,7 +478,7 @@ impl TypedTool for ReadFileTool {
         input: ReadFileRequest,
         _ctx: &ToolContext,
     ) -> Result<PreparedCall, ToolError> {
-        let subject = input.path.to_string();
+        let subject = rule_subject(self.fs.as_ref(), &input.path);
         let fs = Arc::clone(&self.fs);
         let budget = self.budget;
         let run = async move {
@@ -489,6 +489,19 @@ impl TypedTool for ReadFileTool {
         };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
+}
+
+/// The path as the permission rules see it: the address its root gives it, so
+/// an absolute spelling of a path in the first root meets the same rules as
+/// its relative one. A path no root contains stays as typed; the port then
+/// refuses it.
+fn rule_subject(fs: &dyn FileSystemPort, path: &WorkspacePath) -> String {
+    if path.is_absolute()
+        && let Ok(rooted) = fs.roots().resolve(path.as_str())
+    {
+        return rooted.address().to_string();
+    }
+    path.to_string()
 }
 
 /// The diff shown for a prepared change, in the approval dialog and in the
@@ -550,7 +563,7 @@ and must appear exactly once: when it appears several times, include more surrou
 to make it unique. Do not include the line numbers that `read_file` prints.
 - Read the file first. To create a file or rewrite it entirely, use `write_file`.
 - The user sees the diff and may need to approve it before it is written.
-- `path` is relative to the workspace root.";
+- `path` is relative to the workspace root (the first directory of a project); an absolute path names a file under any of its directories.";
 
 /// `edit_file`: exact, unique replacement in an existing file.
 pub struct EditFileTool {
@@ -606,7 +619,7 @@ Missing parent directories are created.
 - Prefer `edit_file` for changes to an existing file: it is cheaper and safer than rewriting \
 it. Read an existing file before overwriting it.
 - The user sees the diff and may need to approve it before it is written.
-- `path` is relative to the workspace root.";
+- `path` is relative to the workspace root (the first directory of a project); an absolute path names a file under any of its directories.";
 
 /// `write_file`: create or overwrite a whole file.
 pub struct WriteFileTool {
@@ -1472,3 +1485,6 @@ mod tests {
         assert_eq!(out.text_content(), "     1\t[workspace]");
     }
 }
+
+#[cfg(test)]
+mod roots_tests;

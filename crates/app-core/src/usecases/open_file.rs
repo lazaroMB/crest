@@ -78,6 +78,9 @@ pub enum OpenError {
     /// No argument, or one without the `@`.
     #[error("usage: /open @<path> (type @ to pick a file)")]
     Usage,
+    /// The chat has no directory, so there is nothing to open a path in.
+    #[error("{}", domain::workspace::NO_DIRECTORY)]
+    NoDirectory,
     /// The path leaves the workspace root or is malformed.
     #[error("cannot open {path}: it is outside the workspace {root}")]
     Outside {
@@ -163,18 +166,22 @@ pub fn parse_target(fs: &dyn FileSystemPort, arg: &str) -> Result<WorkspacePath,
         .map(unquote)
         .filter(|path| !path.is_empty())
         .ok_or(OpenError::Usage)?;
-    fs.root().resolve(path).map_err(|err| match err {
-        PathError::InvalidPath { reason } => OpenError::Invalid {
-            path: path.to_owned(),
-            reason: reason.to_string(),
-        },
-        PathError::OutsideWorkspace { .. } | PathError::NotAbsoluteRoot { .. } => {
-            OpenError::Outside {
+    fs.roots()
+        .resolve(path)
+        .map(|rooted| rooted.address())
+        .map_err(|err| match err {
+            PathError::InvalidPath { reason } => OpenError::Invalid {
                 path: path.to_owned(),
-                root: root(fs),
+                reason: reason.to_string(),
+            },
+            PathError::NoRoots => OpenError::NoDirectory,
+            PathError::OutsideWorkspace { .. } | PathError::NotAbsoluteRoot { .. } => {
+                OpenError::Outside {
+                    path: path.to_owned(),
+                    root: root(fs),
+                }
             }
-        }
-    })
+        })
 }
 
 /// `path` without its quotes: `"a b/c.md"` and the still open `"a b/c.md`
@@ -373,8 +380,14 @@ fn code(ext: &str, source: String) -> CustomNode {
     }
 }
 
+/// The roots, for a message: one path, or all of them separated by commas.
 fn root(fs: &dyn FileSystemPort) -> String {
-    fs.root().as_path().display().to_string()
+    let roots: Vec<String> = fs
+        .roots()
+        .iter()
+        .map(|root| root.as_path().display().to_string())
+        .collect();
+    roots.join(", ")
 }
 
 /// The lowercase extension of `path`, or `""`.
@@ -725,3 +738,6 @@ endsolid t
         assert_eq!(source.lines().count(), MAX_OPEN_LINES);
     }
 }
+
+#[cfg(test)]
+mod roots_tests;

@@ -24,6 +24,7 @@ pub mod plot;
 pub mod project;
 pub mod report;
 pub mod research;
+pub mod roots;
 pub mod science;
 pub mod sysmodel;
 pub mod theme;

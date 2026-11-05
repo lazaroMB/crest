@@ -102,7 +102,7 @@ pub async fn grep(search: &RipgrepSearch, request: GrepRequest) -> Result<GrepRe
         }
         check_inside(search, path).await?;
     }
-    let mut spec = ProcessSpec::new(&search.rg, search.root.as_path())
+    let mut spec = ProcessSpec::new(&search.rg, crate::directory(search)?.as_path())
         .args(["--json", "-n", "-C"])
         .arg(request.context.to_string())
         .args(search.rg_common_args(request.glob.as_deref()));
@@ -145,12 +145,13 @@ pub async fn grep(search: &RipgrepSearch, request: GrepRequest) -> Result<GrepRe
 /// Fails unless `path` (after resolving symlinks) is inside the workspace:
 /// `rg` follows a symlink given explicitly on the command line.
 async fn check_inside(search: &RipgrepSearch, path: &WorkspacePath) -> Result<(), SearchError> {
-    let full = search.root.join(path);
+    let root = crate::directory(search)?;
+    let full = root.join(path);
     let resolved = tokio::fs::canonicalize(&full)
         .await
         .map(|p| dunce::simplified(&p).to_path_buf())
         .map_err(|e| SearchError::Io(format!("{path}: {e}")))?;
-    if resolved.starts_with(search.root.as_path()) {
+    if resolved.starts_with(root.as_path()) {
         Ok(())
     } else {
         Err(PathError::OutsideWorkspace {

@@ -31,6 +31,9 @@ pub enum ShellError {
     /// The command is malformed (e.g. empty, or contains a NUL byte).
     #[error("invalid command: {0}")]
     InvalidCommand(String),
+    /// The chat has no directory to run a command in.
+    #[error("{}", domain::workspace::NO_DIRECTORY)]
+    NoDirectory,
     /// The program was not found on `PATH`.
     #[error("command not found: {command}")]
     NotFound {

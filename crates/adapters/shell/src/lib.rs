@@ -64,7 +64,9 @@ const DRAIN_GRACE: Duration = Duration::from_millis(500);
 /// workspace root.
 #[derive(Debug, Clone)]
 pub struct LocalShell {
-    root: WorkspaceRoot,
+    /// The working directory; `None` for a chat without a directory, where
+    /// no command runs.
+    root: Option<WorkspaceRoot>,
     /// The shell for whole command lines ([`ShellPort::line_shell`]).
     line_shell: ShellSpec,
     /// Environment to inherit instead of crest's own (tests only).
@@ -76,7 +78,18 @@ impl LocalShell {
     /// workspace was opened).
     pub fn new(root: WorkspaceRoot) -> Self {
         Self {
-            root,
+            root: Some(root),
+            line_shell: ShellSpec::default(),
+            inherited_env: None,
+        }
+    }
+
+    /// A shell without a directory (a standalone chat): every command fails
+    /// with [`ShellError::NoDirectory`], and nothing runs in crest's own
+    /// working directory.
+    pub fn standalone() -> Self {
+        Self {
+            root: None,
             line_shell: ShellSpec::default(),
             inherited_env: None,
         }
@@ -118,15 +131,16 @@ impl LocalShell {
     }
 
     /// The working directory of every command.
-    pub fn root(&self) -> &WorkspaceRoot {
-        &self.root
+    pub fn root(&self) -> Option<&WorkspaceRoot> {
+        self.root.as_ref()
     }
 
-    fn command(&self, request: &RunCommandRequest) -> Command {
+    fn command(&self, request: &RunCommandRequest) -> Result<Command, ShellError> {
+        let root = self.root.as_ref().ok_or(ShellError::NoDirectory)?;
         let mut command = Command::new(program(&request.command));
         command
             .args(&request.args)
-            .current_dir(self.root.as_path())
+            .current_dir(root.as_path())
             .env_clear()
             .envs(self.environment())
             .stdin(Stdio::null())
@@ -134,18 +148,19 @@ impl LocalShell {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
         platform::process::own_group(command.as_std_mut());
-        command
+        Ok(command)
     }
 
     async fn spawn(&self, request: &RunCommandRequest) -> Result<Child, ShellError> {
-        match self.command(request).spawn() {
+        match self.command(request)?.spawn() {
             Ok(child) => Ok(child),
             // ENOENT is also what a missing working directory produces.
             Err(err) if err.kind() == io::ErrorKind::NotFound => {
-                if tokio::fs::metadata(self.root.as_path()).await.is_err() {
+                let root = self.root.as_ref().ok_or(ShellError::NoDirectory)?;
+                if tokio::fs::metadata(root.as_path()).await.is_err() {
                     Err(ShellError::Spawn(format!(
                         "workspace root {} does not exist",
-                        self.root.as_path().display()
+                        root.as_path().display()
                     )))
                 } else {
                     Err(ShellError::NotFound {
@@ -286,8 +301,15 @@ mod tests {
             .unwrap();
         assert_eq!(
             out.stdout.trim_end(),
-            shell.root().as_path().to_str().unwrap()
+            shell.root().unwrap().as_path().to_str().unwrap()
         );
+        // No directory, no command: nothing runs in crest's own directory.
+        let err = LocalShell::standalone()
+            .run(RunCommandRequest::new("pwd", Vec::<String>::new()))
+            .await
+            .unwrap_err();
+        assert_eq!(err, ShellError::NoDirectory);
+        assert!(err.to_string().contains("this chat has no directory"));
     }
 
     #[tokio::test]

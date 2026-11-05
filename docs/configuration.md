@@ -343,6 +343,7 @@ The initial permission mode is chosen with `--mode` (`ask` by default). It is no
 **Sensitive paths** are paths that no tool can read or write.
 
 - The default list is `.env*`, `*.pem`, `id_rsa*` and `.git/`.
+- In a project with several directories the patterns apply to each one, against the path inside that directory: a directory above it (`~/.git/proj`) does not trip them.
 - Each pattern is matched against **every component** of the path: it only supports `*` and `?`, and cannot contain `/` except for a trailing `/`, which marks a directory. For example, `.env*` denies `.env` and `config/.env.local`, and `.git/` denies everything inside `.git`.
 
 ```lua
@@ -381,6 +382,7 @@ deny = [
   - `run_command(prog sub *)`: a command whose arguments start with those words (compared word by word, so `cargo test *` does not match `cargo testx`); words are split as in a shell, so quote an argument with spaces.
   - `run_command(prog args)` without `*`: that exact command.
   - `edit_file(dir/*)`, `write_file(dir/*)`: a path prefix, within folder boundaries; without `*`, that exact path (relative to the workspace).
+    In a project with several directories, a file in the first one is named relative to it, and a file in any other by its absolute path (`write_file(/work/web/src/*)`); the dialog and the rules use the same spelling.
   - any other text inside the parentheses: that exact input.
 - Shells, wrappers and interpreters given inline code (see [usage.md](usage.md#patterns)) are never offered a wider pattern in the dialog. A pattern you write by hand for them (`run_command(bash *)`) is honoured, but allows any script.
 

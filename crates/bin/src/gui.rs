@@ -81,6 +81,7 @@ use domain::conversation::{ImageAttachment, SessionId, StopReason};
 use domain::git::GitStatus;
 use domain::model::{Account, ModelId, ModelPolicy, ProviderId, ResolveRequest, SpecSource};
 use domain::permission::{PermissionMode, PermissionRule};
+use domain::roots::WorkspaceRoots;
 use domain::workspace::{WorkspacePath, WorkspaceRoot};
 use futures::FutureExt as _;
 use futures::channel::{mpsc, oneshot};
@@ -195,8 +196,8 @@ impl<T: ?Sized> TokioPort<T> {
 /// there; the rest forwards too, for completeness).
 #[async_trait]
 impl<T: FileSystemPort + ?Sized + 'static> FileSystemPort for TokioPort<T> {
-    fn root(&self) -> &WorkspaceRoot {
-        self.inner.root()
+    fn roots(&self) -> &WorkspaceRoots {
+        self.inner.roots()
     }
 
     async fn read_file(&self, request: ReadFileRequest) -> Result<FileContent, FsError> {

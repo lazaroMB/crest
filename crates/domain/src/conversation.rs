@@ -394,7 +394,10 @@ pub struct PendingToolUse {
 pub struct Session {
     /// Session id.
     pub id: SessionId,
-    /// Workspace root as text; the domain does no I/O on it.
+    /// The first directory of the session's project (empty for a standalone
+    /// chat), as text; the domain does no I/O on it. The store keeps it in
+    /// step with the project; a session opens with all the project's
+    /// directories (`WorkspaceRoots`) and this one is the first.
     pub workspace_root: String,
     /// The project the session belongs to; `None` for a standalone chat,
     /// which has no directory (its `workspace_root` is empty).

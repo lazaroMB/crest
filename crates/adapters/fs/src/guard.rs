@@ -18,12 +18,19 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use application_core::ports::fs::FsError;
+use domain::roots::WorkspaceRoots;
 use domain::workspace::{PathError, SensitivePathRules, WorkspacePath, WorkspaceRoot};
 
-/// Confines paths to one canonical workspace root.
+/// Confines paths to the canonical workspace roots (one for a plain
+/// workspace, several for a project, none for a standalone chat).
+///
+/// Every rule applies per root: a path is resolved in one root
+/// ([`WorkspaceRoots::resolve`]), canonicalized, and must end up under a
+/// root; the sensitive-path rules are checked against the path relative to
+/// the root it is in.
 #[derive(Debug, Clone)]
 pub struct WorkspaceGuard {
-    root: WorkspaceRoot,
+    roots: WorkspaceRoots,
     rules: SensitivePathRules,
 }
 
@@ -34,20 +41,19 @@ impl WorkspaceGuard {
     /// symlink is replaced by its target) and never changes afterwards.
     /// Fails when `path` does not exist or is not a directory.
     pub fn open(path: impl AsRef<Path>) -> Result<Self, FsError> {
-        let path = path.as_ref();
-        let canonical = canonicalize_blocking(path).map_err(|e| io_error(path, &e))?;
-        if !canonical.is_dir() {
-            return Err(FsError::Io(format!(
-                "workspace root is not a directory: {}",
-                path.display()
-            )));
-        }
-        let root = WorkspaceRoot::new(canonical)?;
-        tracing::debug!(root = %root.as_path().display(), "workspace opened");
-        Ok(Self {
-            root,
+        Ok(Self::new(WorkspaceRoots::new([canonical_root(
+            path.as_ref(),
+        )?])))
+    }
+
+    /// A guard over `roots`, already canonical (see [`canonical_root`]). An
+    /// empty list is a standalone chat: every path fails with
+    /// [`PathError::NoRoots`].
+    pub fn new(roots: WorkspaceRoots) -> Self {
+        Self {
+            roots,
             rules: SensitivePathRules::default(),
-        })
+        }
     }
 
     /// Replaces the sensitive-path rules (configured from Lua).
@@ -56,9 +62,9 @@ impl WorkspaceGuard {
         self
     }
 
-    /// The canonical workspace root.
-    pub fn root(&self) -> &WorkspaceRoot {
-        &self.root
+    /// The canonical roots, in order.
+    pub fn roots(&self) -> &WorkspaceRoots {
+        &self.roots
     }
 
     /// The sensitive-path rules in effect.
@@ -74,8 +80,9 @@ impl WorkspaceGuard {
     /// for a dangling symlink whose target lies outside) and with
     /// [`FsError::NotFound`] when the path does not exist.
     pub async fn resolve_existing(&self, input: &str) -> Result<(WorkspacePath, PathBuf), FsError> {
-        let path = self.root.resolve(input)?;
-        let joined = self.root.join(&path);
+        let rooted = self.roots.resolve(input)?;
+        let joined = rooted.join();
+        let path = rooted.address();
         let canonical = match canonicalize(&joined).await {
             Ok(canonical) => canonical,
             Err(e) if e.kind() == ErrorKind::NotFound => {
@@ -111,8 +118,9 @@ impl WorkspaceGuard {
         &self,
         input: &str,
     ) -> Result<(WorkspacePath, PathBuf), FsError> {
-        let path = self.root.resolve(input)?;
-        let joined = self.root.join(&path);
+        let rooted = self.roots.resolve(input)?;
+        let joined = rooted.join();
+        let path = rooted.address();
         let target =
             resolve_lenient(&joined)
                 .await?
@@ -127,7 +135,9 @@ impl WorkspaceGuard {
     /// sensitive-path rules (any component, so `.git/config` is denied by
     /// `.git/`).
     pub fn check_readable(&self, path: &WorkspacePath) -> Result<(), FsError> {
-        match self.rules.matching_pattern(path) {
+        // The rules see the path relative to its root, never the absolute
+        // spelling, so a directory above the root cannot trip them.
+        match self.rules.matching_pattern(&self.roots.relative_of(path)?) {
             Some(pattern) => Err(FsError::SensitivePath {
                 path: path.clone(),
                 pattern: pattern.to_owned(),
@@ -151,8 +161,9 @@ impl WorkspaceGuard {
         &self,
         input: &str,
     ) -> Result<(WorkspacePath, PathBuf), FsError> {
-        let path = self.root.resolve(input)?;
-        let joined = self.root.join(&path);
+        let rooted = self.roots.resolve(input)?;
+        let joined = rooted.join();
+        let path = rooted.address();
         let canonical = match canonicalize_blocking(&joined) {
             Ok(canonical) => canonical,
             Err(e) if e.kind() == ErrorKind::NotFound => return Err(FsError::NotFound { path }),
@@ -170,9 +181,10 @@ impl WorkspaceGuard {
         canonical: PathBuf,
     ) -> Result<(WorkspacePath, PathBuf), FsError> {
         self.check_readable(&path)?;
-        if let Some(real) = self.relative(&canonical)
-            && real != path
-            && let Some(pattern) = self.rules.matching_pattern(&real)
+        if let Some(rooted) = self.roots.locate(&canonical)
+            && let real = rooted.path()
+            && *real != self.roots.relative_of(&path)?
+            && let Some(pattern) = self.rules.matching_pattern(real)
         {
             return Err(FsError::SensitivePath {
                 path,
@@ -182,20 +194,16 @@ impl WorkspaceGuard {
         Ok((path, canonical))
     }
 
-    /// The workspace-relative form of a canonical path inside the root.
-    fn relative(&self, canonical: &Path) -> Option<WorkspacePath> {
-        let rest = canonical.strip_prefix(self.root.as_path()).ok()?;
-        if rest.as_os_str().is_empty() {
-            return Some(WorkspacePath::root());
-        }
-        WorkspacePath::parse(&rest.to_string_lossy()).ok()
-    }
-
-    /// Fails with [`PathError::OutsideWorkspace`] unless `canonical` is the
-    /// root or below it. [`Path::starts_with`] compares whole components,
-    /// so `/ws-other` is not inside `/ws`.
+    /// Fails with [`PathError::OutsideWorkspace`] unless `canonical` is a
+    /// root or below one (a symlink may lead from one root into another).
+    /// [`Path::starts_with`] compares whole components, so `/ws-other` is
+    /// not inside `/ws`.
     fn ensure_inside(&self, input: &str, canonical: &Path) -> Result<(), FsError> {
-        if canonical.starts_with(self.root.as_path()) {
+        if self
+            .roots
+            .iter()
+            .any(|root| canonical.starts_with(root.as_path()))
+        {
             Ok(())
         } else {
             tracing::warn!(input, resolved = %canonical.display(), "path escapes the workspace");
@@ -205,6 +213,21 @@ impl WorkspaceGuard {
             .into())
         }
     }
+}
+
+/// The canonical root for the directory `path`: symlinks are resolved once,
+/// and it must be a directory.
+pub fn canonical_root(path: &Path) -> Result<WorkspaceRoot, FsError> {
+    let canonical = canonicalize_blocking(path).map_err(|e| io_error(path, &e))?;
+    if !canonical.is_dir() {
+        return Err(FsError::Io(format!(
+            "workspace root is not a directory: {}",
+            path.display()
+        )));
+    }
+    let root = WorkspaceRoot::new(canonical)?;
+    tracing::debug!(root = %root.as_path().display(), "workspace opened");
+    Ok(root)
 }
 
 /// [`std::fs::canonicalize`] without Windows' verbatim `\\?\` prefix when
@@ -329,7 +352,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let canonical = std::fs::canonicalize(dir.path()).unwrap();
         let guard = WorkspaceGuard::open(dir.path().join("./")).unwrap();
-        assert_eq!(guard.root().as_path(), canonical);
+        assert_eq!(guard.roots().first().unwrap().as_path(), canonical);
     }
 
     #[test]
@@ -342,7 +365,7 @@ mod tests {
 
         let guard = WorkspaceGuard::open(&link).unwrap();
         assert_eq!(
-            guard.root().as_path(),
+            guard.roots().first().unwrap().as_path(),
             std::fs::canonicalize(&real).unwrap()
         );
     }
@@ -625,7 +648,13 @@ mod windows_tests {
     #[test]
     fn the_root_has_no_verbatim_prefix() {
         let (_dir, guard) = guard();
-        let root = guard.root().as_path().to_string_lossy().into_owned();
+        let root = guard
+            .roots()
+            .first()
+            .unwrap()
+            .as_path()
+            .to_string_lossy()
+            .into_owned();
         assert!(!root.starts_with(r"\\?\"), "{root}");
     }
 
@@ -634,8 +663,13 @@ mod windows_tests {
         let (_dir, guard) = guard();
         let (path, real) = guard.resolve_readable(r"src\sub\a.rs").await.unwrap();
         assert_eq!(path.as_str(), "src/sub/a.rs");
-        assert!(real.starts_with(guard.root().as_path()));
-        let absolute = guard.root().as_path().join(r"src\sub\a.rs");
+        assert!(real.starts_with(guard.roots().first().unwrap().as_path()));
+        let absolute = guard
+            .roots()
+            .first()
+            .unwrap()
+            .as_path()
+            .join(r"src\sub\a.rs");
         let (path, _) = guard
             .resolve_readable(&absolute.to_string_lossy())
             .await

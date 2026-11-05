@@ -90,7 +90,8 @@ impl DiscoveryDeps {
             web: None,
             shell: None,
             sink: None,
-            workspace_root: ".".to_owned(),
+            // No directory until the session names one: not the process's.
+            workspace_root: String::new(),
             human: "user".to_owned(),
             clock: system_now_ms,
             lock: DiscoveryLock::new(),
