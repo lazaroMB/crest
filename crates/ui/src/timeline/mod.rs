@@ -6,6 +6,7 @@ pub mod numbers;
 mod outline;
 mod render;
 mod selection;
+mod spy;
 mod state;
 mod view;
 

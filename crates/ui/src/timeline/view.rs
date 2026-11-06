@@ -33,6 +33,7 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::scroll::ScrollableElement as _;
+use gpui_component::tooltip::Tooltip;
 use gpui_component::{ActiveTheme as _, IconName, Sizable as _, h_flex, v_flex};
 
 use super::column::{COLUMN_GUTTER, block_width};
@@ -99,6 +100,14 @@ impl TimelineView {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let list = ListState::new(0, ListAlignment::Top, px(OVERDRAW));
         list.set_follow_mode(FollowMode::Tail);
+        // The wheel moves the outline's current question (see `follow_scroll`).
+        let this = cx.weak_entity();
+        list.set_scroll_handler(move |_, _, app| {
+            let this = this.clone();
+            app.defer(move |cx| {
+                this.update(cx, |this, cx| this.follow_scroll(cx)).ok();
+            });
+        });
         Self {
             state: TimelineState::new(),
             list,
@@ -504,18 +513,35 @@ impl TimelineView {
         }
     }
 
-    /// Selects the menu row and scrolls that block to the top of the chat.
+    /// Selects the menu row. A block already on screen stays where it is;
+    /// any other scrolls to the top of the chat.
     fn choose_outline(&mut self, ix: usize, cx: &mut Context<Self>) {
         let before = self.state.selected();
         if self.state.select(ix).is_some() {
             self.remeasure_selection(before, Some(ix));
-            self.list.pause_following_tail();
-            self.list.scroll_to(gpui::ListOffset {
-                item_ix: ix,
-                offset_in_item: px(0.),
-            });
+            if !super::spy::is_on_screen(&self.list, ix) {
+                self.list.pause_following_tail();
+                self.list.scroll_to(gpui::ListOffset {
+                    item_ix: ix,
+                    offset_in_item: px(0.),
+                });
+            }
         }
         cx.notify();
+    }
+
+    /// The chat scrolled by the wheel or the scrollbar: the block at the
+    /// top becomes the selected one, so the outline's current question
+    /// follows the scroll and not only the keys.
+    fn follow_scroll(&mut self, cx: &mut Context<Self>) {
+        let Some(ix) = super::spy::block_at_top(&self.list) else {
+            return;
+        };
+        let before = self.state.selected();
+        if before != Some(ix) && self.state.select(ix).is_some() {
+            self.remeasure_selection(before, Some(ix));
+            cx.notify();
+        }
     }
 
     /// The chat menu: a rail of marks, and the questions when it is open.
@@ -541,6 +567,7 @@ impl TimelineView {
             .py_1()
             .children(marks.into_iter().enumerate().map(|(ix, mark)| {
                 let block = mark.block;
+                let title = SharedString::from(mark.title.to_owned());
                 div()
                     .id(("chat-outline-mark", ix))
                     .debug_selector(move || format!("chat-outline-mark-{ix}"))
@@ -550,6 +577,11 @@ impl TimelineView {
                     .justify_center()
                     .items_center()
                     .cursor_pointer()
+                    .when(!title.is_empty(), |mark| {
+                        mark.tooltip(move |window, cx| {
+                            Tooltip::new(title.clone()).build(window, cx)
+                        })
+                    })
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |this, _: &MouseDownEvent, window, cx| {
@@ -638,7 +670,7 @@ impl TimelineView {
                         .justify_between()
                         .text_xs()
                         .text_color(muted)
-                        .child("Esc to close")
+                        .child("↑↓ questions · Esc closes")
                         .child(
                             div()
                                 .debug_selector(|| "chat-outline-close".to_owned())
@@ -988,6 +1020,10 @@ impl Render for TimelineView {
                 cx,
             )
         });
+        // The scrollbar thumb moves no wheel event: follow it here.
+        if self.list.is_scrollbar_dragging() {
+            self.follow_scroll(cx);
+        }
         let outline = self.outline_layer(cx);
         div()
             .id("timeline-list")
@@ -1160,6 +1196,56 @@ mod tests {
             let held = view.read_with(cx, |v, _| (v.state().selected(), v.outline_open()));
             assert_eq!(held, (Some(selected), open), "after {key}");
         }
+    }
+
+    /// A chat of `n` questions with a reply each, laid out once.
+    fn long_chat(
+        cx: &mut TestAppContext,
+        n: usize,
+    ) -> (Entity<TimelineView>, &mut VisualTestContext) {
+        cx.update(gpui_component::init);
+        let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+        view.update(cx, |view, cx| {
+            let blocks: Vec<_> = (0..n)
+                .flat_map(|n| [text(&format!("> question {n}")), text("reply")])
+                .map(|block| DomainEvent::BlockAdded { block })
+                .collect();
+            view.apply_all(blocks, cx);
+        });
+        for _ in 0..2 {
+            cx.update(|window, _| window.refresh());
+            cx.run_until_parked();
+        }
+        (view, cx)
+    }
+
+    #[gpui::test]
+    fn the_outline_follows_the_scroll(cx: &mut TestAppContext) {
+        let (view, cx) = long_chat(cx, 40);
+        let selected = |cx: &mut VisualTestContext| view.read_with(cx, |v, _| v.state().selected());
+        let at_top = |cx: &mut VisualTestContext| {
+            view.read_with(cx, |v, _| super::super::spy::block_at_top(&v.list))
+        };
+        // The wheel, up and then down: each stop selects the block at the top.
+        for wheel in [900., 900., -300., -90000., -90000., -90000.] {
+            cx.simulate_event(gpui::ScrollWheelEvent {
+                position: gpui::point(px(400.), px(300.)),
+                delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(wheel))),
+                ..Default::default()
+            });
+            cx.update(|window, _| window.refresh());
+            cx.run_until_parked();
+            assert_eq!(selected(cx), at_top(cx), "after a wheel of {wheel}");
+        }
+        assert_eq!(selected(cx), Some(79), "the bottom is the last block");
+        // A block on screen is chosen where it stands; a far one scrolls.
+        view.update(cx, |v, cx| v.choose_outline(78, cx));
+        let top = |cx: &mut VisualTestContext| {
+            view.read_with(cx, |v, _| v.list.logical_scroll_top().item_ix)
+        };
+        assert_ne!(top(cx), 78, "78 is on screen: no scroll");
+        view.update(cx, |v, cx| v.choose_outline(0, cx));
+        assert_eq!(top(cx), 0, "0 is far: it goes to the top");
     }
 
     #[gpui::test]

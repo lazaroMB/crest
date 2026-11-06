@@ -17,6 +17,8 @@ pub struct OutlineItem {
     pub number: usize,
     /// The row text.
     pub label: String,
+    /// The whole question, for the hover on its mark.
+    pub full: String,
     /// The block that is selected.
     pub active: bool,
 }
@@ -34,7 +36,9 @@ pub struct OutlineGroup {
 
 /// One mark on the line beside the chat.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct OutlineMark {
+pub struct OutlineMark<'a> {
+    /// The whole question, shown when the pointer rests on the mark.
+    pub title: &'a str,
     /// Block the mark scrolls to.
     pub block: usize,
     /// The block that is selected.
@@ -70,16 +74,18 @@ impl Outline {
 
     /// One mark per row. A heading with no rows yet still leaves a mark,
     /// aimed at the heading itself.
-    pub fn marks(&self) -> Vec<OutlineMark> {
+    pub fn marks(&self) -> Vec<OutlineMark<'_>> {
         let mut marks = Vec::new();
         for group in &self.groups {
             if group.items.is_empty() {
                 marks.push(OutlineMark {
+                    title: "",
                     block: group.anchor,
                     active: false,
                 });
             } else {
                 marks.extend(group.items.iter().map(|item| OutlineMark {
+                    title: &item.full,
                     block: item.block,
                     active: item.active,
                 }));
@@ -92,10 +98,10 @@ impl Outline {
 /// The menu of `entries`: only the user's questions. `selected` is the
 /// block index that paints its question blue, including the reply after it.
 pub fn chat_outline(entries: &[TimelineEntry], selected: Option<usize>) -> Outline {
-    let questions: Vec<(usize, String)> = entries
+    let questions: Vec<(usize, String, String)> = entries
         .iter()
         .enumerate()
-        .filter_map(|(ix, entry)| prompt_title(entry).map(|title| (ix, title)))
+        .filter_map(|(ix, entry)| prompt_title(entry).map(|(short, full)| (ix, short, full)))
         .collect();
     if questions.is_empty() {
         return Outline { groups: Vec::new() };
@@ -103,12 +109,13 @@ pub fn chat_outline(entries: &[TimelineEntry], selected: Option<usize>) -> Outli
     let items = questions
         .iter()
         .enumerate()
-        .map(|(n, (ix, title))| {
-            let end = questions.get(n + 1).map(|(next, _)| *next);
+        .map(|(n, (ix, title, full))| {
+            let end = questions.get(n + 1).map(|(next, ..)| *next);
             OutlineItem {
                 block: *ix,
                 number: n + 1,
                 label: title.clone(),
+                full: full.clone(),
                 active: selected.is_some_and(|sel| *ix <= sel && end.is_none_or(|end| sel < end)),
             }
         })
@@ -124,7 +131,7 @@ pub fn chat_outline(entries: &[TimelineEntry], selected: Option<usize>) -> Outli
 }
 
 /// The prompt's text, when `entry` is a user prompt.
-fn prompt_title(entry: &TimelineEntry) -> Option<String> {
+fn prompt_title(entry: &TimelineEntry) -> Option<(String, String)> {
     let BlockKind::Text { markdown } = &entry.block.kind else {
         return None;
     };
@@ -139,9 +146,9 @@ fn prompt_title(entry: &TimelineEntry) -> Option<String> {
         .join(" ");
     let title = shorten(&text);
     Some(if title.is_empty() {
-        "Chat".into()
+        ("Chat".into(), "Chat".into())
     } else {
-        title
+        (title, text)
     })
 }
 
@@ -203,10 +210,12 @@ mod tests {
             outline.marks(),
             vec![
                 OutlineMark {
+                    title: "hola",
                     block: 0,
                     active: true,
                 },
                 OutlineMark {
+                    title: "podrias abrir un proyecto?",
                     block: 3,
                     active: false,
                 },
@@ -223,6 +232,10 @@ mod tests {
         let label = &listed.groups[0].items[0].label;
         assert_eq!(label.chars().count(), LABEL_LIMIT + 1);
         assert!(label.ends_with('…'));
+        assert_eq!(
+            listed.groups[0].items[0].full, long,
+            "the hover shows it whole"
+        );
     }
 
     #[test]
