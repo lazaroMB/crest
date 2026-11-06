@@ -116,7 +116,7 @@ where
     let failure = std::rc::Rc::new(std::cell::RefCell::new(None));
     let failure_in_app = failure.clone();
 
-    gpui_platform::application().run(move |cx: &mut App| {
+    crate::assets::install(gpui_platform::application()).run(move |cx: &mut App| {
         gpui_component::init(cx);
         apply_theme(&opts, cx);
         bind_app_keys(cx);

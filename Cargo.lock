@@ -10392,6 +10392,7 @@ dependencies = [
  "futures",
  "gpui-base",
  "gpui-component",
+ "gpui-kit-assets",
  "gpui-pre",
  "gpui-pre-platform",
  "ignore",

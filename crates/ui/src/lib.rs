@@ -3,6 +3,7 @@
 pub mod activity;
 pub mod app;
 pub mod approval;
+pub mod assets;
 pub mod blocks;
 pub mod brand;
 pub mod chats;
