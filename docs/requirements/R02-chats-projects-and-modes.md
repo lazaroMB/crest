@@ -93,7 +93,7 @@ usecase-beta
 
 ## Functional requirements
 
-- **FR-1** (UC-01): A new chat can start with no project and no directory, and the sidebar lists it under a "Chats" section, apart from the projects.
+- **FR-1** (UC-01): A new chat can start with no project and no directory, and the sidebar lists it under a "Wild Chats" section, apart from the projects.
 - **FR-2** (UC-01): A standalone chat reports that it has no directory, so a tool that needs files asks the person for a directory instead of failing or guessing.
 - **FR-3** (UC-02): A standalone chat's menu offers "Add to project", and a chat in a project offers "Move to project" and "Remove from project". Moving keeps the chat's id and its whole history.
 - **FR-4** (UC-02, UC-03): The project list in that menu ends with "New project", which asks for a name and a first directory and then moves the chat into the new project.

@@ -98,7 +98,7 @@ person for a directory (S01 criterion 4) instead of resolving against the proces
 `crates/ui/src/chats.rs` replaces its per-directory catalog with the mock's `sidebarModel`:
 
 - Projects come first, pinned and then by newest chat, each with its chats newest first and a directory count.
-- The standalone chats follow under "Chats".
+- The standalone chats follow under "Wild Chats".
 - A search query filters chats by title.
 
 A `SidebarWidth { Full, Strip, Hidden }` replaces the boolean behind `panel.chats`. The window opens
@@ -156,7 +156,7 @@ The same migration adds `sessions.archived INTEGER NOT NULL DEFAULT 0` and
 `projects.archived INTEGER NOT NULL DEFAULT 0`. The store port gains `set_session_archived(id, bool)`
 and `set_project_archived(id, bool)`; neither touches `timeline_blocks`. The sidebar model leaves out
 archived projects, their chats, and archived chats, and an `archived()` query feeds a folded
-"Archived (N)" section after "Chats" with one restore button per row (`sidebarModel` and
+"Archived (N)" section after "Wild Chats" with one restore button per row (`sidebarModel` and
 `archivedModel` in `mock/src/organization.js`). `delete` keeps its meaning and its cascade.
 
 ### 7. Branch a chat (R02 FR-20, FR-21)

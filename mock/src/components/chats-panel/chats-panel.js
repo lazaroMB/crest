@@ -320,9 +320,9 @@ function Full(state) {
         [newProject && NewProjectForm(null), projects.length ? projects.map((p) => ProjectGroup(p, state)) : h("div", { class: "chats__empty" }, "No projects")],
       ),
       Section(
-        "Chats",
+        "Wild Chats",
         null,
-        standalone.length ? standalone.map((c) => ChatRow(c, state, false)) : h("div", { class: "chats__empty" }, state.ui.search ? "No match" : "Chats without a project show here"),
+        standalone.length ? standalone.map((c) => ChatRow(c, state, false)) : h("div", { class: "chats__empty" }, state.ui.search ? "No match" : "Wild chats, the ones without a project, show here"),
       ),
       ArchivedSection(state),
     ),

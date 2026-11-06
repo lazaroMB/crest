@@ -71,10 +71,10 @@ impl ChatsPanel {
                 root: "",
             };
             let item = self.chat_row(place, chat, focused, cx);
-            out.push(under_heading(row == 0, "CHATS", item, cx));
+            out.push(under_heading(row == 0, "WILD CHATS", item, cx));
         }
         if self.visible.chats.is_empty() && !self.searching() {
-            out.push(with_heading("CHATS", loose_hint(cx), cx));
+            out.push(with_heading("WILD CHATS", loose_hint(cx), cx));
         }
         out
     }
@@ -402,6 +402,6 @@ fn loose_hint(cx: &App) -> AnyElement {
         .py_1()
         .text_sm()
         .text_color(cx.theme().muted_foreground)
-        .child("Chats without a project show here")
+        .child("Wild chats, the ones without a project, show here")
         .into_any_element()
 }
