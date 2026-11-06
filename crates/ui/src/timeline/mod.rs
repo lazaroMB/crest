@@ -1,6 +1,7 @@
 //! The session timeline: a pure model ([`TimelineState`]) fed by domain
 //! events and its virtualized GPUI view ([`TimelineView`]).
 
+mod banner;
 mod column;
 pub mod numbers;
 mod outline;

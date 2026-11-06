@@ -747,6 +747,11 @@ const DEFAULTS: &[(&str, &str, &str)] = &[
         "Delete the open chat (asks first)",
     ),
     (
+        "<leader>B",
+        "chat.branch",
+        "Branch the open chat: a new chat that continues from here",
+    ),
+    (
         "<leader><C-c>",
         "turn.interrupt",
         "Interrupt the running turn",
@@ -1303,6 +1308,7 @@ mod tests {
         assert_eq!(get("<C-g>b"), b("chat.prev"));
         assert_eq!(get("<C-g>,"), b("chat.rename"));
         assert_eq!(get("<C-g>x"), b("chat.delete"));
+        assert_eq!(get("<C-g>B"), b("chat.branch"));
         assert_eq!(get("<C-g>s"), b("panel.chats"));
         assert_eq!(get("<C-g>O"), b("timeline.outline"));
         assert_eq!(get("<C-g><CR>"), b("block.focus_widget"));

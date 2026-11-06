@@ -40,11 +40,16 @@ use gpui::{
 use gpui_component::ActiveTheme as _;
 
 use crate::app::{RootView, set_theme, window_title};
-use crate::chats::{Catalog, ChatsCommand, ChatsEvent, ChatsPanel, SessionOpen, SidebarWidth};
+use crate::chats::{
+    Catalog, ChatsCommand, ChatsEvent, ChatsPanel, Organize, Organized, PickFor, SessionOpen,
+    SidebarWidth,
+};
 use crate::project_picker::{ProjectPickerEvent, ProjectPickerView};
 use crate::session::{Session, SessionEvent, SessionParts};
 
 mod chat_ops;
+mod organize;
+mod picking;
 
 actions!(crest, [SwitchProject]);
 
@@ -86,6 +91,13 @@ pub trait ProjectOpener: Send + Sync {
         let _ = id;
         futures::future::ready(Err("this window cannot delete chats".into())).boxed()
     }
+
+    /// Runs a row of a chat's or project's menu in the store. The default
+    /// fails.
+    fn organize(&self, change: Organize) -> BoxFuture<'static, Result<Organized, String>> {
+        let _ = change;
+        futures::future::ready(Err("this window cannot change chats".into())).boxed()
+    }
 }
 
 /// A session with its root view, shown or parked.
@@ -117,6 +129,8 @@ pub struct Workbench {
     parked: HashMap<String, Live>,
     /// The session `/project` left, until a project is chosen.
     back: Option<Live>,
+    /// What the picker is open for, when a menu row asked for it.
+    pending_pick: Option<PickFor>,
     /// The sidebar, which holds its own width (`panel.chats` cycles it).
     chats: Entity<ChatsPanel>,
     focus_handle: FocusHandle,
@@ -143,6 +157,7 @@ impl Workbench {
             content: Content::Opening(dir),
             parked: HashMap::new(),
             back: None,
+            pending_pick: None,
             chats,
             focus_handle: cx.focus_handle(),
             _chats: subscription,
@@ -323,6 +338,7 @@ impl Workbench {
                     }
                 });
             }
+            ChatsCommand::Branch => self.branch_open_chat(window, cx),
             ChatsCommand::TogglePanel => self.chats.update(cx, ChatsPanel::cycle),
             ChatsCommand::Focus => {
                 if self.sidebar(cx) != SidebarWidth::Strip {
@@ -363,7 +379,7 @@ impl Workbench {
             &picker,
             window,
             |this, _, event: &ProjectPickerEvent, window, cx| match event {
-                ProjectPickerEvent::Chosen(dir) => this.open(dir.clone(), window, cx),
+                ProjectPickerEvent::Chosen(dir) => this.chosen(dir.clone(), window, cx),
                 ProjectPickerEvent::Back => this.go_back(window, cx),
             },
         )
@@ -464,6 +480,7 @@ impl Workbench {
         self.chats
             .update(cx, |chats, cx| chats.set_current(root, project, id, cx));
         self.content = Content::Session(live);
+        self.sync_banner(cx);
         cx.notify();
     }
 
@@ -567,6 +584,11 @@ impl Workbench {
             }
             ChatsEvent::Rename { id, title } => self.rename_chat(id, title, window, cx),
             ChatsEvent::Delete { root, id } => self.delete_chat(root, id, window, cx),
+            ChatsEvent::Chat { id, op } => self.organize(Organize::Chat { id, op }, window, cx),
+            ChatsEvent::Project { id, op } => {
+                self.organize(Organize::Project { id, op }, window, cx);
+            }
+            ChatsEvent::Pick(pick) => self.pick_directory(pick, window, cx),
             ChatsEvent::Dismissed => {
                 if let Some(session) = self.session().cloned() {
                     session.update(cx, |session, cx| session.focus_input(window, cx));
@@ -636,9 +658,10 @@ impl Workbench {
     fn reload_chats(&mut self, cx: &mut Context<Self>) {
         let chats = self.chats.clone();
         let catalog = self.opener.catalog();
-        cx.spawn(async move |_, cx| {
+        cx.spawn(async move |this, cx| {
             let projects = catalog.await;
             chats.update(cx, |panel, cx| panel.set_catalog(projects, cx));
+            this.update(cx, |this, cx| this.sync_banner(cx)).ok();
         })
         .detach();
     }
@@ -668,24 +691,12 @@ impl Workbench {
             return;
         }
         let at = live.dir.parent().map(Path::to_path_buf);
-        let Content::Session(live) =
-            std::mem::replace(&mut self.content, Content::Opening(PathBuf::new()))
-        else {
-            return;
-        };
-        // Kept, out of sight and without the keyboard, until a project is
-        // chosen: `Esc` or Back returns to it.
-        live.session
-            .update(cx, |session, cx| session.set_shown(false, window, cx));
-        self.back = Some(live);
-        self.show_picker(at.as_deref(), None, window, cx);
-        if let Content::Picker(picker) = &self.content {
-            picker.update(cx, |picker, cx| picker.set_can_go_back(true, cx));
-        }
+        self.park_for_picker(at.as_deref(), window, cx);
     }
 
     /// Back from the picker `/project` opened to the session it left.
     fn go_back(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.pending_pick = None;
         if let Some(live) = self.back.take() {
             self.show_live(live, window, cx);
         }
@@ -727,6 +738,9 @@ impl Render for Workbench {
             .child(body)
     }
 }
+
+#[cfg(test)]
+mod organize_tests;
 
 #[cfg(test)]
 mod place_tests;
@@ -844,21 +858,55 @@ mod tests {
 
         fn catalog(&self) -> BoxFuture<'static, Catalog> {
             let titles = self.titles.lock().unwrap_or_else(PoisonError::into_inner);
-            let chat = |id: &str| crate::chats::ChatEntry {
-                id: id.to_owned(),
-                title: titles.get(id).cloned().unwrap_or_else(|| id.to_owned()),
+            let chat = |id: &str| {
+                crate::chats::ChatEntry::new(
+                    id,
+                    titles.get(id).cloned().unwrap_or_else(|| id.to_owned()),
+                )
             };
             futures::future::ready(Catalog {
                 projects: vec![ProjectChats {
                     id: "p1".into(),
                     name: "proj".into(),
                     root: "/home/u/proj".into(),
-                    dirs: 1,
-                    chats: vec![chat("latest"), chat("second")],
+                    roots: vec!["/home/u/proj".into()],
+                    pinned: false,
+                    chats: vec![
+                        chat("latest"),
+                        crate::chats::ChatEntry {
+                            branch: Some(crate::chats::Branch {
+                                from: "latest".into(),
+                                after: 2,
+                            }),
+                            ..chat("second")
+                        },
+                    ],
                 }],
                 chats: Vec::new(),
+                archived: crate::chats::Archive::default(),
             })
             .boxed()
+        }
+
+        /// Refuses the chat `boom`; a branch opens `branch-1`; deleting a
+        /// project frees two chats.
+        fn organize(&self, change: Organize) -> BoxFuture<'static, Result<Organized, String>> {
+            let result = match &change {
+                Organize::Chat { id, .. } if id == "boom" => Err("the store says no".to_owned()),
+                Organize::Chat {
+                    op: crate::chats::ChatOp::Branch,
+                    ..
+                } => Ok(Organized::Branch {
+                    id: "branch-1".into(),
+                    root: "/home/u/proj".into(),
+                }),
+                Organize::Project {
+                    op: crate::chats::ProjectOp::Delete,
+                    ..
+                } => Ok(Organized::Freed(2)),
+                _ => Ok(Organized::Done),
+            };
+            futures::future::ready(result).boxed()
         }
 
         fn rename_chat(&self, id: String, title: String) -> BoxFuture<'static, Result<(), String>> {
@@ -915,7 +963,7 @@ mod tests {
         session.read_with(cx, |s, cx| s.input().read(cx).text(cx))
     }
 
-    fn draw(view: &Entity<Workbench>, cx: &mut VisualTestContext) {
+    pub(super) fn draw(view: &Entity<Workbench>, cx: &mut VisualTestContext) {
         let view = view.clone();
         cx.draw(
             gpui::point(gpui::px(0.), gpui::px(0.)),

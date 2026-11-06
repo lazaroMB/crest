@@ -11,10 +11,7 @@ use super::model::{CurrentChat, listed_with};
 use super::*;
 
 fn chat(id: &str) -> ChatEntry {
-    ChatEntry {
-        id: id.into(),
-        title: id.into(),
-    }
+    ChatEntry::new(id, id)
 }
 
 fn project(id: &str, dirs: usize, chats: &[&str]) -> ProjectChats {
@@ -22,7 +19,10 @@ fn project(id: &str, dirs: usize, chats: &[&str]) -> ProjectChats {
         id: id.into(),
         name: id.into(),
         root: format!("/w/{id}"),
-        dirs,
+        roots: (0..dirs)
+            .map(|n| format!("/w/{id}{}", "+".repeat(n)))
+            .collect(),
+        pinned: false,
         chats: chats.iter().copied().map(chat).collect(),
     }
 }
@@ -42,6 +42,7 @@ fn panel<'a>(
     let catalog = Catalog {
         projects: vec![project("api", 3, &["a1", "a2"]), project("web", 1, &[])],
         chats: loose.iter().copied().map(chat).collect(),
+        archived: Archive::default(),
     };
     let (view, cx) = cx.add_window_view(move |_, cx| {
         let mut panel = ChatsPanel::new("/w/api".into(), Some("a1".into()), cx);
@@ -242,6 +243,7 @@ fn the_open_project_and_chat_stay_on_the_list() {
     let one = || Catalog {
         projects: vec![project("a", 1, &["x"])],
         chats: vec![chat("loose")],
+        archived: Archive::default(),
     };
     // (case, whether the catalog has `a` and a chat in none, the open chat,
     // what the list shows)

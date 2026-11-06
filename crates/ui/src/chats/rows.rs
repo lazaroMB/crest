@@ -1,34 +1,40 @@
-//! The rows of the full list: project headers, chats, the section headings
-//! and the menu of a chat.
+//! The rows of the full list: project headers, chats and the section
+//! headings. Menus are drawn by [`super::menu_view`], the Archived section
+//! by [`super::archived`].
 
 use gpui::{
-    AnyElement, App, Context, InteractiveElement as _, IntoElement, MouseButton, MouseDownEvent,
-    ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
-    px,
+    AnyElement, App, Context, Div, Entity, InteractiveElement as _, IntoElement, MouseButton,
+    MouseDownEvent, ParentElement as _, SharedString, Stateful, StatefulInteractiveElement as _,
+    Styled as _, Window, div, prelude::FluentBuilder as _, px,
 };
-use gpui_component::input::Input;
-use gpui_component::{ActiveTheme as _, h_flex, v_flex};
+use gpui_component::input::{Input, InputState};
+use gpui_component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 
-use super::{ChatActionKind, ChatEntry, ChatRow, ChatsEvent, ChatsPanel, ProjectChats, label};
+use super::glyph::{Glyph, icon_button};
+
+use super::{ChatEntry, ChatRow, ChatsEvent, ChatsPanel, ProjectChats};
 
 impl ChatsPanel {
     /// One element per row of [`Self::rows`]: a project header (with its
-    /// "No chats yet" line) or a chat (with its open menu), so the scroll
-    /// can keep the selected row in view.
+    /// "No chats yet" line), a chat or an Archived row, so the scroll can
+    /// keep the selected row in view.
     pub(super) fn row_elements(&self, focused: bool, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let archived = self.archived_elements(focused, cx);
         if self.visible.projects.is_empty() && self.visible.chats.is_empty() {
             let text = if self.searching() {
                 "No match"
             } else {
                 "No chats yet"
             };
-            return vec![no_chats(text, px(8.), cx)];
+            let mut out = vec![no_chats(text, px(8.), cx)];
+            out.extend(archived);
+            return out;
         }
         let mut out = self.project_elements(focused, cx);
         out.extend(self.loose_elements(focused, cx));
+        out.extend(archived);
         out
     }
-
     /// The projects: each header, and under an unfolded one its chats.
     fn project_elements(&self, focused: bool, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let mut out = Vec::new();
@@ -80,71 +86,54 @@ impl ChatsPanel {
         focused: bool,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let theme = cx.theme();
-        let (muted, active, ring) = (theme.muted_foreground, theme.list_active, theme.ring);
+        let (muted, ring) = (cx.theme().muted_foreground, cx.theme().ring);
         let expanded = self.is_open(&project.id);
-        let marker = if expanded { "▾" } else { "▸" };
-        let id = project.id.clone();
+        let (id, menu_id) = (project.id.clone(), project.id.clone());
         let keyed = focused && self.selected == Some(ChatRow::Project(project.id.clone()));
         let new_chat = ChatsEvent::NewIn {
             project: project.id.clone(),
             root: project.root.clone(),
         };
-        let mut header = h_flex()
-            .id(SharedString::from(format!("chats-project-{index}")))
-            .debug_selector(move || format!("chats-project-{index}"))
-            .w_full()
-            .gap_1()
+        let group = SharedString::from(format!("project-row-{index}"));
+        let name = self.row_title(true, &project.id, &project.name, cx);
+        let shown = keyed || self.menu_is_on(true, &project.id);
+        let more = format!("chats-project-more-{index}");
+        let mut header = row_frame(format!("chats-project-{index}"), group.clone(), cx)
             .px_2()
             .py_1()
-            .border_1()
-            .border_color(gpui::transparent_black())
-            .cursor_pointer()
-            .hover(move |style| style.bg(active).rounded_sm())
-            .on_click(cx.listener(move |this, _, _, cx| this.toggle(&id, cx)))
-            .child(div().w(px(12.)).text_color(muted).child(marker))
-            .child(label(&project.name))
-            .children((project.dirs > 1).then(|| {
-                div()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(format!("{} dirs", project.dirs))
+            .on_mouse_down(MouseButton::Right, on_right_click((true, menu_id), cx))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.clear_action(cx);
+                this.toggle(&id, cx);
             }))
-            .child(Self::new_in_project(index, new_chat, cx));
+            .child(
+                div()
+                    .w(px(12.))
+                    .text_color(muted)
+                    .child(if expanded { "▾" } else { "▸" }),
+            )
+            .child(name)
+            .children(project.pinned.then(|| pin_mark(muted)))
+            .children((project.dirs() > 1).then(|| dirs_mark(project.dirs(), muted)))
+            .child(new_in_project(index, new_chat, cx))
+            .child(more_button(
+                More {
+                    selector: more,
+                    group,
+                    target: (true, project.id.clone()),
+                    shown,
+                },
+                cx,
+            ));
         if keyed {
             header = header.border_color(ring).rounded_sm();
         }
         let mut block = v_flex().child(header);
+        block = block.children(self.popup(true, &project.id, &format!("p{index}"), cx));
         if expanded && project.chats.is_empty() {
             block = block.child(no_chats("No chats yet", px(22.), cx));
         }
         block.into_any_element()
-    }
-
-    /// What a turn running out of sight shows on the row of the chat `id`:
-    /// waiting on the user, or busy.
-    fn activity_badge(&self, id: &str) -> Option<&'static str> {
-        self.activity
-            .get(id)
-            .map(|waiting| if *waiting { "⏳" } else { "●" })
-    }
-
-    /// The `+` of a project row: a new chat in that project.
-    fn new_in_project(index: usize, event: ChatsEvent, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let (muted, active) = (theme.muted_foreground, theme.list_active);
-        div()
-            .id(SharedString::from(format!("chats-project-new-{index}")))
-            .debug_selector(move || format!("chats-project-new-{index}"))
-            .px_1()
-            .text_color(muted)
-            .cursor_pointer()
-            .hover(move |style| style.bg(active).rounded_sm())
-            .on_click(cx.listener(move |_, _, _, cx| {
-                cx.stop_propagation();
-                cx.emit(event.clone());
-            }))
-            .child("+")
     }
 
     fn chat_row(
@@ -155,62 +144,49 @@ impl ChatsPanel {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let Place { index, row, .. } = place;
-        let theme = cx.theme();
-        let (muted, active, ring) = (theme.muted_foreground, theme.list_active, theme.ring);
+        let (muted, active, ring) = (
+            cx.theme().muted_foreground,
+            cx.theme().list_active,
+            cx.theme().ring,
+        );
         let selected = self.current_id.as_deref() == Some(chat.id.as_str());
-        let keyed = focused
-            && self.selected
-                == Some(ChatRow::Chat {
-                    project: place.project.map(str::to_owned),
-                    id: chat.id.clone(),
-                });
-        let badge = self.activity_badge(&chat.id);
-        let (root, id, title) = (place.root.to_owned(), chat.id.clone(), chat.title.clone());
-        let (menu_root, menu_id, menu_title) = (root.clone(), id.clone(), title.clone());
-        let menu_for_chat = self.action.as_ref().is_some_and(|action| action.id == id);
-        let selector = format!("chats-session-{index}-{row}");
-        let mut item = h_flex()
-            .id(SharedString::from(selector.clone()))
-            .debug_selector(move || selector.clone())
-            .w_full()
+        let here = ChatRow::Chat {
+            project: place.project.map(str::to_owned),
+            id: chat.id.clone(),
+        };
+        let keyed = focused && self.selected == Some(here);
+        let badge = self
+            .activity
+            .get(&chat.id)
+            .map(|waiting| if *waiting { "⏳" } else { "●" });
+        let (root, id, menu_id) = (place.root.to_owned(), chat.id.clone(), chat.id.clone());
+        let group = SharedString::from(format!("chat-row-{index}-{row}"));
+        let title = self.row_title(false, &chat.id, &chat.title, cx);
+        let shown = selected || keyed || self.menu_is_on(false, &chat.id);
+        let more = format!("chats-more-{index}-{row}");
+        let mut item = row_frame(format!("chats-session-{index}-{row}"), group.clone(), cx)
             .pl(px(22.))
             .pr_2()
             .py_1()
-            .border_1()
-            .border_color(gpui::transparent_black())
-            .cursor_pointer()
-            .hover(move |style| style.bg(active).rounded_sm())
-            .on_mouse_down(
-                MouseButton::Right,
-                cx.listener(move |this, _: &MouseDownEvent, window, cx| {
-                    cx.stop_propagation();
-                    this.open_menu(
-                        menu_id.clone(),
-                        menu_root.clone(),
-                        menu_title.clone(),
-                        window,
-                        cx,
-                    );
-                }),
-            )
+            .on_mouse_down(MouseButton::Right, on_right_click((false, menu_id), cx))
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.clear_action(cx);
-                if this.current_id.as_deref() == Some(id.as_str()) {
-                    return;
+                if this.current_id.as_deref() != Some(id.as_str()) {
+                    let (root, id) = (root.clone(), id.clone());
+                    cx.emit(ChatsEvent::Open { root, id });
                 }
-                cx.emit(ChatsEvent::Open {
-                    root: root.clone(),
-                    id: id.clone(),
-                });
             }))
-            .child(label(&chat.title))
-            .children(badge.map(|badge| {
-                div()
-                    .debug_selector(|| "chats-activity".to_owned())
-                    .text_xs()
-                    .text_color(muted)
-                    .child(badge)
-            }));
+            .child(title)
+            .children(chat_marks(chat, badge, muted))
+            .child(more_button(
+                More {
+                    selector: more,
+                    group,
+                    target: (false, chat.id.clone()),
+                    shown,
+                },
+                cx,
+            ));
         if selected {
             item = item.bg(active).rounded_sm();
         }
@@ -221,154 +197,156 @@ impl ChatsPanel {
                 .rounded_sm()
                 .debug_selector(move || selector.clone());
         }
-        let mut block = v_flex().child(item);
-        if menu_for_chat {
-            block = block.child(self.menu(index, row, cx));
-        }
-        block.into_any_element()
-    }
-
-    fn menu(&self, index: usize, row: usize, cx: &mut Context<Self>) -> AnyElement {
-        let Some(action) = &self.action else {
-            return div().into_any_element();
-        };
-        let theme = cx.theme();
-        let (popover, danger, border, muted, active) = (
-            theme.popover,
-            theme.danger,
-            theme.border,
-            theme.muted_foreground,
-            theme.list_active,
-        );
-        let mut menu = v_flex()
-            .id("chats-menu")
-            .debug_selector(|| "chats-menu".to_owned())
-            // A click elsewhere closes it (a right click on another chat
-            // opens that one's).
-            .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                if event.button == MouseButton::Left {
-                    this.click_outside(cx);
-                }
-            }))
-            // A click inside keeps the focus where it is (the rename
-            // field), instead of the list taking it and the field
-            // losing it.
-            .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
-            .mx_2()
-            .mb_1()
-            .py_1()
-            .border_1()
-            .border_color(border)
-            .rounded_md()
-            .bg(popover)
-            .text_sm();
-        match action.kind {
-            ChatActionKind::Menu => {
-                menu = menu
-                    .child(menu_row(
-                        format!("chats-rename-{index}-{row}"),
-                        "Rename",
-                        false,
-                        active,
-                        danger,
-                        cx.listener(|this, _, window, cx| this.begin_rename(window, cx)),
-                    ))
-                    .child(menu_row(
-                        format!("chats-delete-{index}-{row}"),
-                        "Delete",
-                        true,
-                        active,
-                        danger,
-                        cx.listener(|this, _, _, cx| this.ask_delete(cx)),
-                    ))
-                    .child(menu_row(
-                        format!("chats-cancel-{index}-{row}"),
-                        "Cancel",
-                        false,
-                        active,
-                        danger,
-                        cx.listener(|this, _, _, cx| this.cancel_action(cx)),
-                    ));
-            }
-            ChatActionKind::Rename => {
-                if let Some(input) = &self.rename_input {
-                    menu = menu
-                        .child(div().px_2().py_1().child(Input::new(input)))
-                        .child(
-                            div()
-                                .px_2()
-                                .text_xs()
-                                .text_color(muted)
-                                .child("Enter saves · Esc cancels"),
-                        )
-                        .child(menu_row(
-                            format!("chats-cancel-rename-{index}-{row}"),
-                            "Cancel",
-                            false,
-                            active,
-                            danger,
-                            cx.listener(|this, _, _, cx| this.cancel_action(cx)),
-                        ));
-                }
-            }
-            ChatActionKind::ConfirmDelete => {
-                menu = menu
-                    .child(
-                        div()
-                            .px_2()
-                            .py_1()
-                            .text_color(danger)
-                            .child("Delete this chat?"),
-                    )
-                    .child(menu_row(
-                        format!("chats-confirm-delete-{index}-{row}"),
-                        "Delete",
-                        true,
-                        active,
-                        danger,
-                        cx.listener(|this, _, _, cx| this.commit_delete(cx)),
-                    ))
-                    .child(menu_row(
-                        format!("chats-cancel-delete-{index}-{row}"),
-                        "Cancel",
-                        false,
-                        active,
-                        danger,
-                        cx.listener(|this, _, _, cx| this.cancel_action(cx)),
-                    ));
-            }
-        }
-        menu.into_any_element()
+        v_flex()
+            .child(item)
+            .children(self.popup(false, &chat.id, &format!("{index}-{row}"), cx))
+            .into_any_element()
     }
 }
 
-fn menu_row(
-    id: String,
-    text: &'static str,
-    danger: bool,
-    active: gpui::Hsla,
-    danger_color: gpui::Hsla,
-    click: impl Fn(&gpui::ClickEvent, &mut Window, &mut gpui::App) + 'static,
-) -> AnyElement {
-    let selector = id.clone();
-    let mut row = h_flex()
-        .id(SharedString::from(id))
+/// The frame every row shares: its selector and group, the transparent edge
+/// that a key paints, and the fill under the pointer.
+fn row_frame(selector: String, group: SharedString, cx: &App) -> Stateful<Div> {
+    let active = cx.theme().list_active;
+    h_flex()
+        .id(SharedString::from(selector.clone()))
         .debug_selector(move || selector.clone())
+        .group(group)
         .w_full()
-        .px_2()
-        .py_1()
+        .gap_1()
+        .border_1()
+        .border_color(gpui::transparent_black())
         .cursor_pointer()
         .hover(move |style| style.bg(active).rounded_sm())
-        .on_click(click)
-        .child(text);
-    if danger {
-        row = row.text_color(danger_color);
+}
+
+/// What a chat's row shows after its title: a pin, the branch icon and the
+/// badge of a turn running out of sight.
+fn chat_marks(chat: &ChatEntry, badge: Option<&'static str>, muted: gpui::Hsla) -> Vec<AnyElement> {
+    let mut marks = Vec::new();
+    if chat.pinned {
+        marks.push(pin_mark(muted));
     }
-    row.into_any_element()
+    if let Some(branch) = &chat.branch {
+        marks.push(branch_mark(branch.banner(), muted));
+    }
+    if let Some(badge) = badge {
+        marks.push(
+            div()
+                .debug_selector(|| "chats-activity".to_owned())
+                .text_xs()
+                .text_color(muted)
+                .child(badge)
+                .into_any_element(),
+        );
+    }
+    marks
+}
+
+/// The `N dirs` of a project with more than one directory.
+fn dirs_mark(dirs: usize, muted: gpui::Hsla) -> AnyElement {
+    div()
+        .text_xs()
+        .text_color(muted)
+        .child(format!("{dirs} dirs"))
+        .into_any_element()
+}
+
+/// The `+` of a project row: a new chat in that project.
+fn new_in_project(index: usize, event: ChatsEvent, cx: &mut Context<ChatsPanel>) -> AnyElement {
+    let click = cx.listener(move |_, _, _, cx| {
+        cx.stop_propagation();
+        cx.emit(event.clone());
+    });
+    icon_button(format!("chats-project-new-{index}"), Glyph::Plus, click, cx).into_any_element()
+}
+
+/// The `...` of a row: its menu.
+struct More {
+    selector: String,
+    /// The row's group: the button shows while the pointer is on the row.
+    group: SharedString,
+    /// Whether the row is a project, and its id.
+    target: (bool, String),
+    /// Shows without the pointer (the row is open or keyed).
+    shown: bool,
+}
+
+fn more_button(more: More, cx: &mut Context<ChatsPanel>) -> AnyElement {
+    let More {
+        selector,
+        group,
+        target: (project, target),
+        shown,
+    } = more;
+    let click = cx.listener(move |this, _, window, cx| {
+        cx.stop_propagation();
+        this.open_menu_of(project, &target, window, cx);
+    });
+    icon_button(selector, Glyph::More, click, cx)
+        .when(!shown, |button| {
+            button
+                .invisible()
+                .group_hover(group, |style| style.visible())
+        })
+        .into_any_element()
+}
+
+/// A right click on a row opens its menu (`target` is whether the row is a
+/// project, and its id).
+fn on_right_click(
+    target: (bool, String),
+    cx: &mut Context<ChatsPanel>,
+) -> impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static {
+    cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+        cx.stop_propagation();
+        this.open_menu_of(target.0, &target.1, window, cx);
+    })
+}
+
+/// The name field in place of a row's label. A click on it does not fold or
+/// open the row, and a click away saves a changed name.
+pub(super) fn rename_field(input: &Entity<InputState>, cx: &mut Context<ChatsPanel>) -> AnyElement {
+    div()
+        .flex_1()
+        .min_w_0()
+        .on_mouse_down(MouseButton::Left, |_, window, cx| {
+            window.prevent_default();
+            cx.stop_propagation();
+        })
+        .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, _, cx| {
+            if event.button == MouseButton::Left {
+                this.click_outside(cx);
+            }
+        }))
+        .child(Input::new(input).small())
+        .into_any_element()
+}
+
+/// The small pin of a pinned row.
+fn pin_mark(muted: gpui::Hsla) -> AnyElement {
+    Glyph::Pin
+        .icon()
+        .xsmall()
+        .text_color(muted)
+        .into_any_element()
+}
+
+/// The branch icon of a branched chat; hovering it says where from.
+fn branch_mark(banner: String, muted: gpui::Hsla) -> AnyElement {
+    let title = SharedString::from(banner);
+    div()
+        .id("chats-branch")
+        .debug_selector(|| "chats-branch".to_owned())
+        .tooltip(move |window, cx| {
+            gpui_component::tooltip::Tooltip::new(title.clone()).build(window, cx)
+        })
+        .child(Glyph::Branch.icon().xsmall().text_color(muted))
+        .into_any_element()
 }
 
 /// The muted "No chats yet" line, indented by `indent`.
-fn no_chats(text: &'static str, indent: gpui::Pixels, cx: &App) -> AnyElement {
+pub(super) fn no_chats(text: &'static str, indent: gpui::Pixels, cx: &App) -> AnyElement {
     div()
         .debug_selector(|| "chats-empty".to_owned())
         .pl(indent)

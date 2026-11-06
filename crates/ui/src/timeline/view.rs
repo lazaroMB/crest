@@ -91,6 +91,8 @@ pub struct TimelineView {
     deferred: Option<DeferredKey>,
     /// The keys the welcome screen suggests, from the keymap in use.
     welcome: Vec<(String, String)>,
+    /// The line a branched chat starts with, above its blocks.
+    pub(crate) banner: super::banner::Banner,
     _reply_expiry: Option<Task<()>>,
     _events: Option<Task<()>>,
 }
@@ -123,6 +125,7 @@ impl TimelineView {
             outline_reveal: false,
             deferred: None,
             welcome: welcome_keys(&default_keymap()),
+            banner: super::banner::Banner::default(),
             _reply_expiry: None,
             _events: None,
         }
@@ -982,6 +985,62 @@ fn welcome(keys: &[(String, String)], cx: &App) -> impl IntoElement {
         .child(v_flex().gap_1().text_sm().children(rows))
 }
 
+/// The blocks: the list, its scrollbar, the "Copy" hint and the outline.
+fn blocks_layer(
+    this: &mut TimelineView,
+    window: &mut Window,
+    cx: &mut Context<TimelineView>,
+) -> AnyElement {
+    let view = cx.entity().downgrade();
+    // The hint outlives the selection only while it says "Copied".
+    if let Some(hint) = &this.copy_hint
+        && !hint.copied
+        && selection::selected_text(window, cx).is_empty()
+    {
+        this.copy_hint = None;
+    }
+    let hint = this.copy_hint.as_ref().map(|hint| {
+        let weak = view.clone();
+        let text = hint.text.clone();
+        render_hint(
+            hint,
+            move |_window, cx| {
+                weak.update(cx, |this, cx| this.copy(text.clone(), cx)).ok();
+            },
+            cx,
+        )
+    });
+    // The scrollbar thumb moves no wheel event: follow it here.
+    if this.list.is_scrollbar_dragging() {
+        this.follow_scroll(cx);
+    }
+    let outline = this.outline_layer(cx);
+    div()
+        .id("timeline-body")
+        .debug_selector(|| "timeline-body".to_owned())
+        .relative()
+        .w_full()
+        .flex_1()
+        .min_h_0()
+        .child(
+            list(this.list.clone(), move |ix, window, cx| {
+                let Some(entity) = view.upgrade() else {
+                    return div().into_any_element();
+                };
+                // `update` rather than `read`: block renderers need a
+                // mutable App to keep their per-block state.
+                entity.update(cx, |this, cx| {
+                    this.render_item(ix, view.clone(), window, cx)
+                })
+            })
+            .size_full(),
+        )
+        .vertical_scrollbar(&this.list)
+        .children(hint)
+        .children(outline)
+        .into_any_element()
+}
+
 impl Render for TimelineView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let focused = self.focus_handle.is_focused(window);
@@ -990,41 +1049,15 @@ impl Render for TimelineView {
         } else {
             gpui::transparent_black()
         };
-        if self.state.is_empty() {
-            return div()
-                .id("timeline-empty")
-                .track_focus(&self.focus_handle)
-                .on_key_down(cx.listener(Self::on_key))
-                .size_full()
-                .border_t_1()
-                .border_color(edge)
+        let body = if self.state.is_empty() {
+            div()
+                .flex_1()
+                .min_h_0()
                 .child(welcome(&self.welcome, cx))
-                .into_any_element();
-        }
-        let view = cx.entity().downgrade();
-        // The hint outlives the selection only while it says "Copied".
-        if let Some(hint) = &self.copy_hint
-            && !hint.copied
-            && selection::selected_text(window, cx).is_empty()
-        {
-            self.copy_hint = None;
-        }
-        let hint = self.copy_hint.as_ref().map(|hint| {
-            let weak = view.clone();
-            let text = hint.text.clone();
-            render_hint(
-                hint,
-                move |_window, cx| {
-                    weak.update(cx, |this, cx| this.copy(text.clone(), cx)).ok();
-                },
-                cx,
-            )
-        });
-        // The scrollbar thumb moves no wheel event: follow it here.
-        if self.list.is_scrollbar_dragging() {
-            self.follow_scroll(cx);
-        }
-        let outline = self.outline_layer(cx);
+                .into_any_element()
+        } else {
+            blocks_layer(self, window, cx)
+        };
         div()
             .id("timeline-list")
             .track_focus(&self.focus_handle)
@@ -1035,27 +1068,13 @@ impl Render for TimelineView {
                     this.mouse_up(event, window, cx);
                 }),
             )
-            .relative()
             .size_full()
+            .flex()
+            .flex_col()
             .border_t_1()
             .border_color(edge)
-            .child(
-                list(self.list.clone(), move |ix, window, cx| {
-                    let Some(entity) = view.upgrade() else {
-                        return div().into_any_element();
-                    };
-                    // `update` rather than `read`: block renderers need a
-                    // mutable App to keep their per-block state.
-                    entity.update(cx, |this, cx| {
-                        this.render_item(ix, view.clone(), window, cx)
-                    })
-                })
-                .size_full(),
-            )
-            .vertical_scrollbar(&self.list)
-            .children(hint)
-            .children(outline)
-            .into_any_element()
+            .children(self.banner.element(cx))
+            .child(body)
     }
 }
 

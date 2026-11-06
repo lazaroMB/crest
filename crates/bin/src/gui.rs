@@ -88,7 +88,7 @@ use futures::future::BoxFuture;
 use tokio::runtime::Handle;
 use tokio::task::AbortHandle;
 use ui::approval::UiApproval;
-use ui::chats::{Catalog, SessionOpen};
+use ui::chats::{Catalog, Organize, Organized, SessionOpen};
 use ui::form::UiForm;
 use ui::help::HelpSnapshot;
 use ui::session::{
@@ -2160,7 +2160,11 @@ impl ProjectOpener for Launcher {
     fn catalog(&self) -> BoxFuture<'static, Catalog> {
         self.read_store(|store| async move {
             let listed = application::usecases::sidebar::sidebar(&store).await;
-            listed.map(crate::catalog::catalog_of).unwrap_or_default()
+            let archived = application::usecases::sidebar::archived(&store).await;
+            match (listed, archived) {
+                (Ok(listed), Ok(archived)) => crate::catalog::catalog_of(listed, archived),
+                _ => Catalog::default(),
+            }
         })
     }
 
@@ -2192,6 +2196,17 @@ impl ProjectOpener for Launcher {
                     Ok(()) | Err(StoreError::NotFound(_)) => Ok(()),
                     Err(err) => Err(err.to_string()),
                 }
+            })
+            .map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
+            .boxed()
+    }
+
+    fn organize(&self, change: Organize) -> BoxFuture<'static, Result<Organized, String>> {
+        let path = self.session_db();
+        self.handle
+            .spawn(async move {
+                let store = open_session_store(path)?;
+                crate::organize::run(&store, change).await
             })
             .map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
             .boxed()

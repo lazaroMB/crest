@@ -115,10 +115,7 @@ pub fn listed_with(mut catalog: Catalog, current: &CurrentChat<'_>) -> Catalog {
     {
         return catalog;
     }
-    let fresh = id.map(|id| ChatEntry {
-        id: id.to_owned(),
-        title: "New chat".into(),
-    });
+    let fresh = id.map(|id| ChatEntry::new(id, "New chat"));
     if loose {
         catalog.chats.splice(0..0, fresh);
         return catalog;
@@ -135,7 +132,8 @@ pub fn listed_with(mut catalog: Catalog, current: &CurrentChat<'_>) -> Catalog {
                 id,
                 name: project_name(current.root),
                 root: current.root.to_owned(),
-                dirs: 1,
+                roots: vec![current.root.to_owned()],
+                pinned: false,
                 chats: Vec::new(),
             },
         );
@@ -204,10 +202,7 @@ mod tests {
     use crate::chats::ChatEntry;
 
     fn chat(title: &str) -> ChatEntry {
-        ChatEntry {
-            id: title.into(),
-            title: title.into(),
-        }
+        ChatEntry::new(title, title)
     }
 
     fn project(name: &str, titles: &[&str]) -> ProjectChats {
@@ -215,13 +210,11 @@ mod tests {
             id: format!("id-{name}"),
             name: name.into(),
             root: format!("/w/{name}"),
-            dirs: 1,
+            roots: vec![format!("/w/{name}")],
+            pinned: false,
             chats: titles
                 .iter()
-                .map(|title| ChatEntry {
-                    id: (*title).into(),
-                    title: (*title).into(),
-                })
+                .map(|title| ChatEntry::new(*title, *title))
                 .collect(),
         }
     }

@@ -7,12 +7,40 @@
 //! examples call it, and the tests below load every icon crest draws through
 //! [`source`].
 
-use gpui::{Application, AssetSource};
+use std::borrow::Cow;
 
-/// The source that serves the icons: gpui-component's default bundle
-/// (Lucide), embedded in the binary.
+use gpui::{Application, AssetSource, SharedString};
+
+// The icons crest draws that gpui-component's default bundle lacks, taken
+// from the full Lucide catalog: the branch of a chat, the Archived section
+// and the pin. Only these are embedded, not the 1800 of the catalog.
+gpui_kit_assets::icon_assets!(Extra, [GitBranch, Archive, ArchiveRestore, Trash, Pin]);
+
+/// The source of the app's icons: gpui-component's default bundle (Lucide)
+/// plus [`Extra`], all embedded in the binary.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Icons;
+
+impl AssetSource for Icons {
+    fn load(&self, path: &str) -> gpui::Result<Option<Cow<'static, [u8]>>> {
+        match Extra.load(path)? {
+            Some(bytes) => Ok(Some(bytes)),
+            None => gpui_kit_assets::Assets.load(path),
+        }
+    }
+
+    fn list(&self, path: &str) -> gpui::Result<Vec<SharedString>> {
+        let mut paths = gpui_kit_assets::Assets.list(path)?;
+        paths.extend(Extra.list(path)?);
+        paths.sort();
+        paths.dedup();
+        Ok(paths)
+    }
+}
+
+/// The source that serves the icons.
 pub fn source() -> impl AssetSource {
-    gpui_kit_assets::Assets
+    Icons
 }
 
 /// Registers [`source`] on `app`; call it before `run`.
@@ -23,25 +51,34 @@ pub fn install(app: Application) -> Application {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui_component::{IconName, IconNamed as _};
+    use gpui_component::IconNamed as _;
 
-    /// Every icon crest draws, by the name it has in `IconName`.
-    fn used() -> [(&'static str, IconName); 6] {
-        [
-            ("Plus", IconName::Plus),
-            ("Search", IconName::Search),
-            ("Folder", IconName::Folder),
-            ("Close", IconName::Close),
-            ("Check", IconName::Check),
-            ("Copy", IconName::Copy),
+    /// Every icon crest draws, by the name it has in `IconName`, and the
+    /// path it loads (the component's own, or the catalog's for the extras).
+    fn used() -> Vec<(&'static str, SharedString)> {
+        vec![
+            ("Plus", gpui_component::IconName::Plus.path()),
+            ("Search", gpui_component::IconName::Search.path()),
+            ("Folder", gpui_component::IconName::Folder.path()),
+            ("Close", gpui_component::IconName::Close.path()),
+            ("Check", gpui_component::IconName::Check.path()),
+            ("Copy", gpui_component::IconName::Copy.path()),
+            ("Ellipsis", gpui_component::IconName::Ellipsis.path()),
+            ("GitBranch", gpui_kit_assets::IconName::GitBranch.path()),
+            ("Archive", gpui_kit_assets::IconName::Archive.path()),
+            (
+                "ArchiveRestore",
+                gpui_kit_assets::IconName::ArchiveRestore.path(),
+            ),
+            ("Trash", gpui_kit_assets::IconName::Trash.path()),
+            ("Pin", gpui_kit_assets::IconName::Pin.path()),
         ]
     }
 
     #[test]
     fn the_source_serves_every_icon_crest_draws() {
         let source = source();
-        for (name, icon) in used() {
-            let path = icon.path();
+        for (name, path) in used() {
             let bytes = source
                 .load(&path)
                 .unwrap_or_else(|err| panic!("{name} ({path}): {err}"))
@@ -55,7 +92,8 @@ mod tests {
     fn the_default_source_serves_nothing() {
         // What the app had before `install`: the reason the test above exists.
         let none: &dyn AssetSource = &();
-        assert!(none.load(&IconName::Plus.path()).unwrap().is_none());
+        let plus = gpui_component::IconName::Plus.path();
+        assert!(none.load(&plus).unwrap().is_none());
     }
 
     /// A new `IconName::X` in the sources must be added to `used`, so that

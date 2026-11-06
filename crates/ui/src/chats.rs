@@ -26,13 +26,25 @@ use gpui::{
 };
 use gpui_component::input::{InputEvent, InputState};
 
+mod archived;
+mod catalog;
+mod glyph;
+mod menu;
+mod menu_view;
 mod model;
+mod organize;
 mod rail;
 mod rows;
 mod search;
+mod subject;
 
+pub use catalog::{Archive, ArchivedProject, Branch, Catalog, ChatEntry, ProjectChats};
+pub use menu::{ChatOp, PickFor, ProjectOp};
+use menu::{Menu, Page};
 use model::{CurrentChat, listed_with, visible_chats, visible_projects};
 pub use model::{MARK_BAND, STRIP_WIDTH, SidebarWidth};
+pub use organize::{Organize, Organized};
+use subject::Subject;
 
 /// Which session to open in a project.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,40 +61,6 @@ pub enum SessionOpen {
     NewStandalone,
     /// The session with this id.
     Id(String),
-}
-
-/// One saved chat.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ChatEntry {
-    /// Session id, as printed.
-    pub id: String,
-    /// What the row shows.
-    pub title: String,
-}
-
-/// A project and its chats, newest first.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProjectChats {
-    /// Project id, as printed (a directory without a project uses its root).
-    pub id: String,
-    /// Name shown on the row.
-    pub name: String,
-    /// Its first directory, as stored: where its chats open.
-    pub root: String,
-    /// How many directories it has.
-    pub dirs: usize,
-    /// Its chats, newest first.
-    pub chats: Vec<ChatEntry>,
-}
-
-/// What the sidebar lists: the projects in their order, and the chats that
-/// are in none, newest first.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Catalog {
-    /// Projects, in the order the sidebar shows them.
-    pub projects: Vec<ProjectChats>,
-    /// Chats with no project.
-    pub chats: Vec<ChatEntry>,
 }
 
 /// What the panel asks the window to open.
@@ -120,6 +98,22 @@ pub enum ChatsEvent {
         /// Session id.
         id: String,
     },
+    /// A row of a chat's menu (pin, move, archive, branch).
+    Chat {
+        /// Session id.
+        id: String,
+        /// What to do to it.
+        op: ChatOp,
+    },
+    /// A row of a project's menu (rename, pin, directories, archive, delete).
+    Project {
+        /// Project id.
+        id: String,
+        /// What to do to it.
+        op: ProjectOp,
+    },
+    /// Pick a directory for a menu row; the window shows its picker.
+    Pick(PickFor),
     /// The sidebar changed width (a click on the mark, the cycle key):
     /// the window tells the session and moves the keyboard if needed.
     Sidebar(SidebarWidth),
@@ -142,6 +136,8 @@ pub enum ChatsCommand {
     Rename,
     /// `chat.delete`: asks to delete the open chat.
     Delete,
+    /// `chat.branch`: a new chat that continues from this one.
+    Branch,
     /// `panel.chats`: the next width (full, strip, hidden).
     TogglePanel,
     /// `focus.next` reached the list.
@@ -158,6 +154,7 @@ impl ChatsCommand {
             "chat.prev" => Self::Prev,
             "chat.rename" => Self::Rename,
             "chat.delete" => Self::Delete,
+            "chat.branch" => Self::Branch,
             "panel.chats" => Self::TogglePanel,
             _ => return None,
         })
@@ -176,26 +173,12 @@ pub enum ChatRow {
         /// Session id.
         id: String,
     },
-}
-
-/// What the right-click menu is doing.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum ChatActionKind {
-    /// Rename and Delete.
-    Menu,
-    /// The name field is open.
-    Rename,
-    /// Delete still needs a second click.
-    ConfirmDelete,
-}
-
-/// The chat whose menu is open.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ChatAction {
-    id: String,
-    root: String,
-    title: String,
-    kind: ChatActionKind,
+    /// The heading of the Archived section.
+    Archived,
+    /// An archived project.
+    ArchivedProject(String),
+    /// An archived chat.
+    ArchivedChat(String),
 }
 
 /// The rename field, while it exists. The prompt leaves its keys alone
@@ -270,7 +253,9 @@ pub struct ChatsPanel {
     current_id: Option<String>,
     /// Chats with a turn running, by id: whether they wait on the user.
     activity: HashMap<String, bool>,
-    action: Option<ChatAction>,
+    action: Option<Menu>,
+    /// The Archived section is unfolded.
+    archived_open: bool,
     rename_input: Option<Entity<InputState>>,
     /// The rename field's events (`Enter`, focus lost); dropped with it.
     _rename_events: Option<Subscription>,
@@ -324,6 +309,7 @@ impl ChatsPanel {
             current_id,
             activity: HashMap::new(),
             action: None,
+            archived_open: false,
             rename_input: None,
             _rename_events: None,
             pending_titles: HashMap::new(),
@@ -352,6 +338,7 @@ impl ChatsPanel {
             project: None,
             id: chat.id.clone(),
         }));
+        rows.extend(self.archived_rows());
         rows
     }
 
@@ -441,73 +428,50 @@ impl ChatsPanel {
     /// The title the list shows for the chat `id`, if listed.
     #[must_use]
     pub fn title_of(&self, id: &str) -> Option<String> {
-        self.listed
-            .projects
-            .iter()
-            .flat_map(|project| &project.chats)
-            .chain(&self.listed.chats)
-            .find(|chat| chat.id == id)
-            .map(|chat| chat.title.clone())
+        self.listed.chat(id).map(|chat| chat.title.clone())
     }
 
     /// Opens the name field of the open chat (`chat.rename`).
     pub fn rename_current(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(row @ ChatRow::Chat { .. }) = self.current_row() {
-            self.selected = Some(row.clone());
-            self.act_on_row(&row, ChatActionKind::Rename, window, cx);
-        }
+        self.menu_on_current(Page::Rename, window, cx);
     }
 
     /// Asks to delete the open chat (`chat.delete`); the list takes the
     /// focus so `Enter` confirms and `Esc` cancels.
     pub fn delete_current(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.menu_on_current(Page::Confirm, window, cx);
+    }
+
+    /// The chat that is open, as `(directory, id)`, for the window to branch
+    /// it (`chat.branch`).
+    #[must_use]
+    pub fn current_chat(&self) -> Option<String> {
+        self.current_row().and_then(|row| match row {
+            ChatRow::Chat { id, .. } => Some(id),
+            _ => None,
+        })
+    }
+
+    /// Opens the menu of the open chat on `page`.
+    fn menu_on_current(&mut self, page: Page, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(row @ ChatRow::Chat { .. }) = self.current_row() {
             self.selected = Some(row.clone());
-            self.act_on_row(&row, ChatActionKind::ConfirmDelete, window, cx);
-            window.focus(&self.focus_handle, cx);
+            self.menu_on_row(&row, page, window, cx);
         }
     }
 
-    /// [`Self::act_on`] for a chat row (anything else does nothing).
-    fn act_on_row(
+    /// Opens the menu of `row` on `page` (a row with no menu does nothing).
+    fn menu_on_row(
         &mut self,
         row: &ChatRow,
-        kind: ChatActionKind,
+        page: Page,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if let ChatRow::Chat { id, .. } = row {
-            let root = self
-                .group_of(id)
-                .map_or_else(String::new, |(root, _)| root.to_owned());
-            self.act_on(root, id.clone(), kind, window, cx);
-        }
-    }
-
-    /// Opens the menu of the chat `id` in `kind`.
-    fn act_on(
-        &mut self,
-        root: String,
-        id: String,
-        kind: ChatActionKind,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let title = self.title_of(&id).unwrap_or_else(|| chat_label(None));
-        self.drop_rename();
-        self.action = Some(ChatAction {
-            id,
-            root,
-            title,
-            kind: ChatActionKind::Menu,
-        });
-        match kind {
-            ChatActionKind::Rename => self.begin_rename(window, cx),
-            ChatActionKind::ConfirmDelete => self.ask_delete(cx),
-            ChatActionKind::Menu => {}
+        if let Some(subject) = self.subject_of(row) {
+            self.open_menu(subject, page, window, cx);
         }
         self.reveal_selected();
-        cx.notify();
     }
 
     /// Keys while the list has the focus.
@@ -525,19 +489,19 @@ impl ChatsPanel {
             self.on_rail_key(event.keystroke.key.as_str(), cx);
             return;
         }
-        let confirming = self
-            .action
-            .as_ref()
-            .is_some_and(|action| action.kind == ChatActionKind::ConfirmDelete);
         let key = event.keystroke.key.as_str();
+        if self.menu_key(key, window, cx) {
+            cx.stop_propagation();
+            return;
+        }
         let rows = self.rows();
         let at = self.selected_index();
         match key {
-            "enter" | "y" if confirming => self.commit_delete(cx),
             "up" | "k" => self.select_index(at.map_or(0, |ix| ix.saturating_sub(1)), cx),
             "down" | "j" => self.select_index(at.map_or(0, |ix| ix + 1), cx),
             "home" => self.select_index(0, cx),
             "end" => self.select_index(rows.len().saturating_sub(1), cx),
+            "m" => self.open_menu_on_selected(window, cx),
             "enter" | "right" | "left" | "f2" | "r" | "delete" => {
                 let Some(row) = self.selected.clone() else {
                     return;
@@ -585,11 +549,17 @@ impl ChatsPanel {
                     cx.emit(ChatsEvent::Open { root, id });
                 }
             }
-            ("f2" | "r", row @ ChatRow::Chat { .. }) => {
-                self.act_on_row(&row, ChatActionKind::Rename, window, cx);
+            ("f2" | "r", row @ (ChatRow::Chat { .. } | ChatRow::Project(_))) => {
+                self.menu_on_row(&row, Page::Rename, window, cx);
             }
-            ("delete", row @ ChatRow::Chat { .. }) => {
-                self.act_on_row(&row, ChatActionKind::ConfirmDelete, window, cx);
+            ("delete", row @ (ChatRow::Chat { .. } | ChatRow::Project(_))) => {
+                self.menu_on_row(&row, Page::Confirm, window, cx);
+            }
+            (
+                _,
+                row @ (ChatRow::Archived | ChatRow::ArchivedProject(_) | ChatRow::ArchivedChat(_)),
+            ) => {
+                self.archived_key(key, &row, window, cx);
             }
             _ => {}
         }
@@ -691,6 +661,7 @@ impl ChatsPanel {
         self.visible = Catalog {
             projects: visible_projects(&self.listed.projects, &self.query),
             chats: visible_chats(&self.listed.chats, &self.query),
+            ..Catalog::default()
         };
         if self.selected_index().is_none() {
             self.selected = None;
@@ -748,7 +719,7 @@ impl ChatsPanel {
 
     /// Whether `value` names the chat differently from its title.
     fn rename_changed(&self, value: &str) -> bool {
-        let original = self.action.as_ref().map(|action| action.title.as_str());
+        let original = self.action.as_ref().map(|menu| menu.subject.title());
         clean_title(value).is_some_and(|title| Some(title.as_str()) != original)
     }
 
@@ -771,38 +742,16 @@ impl ChatsPanel {
         self._rename_events = None;
     }
 
-    fn open_menu(
-        &mut self,
-        id: String,
-        root: String,
-        title: String,
-        _window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let same_menu = self
+    fn begin_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(title) = self
             .action
             .as_ref()
-            .is_some_and(|action| action.id == id && matches!(action.kind, ChatActionKind::Menu));
-        if same_menu {
-            self.clear_action(cx);
-            return;
-        }
-        self.drop_rename();
-        self.action = Some(ChatAction {
-            id,
-            root,
-            title,
-            kind: ChatActionKind::Menu,
-        });
-        cx.notify();
-    }
-
-    fn begin_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(title) = self.action.as_ref().map(|action| action.title.clone()) else {
+            .map(|menu| menu.subject.title().to_owned())
+        else {
             return;
         };
         let input = cx.new(|cx| {
-            let mut state = InputState::new(window, cx).placeholder("Chat name");
+            let mut state = InputState::new(window, cx).placeholder("Name");
             state.set_value(title.clone(), window, cx);
             state
         });
@@ -819,49 +768,35 @@ impl ChatsPanel {
             this.on_rename_event(&input, event, cx);
         }));
         self.rename_input = Some(input);
-        if let Some(action) = &mut self.action {
-            action.kind = ChatActionKind::Rename;
-        }
-        cx.notify();
-    }
-
-    fn ask_delete(&mut self, cx: &mut Context<Self>) {
-        self.drop_rename();
-        if let Some(action) = &mut self.action {
-            action.kind = ChatActionKind::ConfirmDelete;
+        if let Some(menu) = &mut self.action {
+            menu.page = Page::Rename;
         }
         cx.notify();
     }
 
     fn commit_rename(&mut self, raw: String, cx: &mut Context<Self>) {
-        let Some(action) = self.action.clone() else {
+        let Some(menu) = self.action.clone() else {
             return;
         };
         self.clear_action(cx);
-        let title = clean_title(&raw).filter(|title| *title != action.title);
+        let title = clean_title(&raw).filter(|title| title != menu.subject.title());
         let Some(title) = title else {
             // Nothing to save: the prompt takes the focus back.
             cx.emit(ChatsEvent::Dismissed);
             return;
         };
-        // Shown at once: the save may wait for a turn of that chat.
-        self.pending_titles.insert(action.id.clone(), title.clone());
-        self.rebuild();
-        cx.emit(ChatsEvent::Rename {
-            id: action.id,
-            title,
-        });
-    }
-
-    fn commit_delete(&mut self, cx: &mut Context<Self>) {
-        let Some(action) = self.action.clone() else {
-            return;
-        };
-        self.clear_action(cx);
-        cx.emit(ChatsEvent::Delete {
-            root: action.root,
-            id: action.id,
-        });
+        match menu.subject {
+            Subject::Chat { id, .. } => {
+                // Shown at once: the save may wait for a turn of that chat.
+                self.pending_titles.insert(id.clone(), title.clone());
+                self.rebuild();
+                cx.emit(ChatsEvent::Rename { id, title });
+            }
+            Subject::Project { id, .. } => cx.emit(ChatsEvent::Project {
+                id,
+                op: ProjectOp::Rename(title),
+            }),
+        }
     }
 
     /// Whether the right-click menu (or its rename field or delete
@@ -967,6 +902,9 @@ pub fn same_workspace(left: &str, right: &str) -> bool {
 
 #[cfg(test)]
 mod grouped_tests;
+
+#[cfg(test)]
+mod menu_tests;
 
 #[cfg(test)]
 mod tests {
@@ -1263,6 +1201,7 @@ mod tests {
         Catalog {
             projects,
             chats: Vec::new(),
+            archived: Archive::default(),
         }
     }
 
@@ -1271,14 +1210,9 @@ mod tests {
             id: root.into(),
             name: project_name(root),
             root: root.into(),
-            dirs: 1,
-            chats: chats
-                .iter()
-                .map(|id| ChatEntry {
-                    id: (*id).into(),
-                    title: (*id).into(),
-                })
-                .collect(),
+            roots: vec![root.into()],
+            pinned: false,
+            chats: chats.iter().map(|id| ChatEntry::new(*id, *id)).collect(),
         }
     }
 
@@ -1293,14 +1227,8 @@ mod tests {
         assert_eq!(clean_title("  hola  ").as_deref(), Some("hola"));
         assert_eq!(clean_title(&"a".repeat(200)).unwrap().chars().count(), 120);
         let chats = vec![
-            ChatEntry {
-                id: "new".into(),
-                title: "New chat".into(),
-            },
-            ChatEntry {
-                id: "old".into(),
-                title: "old".into(),
-            },
+            ChatEntry::new("new", "New chat"),
+            ChatEntry::new("old", "old"),
         ];
         assert_eq!(next_chat_id(&chats, "new"), Some("old"));
         assert_eq!(next_chat_id(&chats, "missing"), Some("new"));
