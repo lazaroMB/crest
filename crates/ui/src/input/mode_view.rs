@@ -8,7 +8,7 @@ use gpui::{
 use gpui_component::{ActiveTheme as _, h_flex};
 
 use super::InputView;
-use super::completion::frame;
+use super::completion::{active, frame, hoverable};
 use super::mode::{ChatMode, MENU, MenuEntry};
 use super::palette::{muted_cell, small_note};
 use crate::kit::{ChipKind, chip};
@@ -85,6 +85,7 @@ impl InputView {
                 .child(title)
                 .into_any_element()
         };
+        let view = cx.entity().downgrade();
         let mut rows = vec![section("Mode")];
         for (ix, entry) in MENU.into_iter().enumerate() {
             if ix == INSERTS_AT {
@@ -93,9 +94,9 @@ impl InputView {
             }
             let on = entry == MenuEntry::Mode(self.mode_control.mode);
             let row = menu_row(ix, entry, on, cx);
-            let active = cx.theme().list_active;
+            let row = hoverable(row, ix, &view);
             rows.push(if ix == selected {
-                row.bg(active).rounded_sm().into_any_element()
+                active(row, cx.theme()).into_any_element()
             } else {
                 row.into_any_element()
             });

@@ -11,10 +11,13 @@
 
 use application_core::keymap::{Key, KeyCode};
 use gpui::{
-    AnyElement, App, Div, InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
-    Styled as _, div,
+    AnyElement, Context, Div, InteractiveElement as _, IntoElement, ParentElement as _,
+    SharedString, Stateful, Styled, WeakEntity, div,
 };
-use gpui_component::{ActiveTheme as _, Theme, v_flex};
+use gpui_component::{Theme, v_flex};
+
+use super::popups::Completion;
+use super::{InputEvent, InputView};
 
 /// Rows of a popup.
 pub(super) const PALETTE_ROWS: usize = 8;
@@ -142,33 +145,97 @@ pub fn nav_key<'a, T>(key: &Key, popup: &'a Popup<T>, selected: usize) -> Nav<'a
     }
 }
 
-/// The visible rows of a popup of `total` entries from `top` on, the one at
+/// `row` as the row the choice is on: the fill every popup row takes under the
+/// keyboard or the pointer (one token, so they cannot drift apart).
+pub(super) fn active<E: Styled>(row: E, theme: &Theme) -> E {
+    row.bg(theme.list_active).rounded_sm()
+}
+
+/// `row` number `ix` of the open popup, which the pointer moving over it
+/// chooses, as the arrows do.
+pub(super) fn hoverable(
+    row: Stateful<Div>,
+    ix: usize,
+    view: &WeakEntity<InputView>,
+) -> Stateful<Div> {
+    let view = view.clone();
+    row.on_mouse_move(move |_, _, cx| {
+        view.update(cx, |this, cx| this.hover_row(ix, cx)).ok();
+    })
+}
+
+impl InputView {
+    /// The pointer moved over row `ix` of the open popup (the mode menu, a
+    /// completion list or the palette): it becomes the chosen row, so the
+    /// keyboard and the pointer agree. The `/theme ` popup previews it.
+    pub(super) fn hover_row(&mut self, ix: usize, cx: &mut Context<Self>) {
+        if let Some(menu) = self.mode_control.menu.as_mut() {
+            if *menu == ix {
+                return;
+            }
+            *menu = ix;
+        } else {
+            let len = self.popup_len(cx);
+            if len == 0 || ix >= len || ix == self.palette_selected.min(len - 1) {
+                return;
+            }
+            self.palette_selected = ix;
+            if let Some(Completion::Theme(Popup::Entries(entries))) = self.completion(cx)
+                && let Some(choice) = entries.get(ix)
+            {
+                self.theme_previewing = true;
+                cx.emit(InputEvent::ThemePreview(choice.name.clone()));
+            }
+        }
+        cx.notify();
+    }
+}
+
+/// The visible rows of a popup from `top` on, the one at
 /// `selected` highlighted. `row` draws an entry (an `h_flex` with its
 /// cells); each gets the id `(id, index)`.
 pub(super) fn render_rows<T>(
     id: &'static str,
-    entries: impl IntoIterator<Item = T>,
-    total: usize,
-    selected: usize,
-    top: usize,
-    theme: &Theme,
+    entries: impl ExactSizeIterator<Item = T>,
+    paint: &Paint,
     mut row: impl FnMut(T) -> Div,
 ) -> Vec<AnyElement> {
-    let selected = selected.min(total.saturating_sub(1));
+    let Paint {
+        selected,
+        top,
+        theme,
+        view,
+    } = *paint;
+    let selected = selected.min(entries.len().saturating_sub(1));
     entries
-        .into_iter()
         .enumerate()
         .skip(top)
         .take(PALETTE_ROWS)
         .map(|(ix, entry)| {
-            let row = row(entry).id((id, ix));
+            let row = hoverable(
+                row(entry)
+                    .id((id, ix))
+                    .debug_selector(move || format!("{id}-{ix}")),
+                ix,
+                view,
+            );
             if ix == selected {
-                row.bg(theme.list_active).rounded_sm().into_any_element()
+                active(row, theme).into_any_element()
             } else {
                 row.into_any_element()
             }
         })
         .collect()
+}
+
+/// What drawing the rows of a popup needs: the chosen row, the first one
+/// shown, the theme and the input, which the pointer over a row tells.
+#[derive(Clone, Copy)]
+pub(super) struct Paint<'a> {
+    pub selected: usize,
+    pub top: usize,
+    pub theme: &'a Theme,
+    pub view: &'a WeakEntity<InputView>,
 }
 
 /// How a popup is told apart: its element id, the id of its rows and the
@@ -184,16 +251,14 @@ pub(super) struct Look {
 pub(super) fn render<T>(
     look: &Look,
     popup: Popup<T>,
-    selected: usize,
-    top: usize,
-    cx: &App,
+    paint: &Paint,
     row: impl FnMut(T) -> Div,
 ) -> AnyElement {
-    let theme = cx.theme();
+    let Paint { top, theme, .. } = *paint;
     let (rows, note) = match popup {
         Popup::Entries(entries) => {
             let total = entries.len();
-            let rows = render_rows(look.row_id, entries, total, selected, top, theme, row);
+            let rows = render_rows(look.row_id, entries.into_iter(), paint, row);
             (rows, window_note(top, total))
         }
         Popup::Message(message) => (

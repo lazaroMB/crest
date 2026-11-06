@@ -1134,3 +1134,6 @@ fn the_mode_menu_and_a_popup_are_never_open_together(cx: &mut TestAppContext) {
     assert!(view.read_with(cx, |view, _| !view.mode_menu_open()));
     assert!(view.read_with(cx, |view, cx| !view.palette_groups(cx).is_empty()));
 }
+
+#[cfg(test)]
+mod hover;

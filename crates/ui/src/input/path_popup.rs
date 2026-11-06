@@ -10,11 +10,11 @@ use std::sync::Arc;
 use application_core::keymap::{Key, KeyCode};
 use application_core::ports::search::{FileSearchPort, TreeNodeKind, TreeRequest};
 use domain::workspace::WorkspacePath;
-use gpui::{AnyElement, App, Context, ParentElement as _, SharedString, Styled as _, Task, div};
-use gpui_component::{ActiveTheme as _, h_flex};
+use gpui::{AnyElement, Context, ParentElement as _, SharedString, Styled as _, Task, div};
+use gpui_component::h_flex;
 
 use super::InputView;
-use super::completion::{self, Look, Nav, Popup, PopupKey, nav_key};
+use super::completion::{self, Look, Nav, Paint, Popup, PopupKey, nav_key};
 use super::paths::{PathEntry, TokenDir, complete, path_matches, path_token, token_dir};
 
 /// What the `@` popup shows for the current word: the matching entries
@@ -159,8 +159,8 @@ pub fn path_key(key: &Key, popup: &PathPopup, text: &str, selected: usize) -> Pa
 }
 
 /// Draws `popup` from entry `top` on, with entry `selected` highlighted.
-pub fn render(popup: PathPopup, selected: usize, top: usize, cx: &App) -> AnyElement {
-    let theme = cx.theme();
+pub(super) fn render(popup: PathPopup, paint: &Paint) -> AnyElement {
+    let theme = paint.theme;
     completion::render(
         &Look {
             id: "path-palette",
@@ -168,9 +168,7 @@ pub fn render(popup: PathPopup, selected: usize, top: usize, cx: &App) -> AnyEle
             keys: "↑↓ choose · Tab complete · Enter accept · Esc hide",
         },
         popup,
-        selected,
-        top,
-        cx,
+        paint,
         |entry| {
             let (marker, name, color) = if entry.dir {
                 ("▸", format!("{}/", entry.name), theme.primary)

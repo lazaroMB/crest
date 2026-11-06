@@ -4,11 +4,12 @@ use std::rc::Rc;
 
 use application_core::keymap::{Key, KeyCode, Modifiers};
 use gpui::{
-    App, Context, Div, IntoElement as _, ParentElement as _, SharedString, Styled as _, Window, div,
+    App, Context, Div, IntoElement as _, ParentElement as _, SharedString, Styled as _, WeakEntity,
+    Window, div,
 };
 use gpui_component::{ActiveTheme as _, Theme, h_flex};
 
-use super::completion::{Popup, PopupKey, palette_top, window_note};
+use super::completion::{Paint, Popup, PopupKey, palette_top, window_note};
 use super::groups::{GroupRow, PaletteView, group_indices, view_of};
 use super::model_popup::model_key;
 use super::path_popup::path_key;
@@ -230,20 +231,24 @@ impl InputView {
         cx.emit(InputEvent::Command(line));
     }
 
-    pub(super) fn render_palette(&self, cx: &App) -> Option<gpui::AnyElement> {
+    pub(super) fn render_palette(
+        &self,
+        cx: &App,
+        view: &WeakEntity<Self>,
+    ) -> Option<gpui::AnyElement> {
         let theme = cx.theme();
         let (selected, top) = (self.palette_selected, self.palette_top);
+        let paint = Paint {
+            selected,
+            top,
+            theme,
+            view,
+        };
         let groups = self.palette_groups(cx);
         if !groups.is_empty() {
-            let items = completion::render_rows(
-                "palette",
-                groups.iter(),
-                groups.len(),
-                selected,
-                top,
-                theme,
-                |group| group_row(group, theme),
-            );
+            let items = completion::render_rows("palette", groups.iter(), &paint, |group| {
+                group_row(group, theme)
+            });
             let note = window_note(top, groups.len()).unwrap_or_default();
             let keys = "↑↓ choose · Enter or → open a group · type to filter · Esc hide";
             return Some(completion::frame(
@@ -258,15 +263,9 @@ impl InputView {
             return None;
         }
         let opened = self.palette_group.as_deref();
-        let mut items = completion::render_rows(
-            "palette",
-            rows.iter(),
-            rows.len(),
-            selected,
-            top,
-            theme,
-            |row| command_row(row, opened.is_none(), theme),
-        );
+        let mut items = completion::render_rows("palette", rows.iter(), &paint, |row| {
+            command_row(row, opened.is_none(), theme)
+        });
         let keys = match opened {
             Some(label) => {
                 items.insert(0, group_title(label, theme));

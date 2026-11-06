@@ -8,7 +8,7 @@ use gpui_component::input::Textarea;
 use gpui_component::v_flex;
 use gpui_component::{ActiveTheme as _, h_flex};
 
-use super::completion::palette_top;
+use super::completion::{Paint, palette_top};
 use super::cursor::{CursorShape, HiddenCaret, paint_cursor};
 use super::popups::Completion;
 use super::tray::paste_handler;
@@ -105,15 +105,16 @@ impl InputView {
     /// The popups to show, bottom-up as they stack above the prompt: the mode
     /// menu, the completion list or the palette, the which-key hint.
     fn render_popups(&mut self, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
+        let view = cx.entity().downgrade();
         let menu = self.render_mode_menu(cx);
-        let completion = self.render_completion(cx);
+        let completion = self.render_completion(cx, &view);
         let palette = if completion.is_none() {
             let total = self.palette_len(cx);
             if total > 0 {
                 let selected = self.palette_selected.min(total - 1);
                 self.palette_top = palette_top(selected, self.palette_top, total);
             }
-            self.render_palette(cx)
+            self.render_palette(cx, &view)
         } else {
             None
         };
@@ -126,7 +127,11 @@ impl InputView {
 
     /// The completion popup (`@`, `/model `, `/theme `), if one shows,
     /// after fitting its window of rows to the list.
-    fn render_completion(&mut self, cx: &App) -> Option<gpui::AnyElement> {
+    fn render_completion(
+        &mut self,
+        cx: &App,
+        view: &gpui::WeakEntity<Self>,
+    ) -> Option<gpui::AnyElement> {
         let shown = self.completion(cx)?;
         // The list may have arrived or shrunk since the last key.
         let len = shown.len();
@@ -134,15 +139,18 @@ impl InputView {
             let selected = self.palette_selected.min(len - 1);
             self.palette_top = palette_top(selected, self.palette_top, len);
         }
-        let (selected, top) = (self.palette_selected, self.palette_top);
+        let paint = Paint {
+            selected: self.palette_selected,
+            top: self.palette_top,
+            theme: cx.theme(),
+            view,
+        };
         Some(match shown {
-            Completion::Path(popup) => path_popup::render(popup, selected, top, cx),
+            Completion::Path(popup) => path_popup::render(popup, &paint),
             Completion::Model(popup) => {
-                model_popup::render(popup, selected, top, self.current_model.as_ref(), cx)
+                model_popup::render(popup, &paint, self.current_model.as_ref())
             }
-            Completion::Theme(popup) => {
-                theme_popup::render(popup, selected, top, &self.current_theme, cx)
-            }
+            Completion::Theme(popup) => theme_popup::render(popup, &paint, &self.current_theme),
         })
     }
 
