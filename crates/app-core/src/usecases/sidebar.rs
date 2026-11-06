@@ -2,8 +2,10 @@
 //! chats that are in no project.
 //!
 //! Projects come pinned first, then by their newest chat (a project with no
-//! chat last, by name); the chats of each, and the standalone ones, newest
-//! first. [`project_for_directory`] gives a chat opened in a directory its
+//! chat last, by name); the chats of each, and the standalone ones, pinned
+//! first and then newest first. Archived projects, their chats and archived
+//! chats are left out; [`archived`] lists them for the "Archived" section.
+//! [`project_for_directory`] gives a chat opened in a directory its
 //! project, so no chat with a directory is listed as standalone.
 
 use domain::conversation::SessionId;
@@ -29,6 +31,24 @@ pub struct Sidebar {
     pub chats: Vec<SessionSummary>,
 }
 
+/// What the "Archived" section lists.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Archived {
+    /// Archived projects, each with every chat it still has (archived or
+    /// not: they are hidden with it).
+    pub projects: Vec<SidebarProject>,
+    /// Archived chats of a project that is not archived, or of none.
+    pub chats: Vec<SessionSummary>,
+}
+
+impl Archived {
+    /// How many rows the section has, for its "Archived (N)" label.
+    #[must_use]
+    pub fn count(&self) -> usize {
+        self.projects.len() + self.chats.len()
+    }
+}
+
 /// Reads the projects and the sessions of `store` and groups them.
 ///
 /// # Errors
@@ -40,28 +60,74 @@ pub async fn sidebar(store: &dyn SessionStorePort) -> Result<Sidebar, StoreError
     Ok(group(projects, sessions))
 }
 
-/// Groups `sessions` (newest first) by project. A session of a project that
-/// does not exist is listed as standalone.
-#[must_use]
-pub fn group(projects: Vec<Project>, sessions: Vec<SessionSummary>) -> Sidebar {
-    let mut grouped: Vec<SidebarProject> = projects
+/// Reads what is archived, grouped for the "Archived" section.
+///
+/// # Errors
+///
+/// The store's error.
+pub async fn archived(store: &dyn SessionStorePort) -> Result<Archived, StoreError> {
+    let projects = store.projects().await?;
+    let sessions = store.list_all().await?;
+    Ok(group_archived(projects, sessions))
+}
+
+/// Puts every session under its project; the sessions of no existing project
+/// come back apart. Projects keep their order, chats theirs.
+fn split(
+    projects: Vec<Project>,
+    sessions: Vec<SessionSummary>,
+) -> (Vec<SidebarProject>, Vec<SessionSummary>) {
+    let mut entries: Vec<SidebarProject> = projects
         .into_iter()
         .map(|project| SidebarProject {
             project,
             chats: Vec::new(),
         })
         .collect();
-    let mut standalone = Vec::new();
+    let mut loose = Vec::new();
     for session in sessions {
-        let owner = grouped
+        match entries
             .iter_mut()
-            .find(|entry| Some(entry.project.id) == session.project_id);
-        match owner {
+            .find(|entry| Some(entry.project.id) == session.project_id)
+        {
             Some(entry) => entry.chats.push(session),
-            None => standalone.push(session),
+            None => loose.push(session),
         }
     }
-    let newest = |entry: &SidebarProject| entry.chats.first().map(|chat| chat.updated_at);
+    (entries, loose)
+}
+
+/// The archived part of `projects` and `sessions` (newest first).
+#[must_use]
+pub fn group_archived(projects: Vec<Project>, sessions: Vec<SessionSummary>) -> Archived {
+    let (mut entries, mut loose) = split(projects, sessions);
+    for entry in entries.iter_mut().filter(|entry| !entry.project.archived) {
+        loose.extend(entry.chats.extract_if(.., |chat| chat.archived));
+    }
+    entries.retain(|entry| entry.project.archived);
+    loose.retain(|chat| chat.archived);
+    loose.sort_by_key(|chat| std::cmp::Reverse(chat.updated_at));
+    Archived {
+        projects: entries,
+        chats: loose,
+    }
+}
+
+/// Groups the live `sessions` (newest first) by project. A session of a
+/// project that does not exist is listed as standalone; archived chats, and
+/// the chats of an archived project, are not listed.
+#[must_use]
+pub fn group(projects: Vec<Project>, sessions: Vec<SessionSummary>) -> Sidebar {
+    let (mut grouped, mut standalone) = split(projects, sessions);
+    grouped.retain(|entry| !entry.project.archived);
+    standalone.retain(|chat| !chat.archived);
+    // Pinned first; the sort is stable, so the rest stays newest first.
+    standalone.sort_by_key(|chat| !chat.pinned);
+    for entry in &mut grouped {
+        entry.chats.retain(|chat| !chat.archived);
+        entry.chats.sort_by_key(|chat| !chat.pinned);
+    }
+    let newest = |entry: &SidebarProject| entry.chats.iter().map(|chat| chat.updated_at).max();
     grouped.sort_by(|a, b| {
         b.project
             .pinned
@@ -77,7 +143,7 @@ pub fn group(projects: Vec<Project>, sessions: Vec<SessionSummary>) -> Sidebar {
 
 /// The project a chat opened in `directory` belongs to: the first project
 /// whose first directory it is, else the first that has it, else a new one
-/// named after the directory.
+/// named after the directory. Archived projects are not considered.
 ///
 /// # Errors
 ///
@@ -88,8 +154,8 @@ pub async fn project_for_directory(
 ) -> Result<Project, StoreError> {
     let wanted = normalize_root(directory).ok_or(domain::project::ProjectError::NoDirectory)?;
     let projects = store.projects().await?;
-    let first = |project: &&Project| project.roots.first() == Some(&wanted);
-    let any = |project: &&Project| project.roots.contains(&wanted);
+    let first = |project: &&Project| !project.archived && project.roots.first() == Some(&wanted);
+    let any = |project: &&Project| !project.archived && project.roots.contains(&wanted);
     match projects
         .iter()
         .find(first)
@@ -124,7 +190,7 @@ mod tests {
     use domain::conversation::{ProjectId, Session};
 
     use super::*;
-    use crate::ports::store::{ProjectStorePort as _, StoredSession};
+    use crate::ports::store::{OrganizeStorePort as _, ProjectStorePort as _, StoredSession};
     use crate::testing::system::InMemorySessionStore;
 
     fn summary(title: &str, at: u64, project: Option<ProjectId>) -> SessionSummary {
@@ -140,6 +206,7 @@ mod tests {
             id: ProjectId::new(),
             name: name.into(),
             pinned,
+            archived: false,
             roots: vec![format!("/w/{name}")],
         }
     }
@@ -201,5 +268,74 @@ mod tests {
         assert_eq!((created.name.as_str(), created.roots.len()), ("new", 1));
         assert_eq!(store.projects().await.unwrap().len(), 2);
         assert!(project_for_directory(&store, "  ").await.is_err());
+        // An archived project is not where a directory lands: a new one is.
+        store.set_project_archived(by_first.id, true).await.unwrap();
+        let landed = project_for_directory(&store, "/w/api").await.unwrap();
+        assert_ne!(landed.id, by_first.id);
+        assert_eq!(
+            project_for_directory(&store, "/w/api").await.unwrap().id,
+            landed.id
+        );
+    }
+
+    fn flagged(chat: SessionSummary, pinned: bool, archived: bool) -> SessionSummary {
+        SessionSummary {
+            pinned,
+            archived,
+            ..chat
+        }
+    }
+
+    #[test]
+    fn pinned_chats_lead_and_archived_ones_move_to_the_archived_section() {
+        let live = project("live", false);
+        let shelf = Project {
+            archived: true,
+            ..project("shelf", false)
+        };
+        let sessions = vec![
+            summary("new", 90, Some(live.id)),
+            flagged(summary("shelved", 80, Some(live.id)), false, true),
+            flagged(summary("pinned-old", 10, Some(live.id)), true, false),
+            summary("in-shelf", 70, Some(shelf.id)),
+            flagged(
+                summary("in-shelf-archived", 60, Some(shelf.id)),
+                false,
+                true,
+            ),
+            flagged(summary("loose-archived", 50, None), false, true),
+            summary("loose-new", 40, None),
+            flagged(summary("loose-pinned", 5, None), true, false),
+        ];
+        let projects = vec![live, shelf];
+        let shown = group(projects.clone(), sessions.clone());
+        let kept = group_archived(projects, sessions);
+        // (what the sidebar lists, what the Archived section lists)
+        let got = (
+            shown
+                .projects
+                .iter()
+                .map(|p| p.project.name.as_str())
+                .collect::<Vec<_>>(),
+            titles(&shown.projects[0].chats),
+            titles(&shown.chats),
+            kept.projects
+                .iter()
+                .map(|p| titles(&p.chats))
+                .collect::<Vec<_>>(),
+            titles(&kept.chats),
+            kept.count(),
+        );
+        assert_eq!(
+            got,
+            (
+                vec!["live"],
+                vec!["pinned-old", "new"],
+                vec!["loose-pinned", "loose-new"],
+                vec![vec!["in-shelf", "in-shelf-archived"]],
+                vec!["shelved", "loose-archived"],
+                3,
+            )
+        );
     }
 }

@@ -15,7 +15,7 @@ use rusqlite::{Connection, Transaction, TransactionBehavior, params};
 
 use crate::db::sql_error;
 
-fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     let elapsed = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
@@ -69,9 +69,21 @@ pub(crate) fn backfill(tx: &Transaction<'_>) -> rusqlite::Result<()> {
             id: ProjectId::new(),
             name: name_from_root(&root),
             pinned: false,
+            archived: false,
             roots: vec![root],
         };
-        write(tx, &project, group.created_at, group.updated_at)?;
+        // Migration 0008 has not run yet: no `archived` column to write.
+        tx.execute(
+            "INSERT INTO projects (id, name, pinned, created_at, updated_at)
+             VALUES (?1, ?2, 0, ?3, ?4)",
+            params![
+                project.id.to_string(),
+                project.name,
+                group.created_at,
+                group.updated_at
+            ],
+        )?;
+        write_roots(tx, &project)?;
         for stored_as in &group.stored_as {
             tx.execute(
                 "UPDATE sessions SET project_id = ?1
@@ -93,12 +105,26 @@ fn write(
 ) -> rusqlite::Result<()> {
     let id = project.id.to_string();
     tx.execute(
-        "INSERT INTO projects (id, name, pinned, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5)
+        "INSERT INTO projects (id, name, pinned, archived, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
          ON CONFLICT (id) DO UPDATE SET
-             name = excluded.name, pinned = excluded.pinned, updated_at = excluded.updated_at",
-        params![id, project.name, project.pinned, created_at, updated_at],
+             name = excluded.name, pinned = excluded.pinned, archived = excluded.archived,
+             updated_at = excluded.updated_at",
+        params![
+            id,
+            project.name,
+            project.pinned,
+            project.archived,
+            created_at,
+            updated_at
+        ],
     )?;
+    write_roots(tx, project)
+}
+
+/// Makes the directories of `project` exactly `project.roots`, in that order.
+fn write_roots(tx: &Transaction<'_>, project: &Project) -> rusqlite::Result<()> {
+    let id = project.id.to_string();
     let mut keep = tx.prepare(
         "INSERT INTO project_roots (project_id, root, position) VALUES (?1, ?2, ?3)
          ON CONFLICT (project_id, root) DO UPDATE SET position = excluded.position",
@@ -133,7 +159,7 @@ pub(crate) fn list(conn: &Connection) -> Result<Vec<Project>, StoreError> {
         roots.entry(id).or_default().push(root);
     }
     let mut stmt = conn
-        .prepare("SELECT id, name, pinned FROM projects ORDER BY rowid")
+        .prepare("SELECT id, name, pinned, archived FROM projects ORDER BY rowid")
         .map_err(sql_error)?;
     let rows = stmt
         .query_map([], |row| {
@@ -141,15 +167,17 @@ pub(crate) fn list(conn: &Connection) -> Result<Vec<Project>, StoreError> {
                 row.get::<_, String>(0)?,
                 row.get::<_, String>(1)?,
                 row.get::<_, bool>(2)?,
+                row.get::<_, bool>(3)?,
             ))
         })
         .map_err(sql_error)?;
     rows.map(|row| {
-        let (id, name, pinned) = row.map_err(sql_error)?;
+        let (id, name, pinned, archived) = row.map_err(sql_error)?;
         Ok(Project {
             id: parse_project_id(&id)?,
             name,
             pinned,
+            archived,
             roots: roots.remove(&id).unwrap_or_default(),
         })
     })
@@ -215,6 +243,23 @@ pub(crate) fn edit(
     Ok(project)
 }
 
+/// Deletes project `id`; its chats become standalone with an empty
+/// `workspace_root` and keep everything else. Returns how many.
+pub(crate) fn delete(conn: &mut Connection, id: ProjectId) -> Result<usize, StoreError> {
+    let tx = begin(conn)?;
+    find(&tx, id)?;
+    let freed = tx
+        .execute(
+            "UPDATE sessions SET project_id = NULL, workspace_root = '' WHERE project_id = ?1",
+            [id.to_string()],
+        )
+        .map_err(sql_error)?;
+    tx.execute("DELETE FROM projects WHERE id = ?1", [id.to_string()])
+        .map_err(sql_error)?;
+    tx.commit().map_err(sql_error)?;
+    Ok(freed)
+}
+
 /// The `workspace_root` of a session in `project`: its first directory.
 fn first_root(project: &Project) -> String {
     project.roots.first().cloned().unwrap_or_default()
@@ -256,9 +301,8 @@ mod tests {
 
         use super::super::*;
         use crate::db;
-        use crate::migrations::{MIGRATIONS, migrate_with};
+        use crate::seed::seed_at_version;
         use crate::session::load;
-        use crate::session::tests::sample;
 
         /// Sessions of a store at the previous schema version: directory and
         /// number of blocks each.
@@ -275,41 +319,7 @@ mod tests {
 
         /// A database file at version 6 holding [`SEEDED`]; returns the ids.
         fn seed_previous_version(path: &std::path::Path) -> Vec<SessionId> {
-            let mut conn = Connection::open(path).unwrap();
-            conn.pragma_update(None, "foreign_keys", true).unwrap();
-            migrate_with(&mut conn, &MIGRATIONS[..6]).unwrap();
-            let mut ids = Vec::new();
-            for (n, (root, blocks)) in (1_i64..).zip(SEEDED) {
-                let stored = sample(root, n.unsigned_abs(), blocks);
-                let session = &stored.session;
-                conn.execute(
-                    "INSERT INTO sessions (id, workspace_root, title, created_at, updated_at,
-                                       turn_count, data_json)
-                 VALUES (?1, ?2, ?3, ?4, ?4, 2, ?5)",
-                    params![
-                        session.id.to_string(),
-                        root,
-                        session.title,
-                        n,
-                        serde_json::to_string(session).unwrap()
-                    ],
-                )
-                .unwrap();
-                for (seq, block) in (0_i64..).zip(&stored.timeline) {
-                    conn.execute(
-                        "INSERT INTO timeline_blocks VALUES (?1, ?2, ?3, 'k', ?4)",
-                        params![
-                            session.id.to_string(),
-                            seq,
-                            block.id.to_string(),
-                            serde_json::to_string(block).unwrap()
-                        ],
-                    )
-                    .unwrap();
-                }
-                ids.push(session.id);
-            }
-            ids
+            seed_at_version(path, 6, &SEEDED)
         }
 
         fn block_counts(conn: &Connection) -> BTreeMap<String, i64> {
@@ -386,16 +396,9 @@ mod tests {
         use application_testing::system::InMemorySessionStore;
 
         use super::super::*;
+        use crate::seed::tag;
         use crate::session::SqliteSessionStore;
         use crate::session::tests::sample;
-
-        fn tag(error: &StoreError) -> String {
-            match error {
-                StoreError::ProjectNotFound(_) => "no such project".into(),
-                StoreError::NotFound(_) => "no such session".into(),
-                other => other.to_string(),
-            }
-        }
 
         fn show(result: Result<Project, StoreError>) -> String {
             match result {

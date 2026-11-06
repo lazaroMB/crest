@@ -30,6 +30,16 @@ impl ProjectBook {
         Ok(project)
     }
 
+    /// Removes project `id`.
+    pub fn remove(&mut self, id: ProjectId) -> Result<(), StoreError> {
+        let before = self.projects.len();
+        self.projects.retain(|p| p.id != id);
+        if self.projects.len() == before {
+            return Err(StoreError::ProjectNotFound(id));
+        }
+        Ok(())
+    }
+
     /// Applies `change` to project `id`; nothing is kept when it fails.
     pub fn edit(
         &mut self,

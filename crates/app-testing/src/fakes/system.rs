@@ -24,7 +24,8 @@ use crate::ports::plugin::{
 };
 use crate::ports::projects::RecentWorkspace;
 use crate::ports::store::{
-    ProjectStorePort, SessionStorePort, SessionSummary, StoreError, StoredSession,
+    OrganizeStorePort, ProjectStorePort, SessionStorePort, SessionSummary, StoreError,
+    StoredSession,
 };
 use crate::ports::telemetry::{LlmCallRecord, SpanId, TelemetryPort, ToolCallRecord, TurnSpan};
 
@@ -402,12 +403,26 @@ impl InMemorySessionStore {
         Ok(project)
     }
 
+    /// Applies `change` to the session `id` without touching its timeline or
+    /// `updated_at`.
+    fn edit_session(
+        &self,
+        id: SessionId,
+        change: impl FnOnce(&mut domain::conversation::Session),
+    ) -> Result<(), StoreError> {
+        self.check_failure()?;
+        let mut sessions = lock(&self.sessions);
+        let stored = sessions.get_mut(&id).ok_or(StoreError::NotFound(id))?;
+        change(&mut stored.session);
+        Ok(())
+    }
+
     /// Sessions of `root`, most recently updated first; ties are broken by
     /// creation time and then id so the order is deterministic.
     fn sorted_for(&self, root: &str) -> Vec<StoredSession> {
         let mut found: Vec<StoredSession> = lock(&self.sessions)
             .values()
-            .filter(|s| s.session.workspace_root == root)
+            .filter(|s| s.session.workspace_root == root && !s.session.archived)
             .cloned()
             .collect();
         found.sort_by(|a, b| {
@@ -417,6 +432,13 @@ impl InMemorySessionStore {
         });
         found
     }
+}
+
+/// The clock the fake uses for a branch, in milliseconds since the epoch.
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
 }
 
 /// The `workspace_root` of a session in `project`: its first directory.
@@ -434,6 +456,12 @@ impl SessionStorePort for InMemorySessionStore {
         let mut sessions = lock(&self.sessions);
         if let Some(old) = sessions.get(&session.session.id) {
             session.session.workspace_root = old.session.workspace_root.clone();
+            // The flags and the branch link belong to their own calls.
+            let (pinned, archived) = (old.session.pinned, old.session.archived);
+            session.session.pinned = pinned;
+            session.session.archived = archived;
+            session.session.branched_from = old.session.branched_from;
+            session.session.branched_at = old.session.branched_at;
         }
         session.session.project_id = match sessions.get(&session.session.id) {
             Some(old) => old.session.project_id,
@@ -479,10 +507,14 @@ impl SessionStorePort for InMemorySessionStore {
 
     async fn delete(&self, id: SessionId) -> Result<(), StoreError> {
         self.check_failure()?;
-        lock(&self.sessions)
-            .remove(&id)
-            .map(|_| ())
-            .ok_or(StoreError::NotFound(id))
+        let mut sessions = lock(&self.sessions);
+        sessions.remove(&id).ok_or(StoreError::NotFound(id))?;
+        for other in sessions.values_mut() {
+            if other.session.branched_from == Some(id) {
+                other.session.branched_from = None;
+            }
+        }
+        Ok(())
     }
 
     async fn recent_workspaces(&self, limit: usize) -> Result<Vec<RecentWorkspace>, StoreError> {
@@ -501,6 +533,64 @@ impl SessionStorePort for InMemorySessionStore {
         recent.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then(a.root.cmp(&b.root)));
         recent.truncate(limit);
         Ok(recent)
+    }
+}
+
+#[async_trait]
+impl OrganizeStorePort for InMemorySessionStore {
+    async fn rename_session(&self, id: SessionId, title: &str) -> Result<(), StoreError> {
+        self.edit_session(id, |s| {
+            s.title = Some(title.trim().to_owned()).filter(|t| !t.is_empty());
+        })
+    }
+
+    async fn pin_session(&self, id: SessionId, pinned: bool) -> Result<(), StoreError> {
+        self.edit_session(id, |s| s.pinned = pinned)
+    }
+
+    async fn set_session_archived(&self, id: SessionId, archived: bool) -> Result<(), StoreError> {
+        self.edit_session(id, |s| s.archived = archived)
+    }
+
+    async fn branch_session(&self, id: SessionId) -> Result<SessionId, StoreError> {
+        self.check_failure()?;
+        let mut sessions = lock(&self.sessions);
+        let source = sessions.get(&id).ok_or(StoreError::NotFound(id))?;
+        let copy = StoredSession {
+            session: source.session.branch(source.timeline.len(), now_ms()),
+            timeline: source.timeline.clone(),
+            permission_rules: Vec::new(),
+            prompt_history: source.prompt_history.clone(),
+        };
+        let new_id = copy.session.id;
+        sessions.insert(new_id, copy);
+        Ok(new_id)
+    }
+
+    async fn set_project_archived(
+        &self,
+        id: ProjectId,
+        archived: bool,
+    ) -> Result<Project, StoreError> {
+        self.check_failure()?;
+        lock(&self.projects).edit(id, |p| {
+            p.archived = archived;
+            Ok(())
+        })
+    }
+
+    async fn delete_project(&self, id: ProjectId) -> Result<usize, StoreError> {
+        self.check_failure()?;
+        lock(&self.projects).remove(id)?;
+        let mut freed = 0;
+        for stored in lock(&self.sessions).values_mut() {
+            if stored.session.project_id == Some(id) {
+                stored.session.project_id = None;
+                stored.session.workspace_root = String::new();
+                freed += 1;
+            }
+        }
+        Ok(freed)
     }
 }
 

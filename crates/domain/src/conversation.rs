@@ -406,6 +406,21 @@ pub struct Session {
     /// Human-readable title, if one has been set or generated.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Whether the chat is listed first in its section. The store keeps the
+    /// column; a save does not change it.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pinned: bool,
+    /// Whether the chat is out of the normal listing (archived). Kept by the
+    /// store like `pinned`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub archived: bool,
+    /// The chat this one was branched from; cleared when that chat is
+    /// deleted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branched_from: Option<SessionId>,
+    /// How many timeline blocks were copied from `branched_from`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub branched_at: Option<usize>,
     /// Turns in chronological order.
     #[serde(default)]
     pub turns: Vec<Turn>,
@@ -425,9 +440,33 @@ impl Session {
             workspace_root: workspace_root.into(),
             project_id: None,
             title: None,
+            pinned: false,
+            archived: false,
+            branched_from: None,
+            branched_at: None,
             turns: Vec::new(),
             created_at: now_ms,
             updated_at: now_ms,
+        }
+    }
+
+    /// A new chat that starts as a copy of this one: a fresh id, the same
+    /// project and directory, the title `<title> (branch)`, the same turns,
+    /// and a link back with the number of timeline blocks `copied`. It is
+    /// not pinned or archived. This session is not changed.
+    #[must_use]
+    pub fn branch(&self, copied: usize, now_ms: u64) -> Self {
+        let title = self.title.as_deref().unwrap_or("New chat");
+        Self {
+            id: SessionId::new(),
+            title: Some(format!("{title} (branch)")),
+            pinned: false,
+            archived: false,
+            branched_from: Some(self.id),
+            branched_at: Some(copied),
+            created_at: now_ms,
+            updated_at: now_ms,
+            ..self.clone()
         }
     }
 
@@ -993,5 +1032,35 @@ mod pending_tests {
         assert_eq!(form, BlockId::for_tool_use("toolu_1", "form"));
         assert_ne!(form, BlockId::for_tool_use("toolu_1", "tool_call"));
         assert_ne!(form, BlockId::for_tool_use("toolu_2", "form"));
+    }
+
+    #[test]
+    fn a_branch_copies_the_chat_and_links_back_without_touching_it() {
+        let mut source = Session::new("/w/api", 10);
+        source.project_id = Some(ProjectId::new());
+        source.push_turn(Turn::new(Message::user_text("hola")), 11);
+        for (title, pinned, archived, expected) in [
+            (Some("Fix bug"), false, false, "Fix bug (branch)"),
+            (None, true, true, "New chat (branch)"),
+        ] {
+            source.title = title.map(Into::into);
+            (source.pinned, source.archived) = (pinned, archived);
+            let before = source.clone();
+            let branch = source.branch(7, 99);
+            assert_eq!(source, before, "the source is only read");
+            assert_ne!(branch.id, source.id);
+            assert_eq!(branch.title.as_deref(), Some(expected));
+            assert_eq!(
+                (branch.project_id, branch.workspace_root.as_str()),
+                (source.project_id, "/w/api")
+            );
+            assert_eq!(branch.turns, source.turns);
+            assert_eq!(
+                (branch.branched_from, branch.branched_at),
+                (Some(source.id), Some(7))
+            );
+            assert_eq!((branch.pinned, branch.archived), (false, false));
+            assert_eq!((branch.created_at, branch.updated_at), (99, 99));
+        }
     }
 }

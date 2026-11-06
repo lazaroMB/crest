@@ -52,6 +52,10 @@ impl StoredSession {
             title: self.session.title.clone(),
             workspace_root: self.session.workspace_root.clone(),
             project_id: self.session.project_id,
+            pinned: self.session.pinned,
+            archived: self.session.archived,
+            branched_from: self.session.branched_from,
+            branched_at: self.session.branched_at,
             updated_at: self.session.updated_at,
             turns: self.session.turns.len(),
         }
@@ -69,6 +73,14 @@ pub struct SessionSummary {
     pub workspace_root: String,
     /// The project it is in; `None` for a chat without a project.
     pub project_id: Option<ProjectId>,
+    /// Whether it is listed first in its section.
+    pub pinned: bool,
+    /// Whether it is archived: out of the normal listing.
+    pub archived: bool,
+    /// The chat it was branched from, while that chat exists.
+    pub branched_from: Option<SessionId>,
+    /// How many blocks the branch copied.
+    pub branched_at: Option<usize>,
     /// Last update, in milliseconds since the Unix epoch.
     pub updated_at: u64,
     /// Number of turns.
@@ -98,7 +110,7 @@ pub enum StoreError {
 
 /// Persists sessions by workspace.
 #[async_trait]
-pub trait SessionStorePort: ProjectStorePort {
+pub trait SessionStorePort: ProjectStorePort + OrganizeStorePort {
     /// Inserts or replaces the session with the same id, updating its
     /// listing entry. Must be atomic: a crash leaves the old or new version.
     /// Takes the session by value: callers build it for the save, and an
@@ -110,14 +122,15 @@ pub trait SessionStorePort: ProjectStorePort {
     async fn load(&self, id: SessionId) -> Result<StoredSession, StoreError>;
 
     /// Loads the most recently updated session of the workspace `root`, if
-    /// any; used to resume on start-up.
+    /// any; archived ones are skipped; used to resume on start-up.
     async fn latest_for_workspace(&self, root: &str) -> Result<Option<StoredSession>, StoreError>;
 
-    /// Lists the sessions of the workspace `root`, most recent first.
+    /// Lists the sessions of the workspace `root`, most recent first, leaving
+    /// out archived ones.
     async fn list(&self, root: &str) -> Result<Vec<SessionSummary>, StoreError>;
 
-    /// Lists every session, most recent first: what the sidebar groups by
-    /// project.
+    /// Lists every session, archived ones included (flagged), most recent
+    /// first: what the sidebar groups by project.
     async fn list_all(&self) -> Result<Vec<SessionSummary>, StoreError>;
 
     /// Deletes the session `id`, or fails with [`StoreError::NotFound`].
@@ -161,6 +174,42 @@ pub trait ProjectStorePort: Send + Sync {
         id: SessionId,
         project: Option<ProjectId>,
     ) -> Result<(), StoreError>;
+}
+
+/// The sidebar menus' changes to chats and projects that the other ports do
+/// not cover: names, pins, archive, branch and deleting a project. The
+/// session store is also this, so one handle serves all three.
+#[async_trait]
+pub trait OrganizeStorePort: Send + Sync {
+    /// Renames the chat; an empty title clears it. Does not change the
+    /// order of the listing (`updated_at` stays).
+    async fn rename_session(&self, id: SessionId, title: &str) -> Result<(), StoreError>;
+
+    /// Pins or unpins a chat. A later `save` does not undo it.
+    async fn pin_session(&self, id: SessionId, pinned: bool) -> Result<(), StoreError>;
+
+    /// Archives or restores a chat. Touches neither its blocks nor its
+    /// `updated_at`; a later `save` does not undo it.
+    async fn set_session_archived(&self, id: SessionId, archived: bool) -> Result<(), StoreError>;
+
+    /// Starts a new chat as a copy of `id` (see `Session::branch`): its
+    /// timeline and prompt history are copied, `branched_from` and
+    /// `branched_at` set. The source is only read; one transaction. Returns
+    /// the new id.
+    async fn branch_session(&self, id: SessionId) -> Result<SessionId, StoreError>;
+
+    /// Archives or restores a project; its chats keep their own flag and
+    /// stay in it, hidden together. Nothing is deleted.
+    async fn set_project_archived(
+        &self,
+        id: ProjectId,
+        archived: bool,
+    ) -> Result<Project, StoreError>;
+
+    /// Deletes a project but never its chats: they become standalone (no
+    /// project, empty `workspace_root`), keeping their history and flags.
+    /// Returns how many chats were set free.
+    async fn delete_project(&self, id: ProjectId) -> Result<usize, StoreError>;
 }
 
 #[cfg(test)]

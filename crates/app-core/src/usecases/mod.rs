@@ -12,6 +12,7 @@ pub mod git_status;
 pub mod login;
 pub mod model3d;
 pub mod open_file;
+pub mod organize;
 pub mod permissions;
 pub mod project_picker;
 pub mod resume;

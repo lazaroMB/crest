@@ -60,6 +60,11 @@ pub const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../migrations/0007_projects.sql"),
         after: Some(crate::projects::backfill),
     },
+    Migration {
+        name: "0008_organize",
+        sql: include_str!("../migrations/0008_organize.sql"),
+        after: None,
+    },
 ];
 
 /// Version a fully migrated database has.

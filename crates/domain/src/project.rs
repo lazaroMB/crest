@@ -34,6 +34,8 @@ pub struct Project {
     pub name: String,
     /// Whether it is listed first.
     pub pinned: bool,
+    /// Whether it is out of the normal listing, with its chats.
+    pub archived: bool,
     /// Its directories in the order they were added; at least one, no
     /// repeats, none with a trailing slash.
     pub roots: Vec<String>,
@@ -91,6 +93,7 @@ impl Project {
             id: ProjectId::new(),
             name,
             pinned: false,
+            archived: false,
             roots: clean,
         })
     }
