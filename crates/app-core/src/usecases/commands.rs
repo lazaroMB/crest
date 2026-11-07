@@ -66,6 +66,8 @@ pub enum Command {
     Quit,
     /// `/help [section|search]` (also `/h`).
     Help(String),
+    /// `/tour`: the welcome tour, again.
+    Tour,
     /// `/model ...`.
     Model(ModelCommand),
     /// `/theme ...`.
@@ -131,6 +133,7 @@ impl Command {
         match name {
             "q" | "quit" | "qa" => Self::Quit,
             "help" | "h" => Self::Help(arg.to_owned()),
+            "tour" => Self::Tour,
             "model" => Self::Model(ModelCommand::parse(arg)),
             "theme" => Self::Theme(ThemeCommand::parse(arg)),
             "mode" => Self::Mode(arg.parse()),
@@ -422,6 +425,7 @@ pub fn dispatch<H: CommandHandler + ?Sized>(handler: &H, command: Command) -> Op
         Command::Other { name, arg } => return handler.callback(&name, arg),
         Command::Quit
         | Command::Help(_)
+        | Command::Tour
         | Command::Model(_)
         | Command::Theme(_)
         | Command::Mode(_)

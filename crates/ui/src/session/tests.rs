@@ -2354,3 +2354,73 @@ fn the_welcome_screen_names_the_keys_of_the_keymap(cx: &mut TestAppContext) {
     assert!(row("F8").is_some_and(|what| what.starts_with("move the focus")));
     assert!(row("Ctrl+Shift+C").is_some(), "{welcome:?}");
 }
+
+#[gpui::test]
+fn the_tour_opens_from_the_command_and_escape_closes_it(cx: &mut TestAppContext) {
+    let (h, cx) = harness(Vec::new(), cx);
+    assert!(h.session.read_with(cx, |s, _| s.tour_step().is_none()));
+    send("/tour", cx);
+    h.session.read_with(cx, |session, _| {
+        assert_eq!(session.tour_step(), Some(crate::tour::Step::Welcome));
+    });
+    cx.update(|window, cx| {
+        h.session.update(cx, |session, cx| {
+            session.tour_act(crate::tour::Action::Next, window, cx);
+        });
+    });
+    h.session.read_with(cx, |session, _| {
+        assert_eq!(session.tour_step(), Some(crate::tour::Step::NewChat));
+    });
+    cx.update(|window, cx| {
+        h.session.update(cx, |session, cx| {
+            session.tour_act(crate::tour::Action::Back, window, cx);
+        });
+    });
+    h.session.read_with(cx, |session, _| {
+        assert_eq!(session.tour_step(), Some(crate::tour::Step::Welcome));
+    });
+    cx.simulate_keystrokes("escape");
+    h.session
+        .read_with(cx, |session, _| assert!(session.tour_step().is_none()));
+}
+
+#[gpui::test]
+fn the_commands_step_opens_the_existing_slash_list(cx: &mut TestAppContext) {
+    let (h, cx) = harness(Vec::new(), cx);
+    send("/tour", cx);
+    for _ in 0..5 {
+        cx.update(|window, cx| {
+            h.session.update(cx, |session, cx| {
+                session.tour_act(crate::tour::Action::Next, window, cx);
+            });
+        });
+    }
+    h.session.read_with(cx, |session, cx| {
+        assert_eq!(session.tour_step(), Some(crate::tour::Step::Commands));
+        assert_eq!(session.input().read(cx).text(cx), "/");
+    });
+    cx.update(|window, cx| {
+        h.session.update(cx, |session, cx| {
+            session.tour_act(crate::tour::Action::Back, window, cx);
+        });
+    });
+    h.session.read_with(cx, |session, cx| {
+        assert_eq!(session.tour_step(), Some(crate::tour::Step::Prompt));
+        assert_eq!(session.input().read(cx).text(cx), "");
+    });
+}
+
+#[gpui::test]
+fn the_tour_opens_once_on_a_clear_session(cx: &mut TestAppContext) {
+    let (h, cx) = harness_parts(
+        Vec::new(),
+        domain::conversation::Session::new("/ws", 0),
+        Vec::new(),
+        |_, _| {},
+        |parts| parts.tutorial_seen = None,
+        cx,
+    );
+    h.session.read_with(cx, |session, _| {
+        assert_eq!(session.tour_step(), Some(crate::tour::Step::Welcome));
+    });
+}

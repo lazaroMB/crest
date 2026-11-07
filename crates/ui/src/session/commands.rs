@@ -66,6 +66,7 @@ impl Session {
             Command::Login(account) => self.open_login(&account, window, cx),
             Command::Logout(account) => self.logout(&account, window, cx),
             Command::Help(search) => self.open_help(&search, window, cx),
+            Command::Tour => self.open_tour(cx),
             Command::Permissions => self.open_permissions(window, cx),
             Command::ModalClose => {
                 let closed = self
