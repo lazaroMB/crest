@@ -76,7 +76,7 @@ async fn fzf_filter(
         input.extend_from_slice(file.as_str().as_bytes());
         input.push(b'\n');
     }
-    let spec = ProcessSpec::new(&search.fzf, search.root.as_path())
+    let spec = ProcessSpec::new(&search.fzf, crate::directory(search)?.as_path())
         .arg("--filter")
         .arg(query)
         .arg("--scheme=path")

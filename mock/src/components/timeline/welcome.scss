@@ -1,0 +1,36 @@
+.welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  height: 100%;
+
+  &__hero {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+
+  &__word {
+    font-size: calc(var(--text-base) * 1.875); // text-3xl
+    font-weight: 700;
+  }
+
+  &__keys {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: var(--text-sm);
+  }
+
+  &__row {
+    display: flex;
+  }
+
+  &__key {
+    flex: none;
+    width: 110px;
+    color: var(--accent);
+  }
+}

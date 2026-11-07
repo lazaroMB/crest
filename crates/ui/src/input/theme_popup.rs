@@ -8,10 +8,10 @@
 //! <name>`), `Tab` completes the line to it and `Esc` hides the popup and
 //! goes back to the theme in use.
 
-use gpui::{AnyElement, App, ParentElement as _, SharedString, Styled as _, div};
-use gpui_component::{ActiveTheme as _, h_flex};
+use gpui::{AnyElement, ParentElement as _, SharedString, Styled as _, div};
+use gpui_component::h_flex;
 
-use super::completion::{self, Look, Nav, Popup, PopupKey, nav_key};
+use super::completion::{self, Look, Nav, Paint, Popup, PopupKey, nav_key};
 use crate::session::ThemeChoice;
 
 /// What the popup shows for the current line: the matching themes, by
@@ -118,14 +118,8 @@ pub fn theme_key(
 
 /// Draws `popup` from entry `top` on, with entry `selected` highlighted;
 /// `current` is the theme in use, marked in the list.
-pub fn render(
-    popup: ThemePopup,
-    selected: usize,
-    top: usize,
-    current: &str,
-    cx: &App,
-) -> AnyElement {
-    let theme = cx.theme();
+pub(super) fn render(popup: ThemePopup, paint: &Paint, current: &str) -> AnyElement {
+    let theme = paint.theme;
     completion::render(
         &Look {
             id: "theme-palette",
@@ -133,9 +127,7 @@ pub fn render(
             keys: "↑↓ preview · Enter save · Tab complete · Esc back",
         },
         popup,
-        selected,
-        top,
-        cx,
+        paint,
         |choice| {
             let marker = if choice.name == current { "●" } else { " " };
             // A swatch of the theme itself: background, accent, text.

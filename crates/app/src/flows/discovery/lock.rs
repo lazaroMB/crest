@@ -11,7 +11,8 @@ use std::collections::BTreeSet;
 use std::sync::{Arc, PoisonError, RwLock};
 
 use async_trait::async_trait;
-use domain::workspace::{WorkspacePath, WorkspaceRoot};
+use domain::roots::WorkspaceRoots;
+use domain::workspace::WorkspacePath;
 
 use crate::flows::research::nodes::spec::sink::SPECS_DIR;
 use crate::ports::discovery::DiscoveryId;
@@ -101,7 +102,18 @@ impl LockedFs {
     }
 
     fn check(&self, path: &WorkspacePath) -> Result<(), FsError> {
-        match self.lock.locked_by(path) {
+        // The folders are the first root's: an absolute spelling of a path in
+        // it must not slip past the lock. Other roots are not locked, and a
+        // path outside all of them is the inner port's error.
+        let relative = if path.is_absolute() {
+            match self.inner.roots().resolve(path.as_str()) {
+                Ok(rooted) if rooted.index() == 0 => rooted.path().clone(),
+                _ => return Ok(()),
+            }
+        } else {
+            path.clone()
+        };
+        match self.lock.locked_by(&relative) {
             Some(folder) => Err(FsError::SensitivePath {
                 path: path.clone(),
                 pattern: format!("{folder}/ (open discovery; `/research` writes it)"),
@@ -113,8 +125,8 @@ impl LockedFs {
 
 #[async_trait]
 impl FileSystemPort for LockedFs {
-    fn root(&self) -> &WorkspaceRoot {
-        self.inner.root()
+    fn roots(&self) -> &WorkspaceRoots {
+        self.inner.roots()
     }
 
     async fn read_file(&self, request: ReadFileRequest) -> Result<FileContent, FsError> {
@@ -157,6 +169,7 @@ impl FileSystemPort for LockedFs {
 mod tests {
     use super::*;
     use crate::testing::fs::InMemoryFs;
+    use domain::workspace::WorkspaceRoot;
 
     #[tokio::test]
     async fn locked_folders_refuse_writes_until_unlocked() {
@@ -193,5 +206,32 @@ mod tests {
         lock.unlock(&id);
         assert!(fs.prepare_write(request()).await.is_ok());
         assert!(lock.folders().is_empty());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_absolute_spelling_of_a_locked_path_is_refused_too() {
+        let inner: Arc<dyn FileSystemPort> =
+            Arc::new(InMemoryFs::new(WorkspaceRoot::new("/ws").unwrap()));
+        let lock = DiscoveryLock::new();
+        let fs = LockedFs::new(inner, lock.clone());
+        lock.lock(&DiscoveryId::new("0007-x"));
+        for spelling in [
+            "/ws/.crest/specs/0007-x/spec.md",
+            "/ws/a/../.crest/specs/0007-x/spec.md",
+        ] {
+            let path = WorkspacePath::parse_any(spelling).unwrap();
+            let err = fs
+                .prepare_write(WriteFileRequest {
+                    path,
+                    content: "x".into(),
+                })
+                .await
+                .unwrap_err();
+            assert!(
+                matches!(err, FsError::SensitivePath { ref pattern, .. } if pattern.contains("open discovery")),
+                "{spelling}: {err}"
+            );
+        }
     }
 }

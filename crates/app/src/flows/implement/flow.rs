@@ -37,6 +37,9 @@ pub enum FlowError {
     /// The flow already stopped (completed, aborted or back to the Spec).
     #[error("the implementation flow already stopped")]
     Finished,
+    /// The chat has no directory to run the flow in.
+    #[error("{}", domain::workspace::NO_DIRECTORY)]
+    NoDirectory,
     /// graph-flow or its storage failed (a step error included).
     #[error(transparent)]
     Graph(#[from] GraphError),

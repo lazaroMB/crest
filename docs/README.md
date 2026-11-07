@@ -12,6 +12,8 @@ For the project overview, installation and quick start, see the [main README](..
 | [architecture.md](architecture.md) | People reading the code | The hexagonal layers, ports and adapters, the loop of a turn, events, threads, persistence and the dependency rules. |
 | [development.md](development.md) | Contributors | Tests and fakes, how to add tools, blocks, adapters or nodes, commit conventions and CI. |
 
+Requirements, what a person can do, live in [requirements/](requirements/). Copy [requirements/TEMPLATE.md](requirements/TEMPLATE.md). Technical plans live in [specs/](specs/).
+
 Research notes:
 
 - [research/chat-blocks-for-technical-work.md](research/chat-blocks-for-technical-work.md): which new chat blocks crest should render for developers, engineers, architects, chemists, physicists and data people; computation you can verify (the `Computed` envelope), statistics cards, LaTeX math, interop formats and the roadmap (phase 1 implemented).
@@ -22,3 +24,4 @@ Research notes:
 - [research/installation.md](research/installation.md): how crest is packaged and installed on each platform.
 - [research/rich-content-modals.md](research/rich-content-modals.md): how plugin modals draw rich content (images, documents, tables, PDF, 3D, terminal), the GPUI constraints, why web pages are not embedded, and the roadmap.
 - [research/solution-simulator.md](research/solution-simulator.md): an isometric 3D "motherboard" view of each solution with an executable, checked simulation of its scenarios (implemented as an MVP; see its status section).
+- [research/crest-ux-discovery-summary.md](research/crest-ux-discovery-summary.md): executive summary of the CREST-UX discovery, the visibility and reach of the graphical window.

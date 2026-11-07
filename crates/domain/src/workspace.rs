@@ -15,6 +15,10 @@ use std::str::FromStr;
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+/// What a tool says when the session has no directory.
+pub const NO_DIRECTORY: &str =
+    "this chat has no directory; ask the person to choose one or add the chat to a project";
+
 /// Errors produced while building workspace roots and paths.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PathError {
@@ -25,6 +29,10 @@ pub enum PathError {
         /// The path exactly as it was received.
         path: String,
     },
+    /// The session has no directory (a standalone chat): there is no root to
+    /// resolve against. The message is what the model relays to the person.
+    #[error("{}", NO_DIRECTORY)]
+    NoRoots,
     /// The workspace root is not an absolute path.
     #[error("workspace root must be an absolute path: {}", path.display())]
     NotAbsoluteRoot {
@@ -263,6 +271,42 @@ impl<'de> Deserialize<'de> for WorkspacePath {
     }
 }
 
+/// [`WorkspacePath::parse_any`]: an absolute path is kept, lexically
+/// normalized and `/`-separated.
+pub(crate) fn parse_any_path(input: &str) -> Result<WorkspacePath, PathError> {
+    check_input(input)?;
+    if !is_absolute_input(input) {
+        return WorkspacePath::parse(input);
+    }
+    let (prefix, path) = split_prefix(input);
+    let segments = normalize(path, true).unwrap_or_default();
+    let prefix = prefix.map(|p| p.replace('\\', "/")).unwrap_or_default();
+    Ok(WorkspacePath(format!("{prefix}/{}", segments.join("/"))))
+}
+
+/// `deserialize_with` for the file tools' paths: like the plain
+/// [`Deserialize`] of [`WorkspacePath`], but an absolute path is kept for the
+/// roots to place ([`WorkspacePath::parse_any`]), which is how a tool names a
+/// file under a project's second directory. Every other request keeps
+/// rejecting absolute paths.
+pub fn deserialize_any_path<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<WorkspacePath, D::Error> {
+    let raw = Cow::<'de, str>::deserialize(deserializer)?;
+    WorkspacePath::parse_any(&raw).map_err(serde::de::Error::custom)
+}
+
+/// [`deserialize_any_path`] for an optional path (`null` or missing is
+/// `None`), used by the search tools so they can name a directory under any
+/// root of a project.
+pub fn deserialize_any_path_opt<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<WorkspacePath>, D::Error> {
+    let raw = Option::<Cow<'de, str>>::deserialize(deserializer)?;
+    raw.map(|raw| WorkspacePath::parse_any(&raw).map_err(serde::de::Error::custom))
+        .transpose()
+}
+
 impl JsonSchema for WorkspacePath {
     fn inline_schema() -> bool {
         true
@@ -451,7 +495,7 @@ fn prefix_key(prefix: &str) -> String {
 /// Whether `input` is absolute, or at least not relative to the workspace:
 /// a leading separator, and on Windows a drive (`C:`), UNC (`\\host`) or
 /// verbatim (`\\?\`) prefix.
-fn is_absolute_input(input: &str) -> bool {
+pub(crate) fn is_absolute_input(input: &str) -> bool {
     input.starts_with(is_separator) || split_prefix(input).0.is_some()
 }
 

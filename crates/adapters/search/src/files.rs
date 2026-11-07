@@ -76,7 +76,7 @@ impl RipgrepSearch {
         &self,
         glob: Option<&str>,
     ) -> Result<Vec<WorkspacePath>, SearchError> {
-        let spec = ProcessSpec::new(&self.rg, self.root.as_path())
+        let spec = ProcessSpec::new(&self.rg, crate::directory(self)?.as_path())
             .arg("--files")
             .args(self.rg_common_args(glob));
         let out = match process::run(&spec, None, self.timeout).await {
@@ -107,7 +107,7 @@ impl RipgrepSearch {
 
     /// The `rg`-less fallback of [`Self::all_files`].
     async fn walk_files(&self, glob: Option<&str>) -> Result<Vec<WorkspacePath>, SearchError> {
-        let root = self.root.as_path().to_owned();
+        let root = crate::directory(self)?.as_path().to_owned();
         let globs = self.walk_globs(glob);
         let walk = tokio::task::spawn_blocking(move || walk(&root, &globs));
         // On timeout the blocking walk cannot be interrupted; it finishes

@@ -190,8 +190,9 @@ async fn resolve_writable(
 ) -> Result<(WorkspacePath, PathBuf), FsError> {
     let (path, target) = guard.resolve_for_write(path.as_str()).await?;
     guard.check_readable(&path)?;
-    if let Some(real) = relative(guard, &target)
-        && real != path
+    if let Some(rooted) = guard.roots().locate(&target)
+        && let real = rooted.path().clone()
+        && real != guard.roots().relative_of(&path)?
     {
         guard.check_readable(&real).map_err(|e| match e {
             FsError::SensitivePath { pattern, .. } => FsError::SensitivePath {
@@ -202,15 +203,6 @@ async fn resolve_writable(
         })?;
     }
     Ok((path, target))
-}
-
-/// The workspace-relative form of `target`, already known to be inside.
-fn relative(guard: &WorkspaceGuard, target: &Path) -> Option<WorkspacePath> {
-    let rest = target.strip_prefix(guard.root().as_path()).ok()?;
-    if rest.as_os_str().is_empty() {
-        return Some(WorkspacePath::root());
-    }
-    WorkspacePath::parse(&rest.to_string_lossy()).ok()
 }
 
 /// Reads an existing text file, failing on directories and binaries.

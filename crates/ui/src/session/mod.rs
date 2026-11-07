@@ -439,6 +439,8 @@ pub struct SessionParts {
     pub needs_model: bool,
     /// Id of the open session, so the chats panel can mark it.
     pub session_id: Option<String>,
+    /// Id of the project the open session is in, if any.
+    pub project_id: Option<String>,
     /// The saved session ends in an `ask_user` call nobody answered (the
     /// process ended while the form waited): the session asks it again as
     /// soon as it opens ([`SessionController::resume_pending`]).
@@ -473,6 +475,7 @@ impl SessionParts {
             needs_login: false,
             needs_model: false,
             session_id: None,
+            project_id: None,
             resume_pending: false,
         }
     }
@@ -536,8 +539,9 @@ pub struct Session {
     git: Option<Task<()>>,
     /// The `/login` key being checked; dropping it cancels the check.
     login_check: Option<Task<()>>,
-    /// The window shows the chats sidebar: `focus.next` goes through it.
-    chats_shown: bool,
+    /// How wide the window's sidebar is: `focus.next` goes through it
+    /// unless it is the strip, which has no focus stop.
+    sidebar: crate::chats::SidebarWidth,
     /// When quitting was asked during a turn: a second ask within
     /// [`QUIT_CONFIRM`] quits.
     quit_asked_at: Option<Instant>,
@@ -586,6 +590,7 @@ pub fn open(
         root.push_overlay(login, cx);
         root.push_overlay(approval, cx);
     });
+    crate::info::attach(&session, cx);
     session.update(cx, |session, cx| session.focus_input(window, cx));
     (root, session)
 }
@@ -615,8 +620,8 @@ impl Session {
             theme,
             needs_login,
             needs_model,
-            session_id: _,
             resume_pending,
+            ..
         } = parts;
         let timeline = cx.new(|cx| {
             let mut timeline = TimelineView::new(cx);
@@ -652,7 +657,7 @@ impl Session {
         });
         let activity = cx.new(|_| ActivityView::new());
         let tree = cx.new(|cx| TreePanel::new(files.clone(), cx));
-        let workspace_root = fs.as_ref().map(|fs| fs.root().clone());
+        let workspace_root = fs.as_ref().and_then(|fs| fs.roots().first().cloned());
         let picker = cx.new(|cx| {
             let mut picker = PickerView::new(files, content, window, cx);
             picker.set_file_system(fs);
@@ -758,7 +763,7 @@ impl Session {
             theme_choices: Vec::new(),
             git: None,
             login_check: None,
-            chats_shown: false,
+            sidebar: crate::chats::SidebarWidth::default(),
             quit_asked_at: None,
             permissions_events: None,
             _git_timer: Self::git_timer(cx),
@@ -929,10 +934,10 @@ impl Session {
         self.notice(level, message, cx);
     }
 
-    /// Tells the session whether the window shows the chats sidebar, so
+    /// Tells the session how wide the window's sidebar is, so
     /// `focus.next` goes through it.
-    pub fn set_chats_shown(&mut self, shown: bool) {
-        self.chats_shown = shown;
+    pub fn set_sidebar(&mut self, width: crate::chats::SidebarWidth) {
+        self.sidebar = width;
     }
 
     /// `app.quit` and `/quit`. While a turn runs the first ask only warns;

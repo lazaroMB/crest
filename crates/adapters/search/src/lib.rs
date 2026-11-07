@@ -29,7 +29,8 @@ use application_core::ports::search::{
     GrepRequest, GrepResult, ListFilesRequest, SearchError, TreeNode, TreeRequest,
 };
 use async_trait::async_trait;
-use domain::workspace::{SensitivePathRules, WorkspaceRoot};
+use domain::roots::WorkspaceRoots;
+use domain::workspace::{PathError, SensitivePathRules, WorkspaceRoot};
 
 use tokio::sync::OnceCell;
 
@@ -39,6 +40,7 @@ pub mod detect;
 pub mod files;
 pub mod find;
 pub mod grep;
+pub mod multi;
 pub mod process;
 
 #[cfg(test)]
@@ -47,7 +49,10 @@ mod test_support;
 /// Search adapter backed by `rg` and `fzf`.
 #[derive(Debug, Clone)]
 pub struct RipgrepSearch {
-    root: WorkspaceRoot,
+    /// The directories searched, the first one being the project's first. Empty
+    /// for a chat without a directory, where every search fails with
+    /// [`PathError::NoRoots`].
+    roots: Vec<WorkspaceRoot>,
     rg: OsString,
     fzf: OsString,
     timeout: Duration,
@@ -57,19 +62,30 @@ pub struct RipgrepSearch {
     fzf_status: Arc<OnceCell<ToolStatus>>,
 }
 
+/// An adapter over `root` with the default tools, timeout and rules.
+fn open(roots: Vec<WorkspaceRoot>) -> RipgrepSearch {
+    RipgrepSearch {
+        roots,
+        rg: Tool::Ripgrep.program().into(),
+        fzf: Tool::Fzf.program().into(),
+        timeout: DEFAULT_SEARCH_TIMEOUT,
+        rules: SensitivePathRules::default(),
+        fzf_status: Arc::default(),
+    }
+}
+
+/// The directory a single-root search runs in: the only root of the search
+/// (or of the copy [`multi`] scopes to one root of a project).
+pub(crate) fn directory(search: &RipgrepSearch) -> Result<&WorkspaceRoot, PathError> {
+    search.roots.first().ok_or(PathError::NoRoots)
+}
+
 impl RipgrepSearch {
     /// An adapter for `root` (already canonicalized) using `rg` and `fzf`
     /// from `PATH`, [`DEFAULT_SEARCH_TIMEOUT`] and the default sensitive
     /// path rules.
     pub fn new(root: WorkspaceRoot) -> Self {
-        Self {
-            root,
-            rg: Tool::Ripgrep.program().into(),
-            fzf: Tool::Fzf.program().into(),
-            timeout: DEFAULT_SEARCH_TIMEOUT,
-            rules: SensitivePathRules::default(),
-            fzf_status: Arc::default(),
-        }
+        open(vec![root])
     }
 
     /// Uses `program` (a name looked up in `PATH`, or a path) as `rg`.
@@ -87,6 +103,20 @@ impl RipgrepSearch {
         self
     }
 
+    /// Searches every directory of `roots` (the first one is the base of
+    /// relative paths) instead of the one given to [`Self::new`]. An empty
+    /// list keeps the adapter as it is.
+    #[must_use]
+    pub fn with_roots(self, roots: &WorkspaceRoots) -> Self {
+        match roots.is_empty() {
+            true => self,
+            false => Self {
+                roots: roots.iter().cloned().collect(),
+                ..self
+            },
+        }
+    }
+
     /// Sets the timeout applied to each search.
     #[must_use]
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
@@ -101,9 +131,11 @@ impl RipgrepSearch {
         self
     }
 
-    /// The workspace root.
-    pub fn root(&self) -> &WorkspaceRoot {
-        &self.root
+    /// An adapter without a directory (a standalone chat): every search
+    /// fails with [`PathError::NoRoots`], and nothing is searched in the
+    /// process's own working directory.
+    pub fn standalone() -> Self {
+        open(Vec::new())
     }
 
     /// Checks the configured `rg` and `fzf` (meant for startup; see
@@ -120,22 +152,22 @@ impl RipgrepSearch {
 #[async_trait]
 impl FileSearchPort for RipgrepSearch {
     async fn list_files(&self, request: ListFilesRequest) -> Result<FileList, SearchError> {
-        files::list_files(self, request).await
+        multi::files(self, multi::Files::List(request)).await
     }
 
     async fn find_file(&self, request: FindFileRequest) -> Result<FileList, SearchError> {
-        find::find_file(self, request).await
+        multi::files(self, multi::Files::Find(request)).await
     }
 
     async fn tree(&self, request: TreeRequest) -> Result<TreeNode, SearchError> {
-        files::tree(self, request).await
+        multi::tree(self, request).await
     }
 }
 
 #[async_trait]
 impl ContentSearchPort for RipgrepSearch {
     async fn grep(&self, request: GrepRequest) -> Result<GrepResult, SearchError> {
-        grep::grep(self, request).await
+        multi::grep(self, request).await
     }
 }
 
@@ -145,6 +177,25 @@ mod tests {
 
     use super::*;
     use crate::test_support::Workspace;
+
+    /// No directory, no search: nothing is searched in crest's own directory.
+    #[tokio::test]
+    async fn a_standalone_search_finds_nothing_and_asks_for_a_directory() {
+        let search = RipgrepSearch::standalone();
+        let expected = SearchError::Path(PathError::NoRoots);
+        assert_eq!(
+            search.grep(GrepRequest::new("needle")).await,
+            Err(expected.clone())
+        );
+        assert_eq!(
+            search.list_files(ListFilesRequest::default()).await,
+            Err(expected.clone())
+        );
+        assert_eq!(
+            search.find_file(FindFileRequest::new("a")).await,
+            Err(expected)
+        );
+    }
 
     #[tokio::test]
     async fn greps_through_the_port() {

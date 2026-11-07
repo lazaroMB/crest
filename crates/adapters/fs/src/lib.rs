@@ -24,7 +24,8 @@ use application_core::ports::fs::{
     ReadFileRequest, WriteFileRequest,
 };
 use async_trait::async_trait;
-use domain::workspace::{WorkspacePath, WorkspaceRoot};
+use domain::roots::WorkspaceRoots;
+use domain::workspace::WorkspacePath;
 
 pub use browse::LocalProjectBrowser;
 pub use guard::WorkspaceGuard;
@@ -49,8 +50,8 @@ impl LocalFs {
 
 #[async_trait]
 impl FileSystemPort for LocalFs {
-    fn root(&self) -> &WorkspaceRoot {
-        self.guard.root()
+    fn roots(&self) -> &WorkspaceRoots {
+        self.guard.roots()
     }
 
     async fn read_file(&self, request: ReadFileRequest) -> Result<FileContent, FsError> {
@@ -90,6 +91,10 @@ impl FileSystemPort for LocalFs {
     }
 }
 
+#[cfg(test)]
+#[cfg(unix)]
+mod roots_tests;
+
 // The fixtures build symlinks and permission modes, which are Unix-only.
 #[cfg(test)]
 #[cfg(unix)]
@@ -110,7 +115,10 @@ mod tests {
         let fs = LocalFs::new(WorkspaceGuard::open(&ws).unwrap());
         let path = |p: &str| WorkspacePath::parse(p).unwrap();
 
-        assert_eq!(fs.root().as_path(), std::fs::canonicalize(&ws).unwrap());
+        assert_eq!(
+            fs.roots().first().unwrap().as_path(),
+            std::fs::canonicalize(&ws).unwrap()
+        );
         assert_eq!(fs.exists(&path("a.txt")).await, Ok(true));
         assert_eq!(fs.exists(&WorkspacePath::root()).await, Ok(true));
         assert_eq!(fs.exists(&path("b.txt")).await, Ok(false));

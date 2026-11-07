@@ -10,10 +10,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use async_trait::async_trait;
-use domain::conversation::{SessionId, StopReason, Usage};
+use domain::conversation::{ProjectId, SessionId, StopReason, Usage};
+use domain::project::{Project, ProjectError};
 use futures::channel::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use serde_json::Value;
 
+use super::project_book::ProjectBook;
 use crate::ports::approval::{ApprovalError, ApprovalPort, ApprovalRequest, ApprovalResponse};
 use crate::ports::events::{DomainEvent, EventSink};
 use crate::ports::plugin::{
@@ -21,7 +23,10 @@ use crate::ports::plugin::{
     PluginHostPort, PluginOutput,
 };
 use crate::ports::projects::RecentWorkspace;
-use crate::ports::store::{SessionStorePort, SessionSummary, StoreError, StoredSession};
+use crate::ports::store::{
+    OrganizeStorePort, ProjectStorePort, SessionStorePort, SessionSummary, StoreError,
+    StoredSession,
+};
 use crate::ports::telemetry::{LlmCallRecord, SpanId, TelemetryPort, ToolCallRecord, TurnSpan};
 
 /// Locks `mutex`, ignoring poisoning: a panicking test must not hide the
@@ -350,6 +355,7 @@ mod approval_tests {
 #[derive(Debug, Default)]
 pub struct InMemorySessionStore {
     sessions: Mutex<HashMap<SessionId, StoredSession>>,
+    projects: Mutex<ProjectBook>,
     fail_next: Mutex<Option<StoreError>>,
 }
 
@@ -381,12 +387,42 @@ impl InMemorySessionStore {
         lock(&self.fail_next).take().map_or(Ok(()), Err)
     }
 
+    /// Edits a project, then makes its sessions follow its first directory,
+    /// as the SQLite adapter does when it changes.
+    fn edit_project(
+        &self,
+        id: ProjectId,
+        change: impl FnOnce(&mut Project) -> Result<(), ProjectError>,
+    ) -> Result<Project, StoreError> {
+        let project = lock(&self.projects).edit(id, change)?;
+        for stored in lock(&self.sessions).values_mut() {
+            if stored.session.project_id == Some(project.id) {
+                stored.session.workspace_root = first_root(&project);
+            }
+        }
+        Ok(project)
+    }
+
+    /// Applies `change` to the session `id` without touching its timeline or
+    /// `updated_at`.
+    fn edit_session(
+        &self,
+        id: SessionId,
+        change: impl FnOnce(&mut domain::conversation::Session),
+    ) -> Result<(), StoreError> {
+        self.check_failure()?;
+        let mut sessions = lock(&self.sessions);
+        let stored = sessions.get_mut(&id).ok_or(StoreError::NotFound(id))?;
+        change(&mut stored.session);
+        Ok(())
+    }
+
     /// Sessions of `root`, most recently updated first; ties are broken by
     /// creation time and then id so the order is deterministic.
     fn sorted_for(&self, root: &str) -> Vec<StoredSession> {
         let mut found: Vec<StoredSession> = lock(&self.sessions)
             .values()
-            .filter(|s| s.session.workspace_root == root)
+            .filter(|s| s.session.workspace_root == root && !s.session.archived)
             .cloned()
             .collect();
         found.sort_by(|a, b| {
@@ -398,11 +434,43 @@ impl InMemorySessionStore {
     }
 }
 
+/// The clock the fake uses for a branch, in milliseconds since the epoch.
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
+/// The `workspace_root` of a session in `project`: its first directory.
+fn first_root(project: &Project) -> String {
+    project.roots.first().cloned().unwrap_or_default()
+}
+
 #[async_trait]
 impl SessionStorePort for InMemorySessionStore {
-    async fn save(&self, session: StoredSession) -> Result<(), StoreError> {
+    async fn save(&self, mut session: StoredSession) -> Result<(), StoreError> {
         self.check_failure()?;
-        lock(&self.sessions).insert(session.session.id, session);
+        // Like the SQLite adapter: a saved session keeps the project (and the
+        // directory) it was moved to, and a new one only gets a project that
+        // exists.
+        let mut sessions = lock(&self.sessions);
+        if let Some(old) = sessions.get(&session.session.id) {
+            session.session.workspace_root = old.session.workspace_root.clone();
+            // The flags and the branch link belong to their own calls.
+            let (pinned, archived) = (old.session.pinned, old.session.archived);
+            session.session.pinned = pinned;
+            session.session.archived = archived;
+            session.session.branched_from = old.session.branched_from;
+            session.session.branched_at = old.session.branched_at;
+        }
+        session.session.project_id = match sessions.get(&session.session.id) {
+            Some(old) => old.session.project_id,
+            None => session
+                .session
+                .project_id
+                .filter(|id| lock(&self.projects).contains(*id)),
+        };
+        sessions.insert(session.session.id, session);
         Ok(())
     }
 
@@ -428,12 +496,25 @@ impl SessionStorePort for InMemorySessionStore {
             .collect())
     }
 
+    async fn list_all(&self) -> Result<Vec<SessionSummary>, StoreError> {
+        self.check_failure()?;
+        let mut all: Vec<StoredSession> = lock(&self.sessions).values().cloned().collect();
+        all.sort_by_key(|s| {
+            std::cmp::Reverse((s.session.updated_at, s.session.created_at, s.session.id))
+        });
+        Ok(all.iter().map(StoredSession::summary).collect())
+    }
+
     async fn delete(&self, id: SessionId) -> Result<(), StoreError> {
         self.check_failure()?;
-        lock(&self.sessions)
-            .remove(&id)
-            .map(|_| ())
-            .ok_or(StoreError::NotFound(id))
+        let mut sessions = lock(&self.sessions);
+        sessions.remove(&id).ok_or(StoreError::NotFound(id))?;
+        for other in sessions.values_mut() {
+            if other.session.branched_from == Some(id) {
+                other.session.branched_from = None;
+            }
+        }
+        Ok(())
     }
 
     async fn recent_workspaces(&self, limit: usize) -> Result<Vec<RecentWorkspace>, StoreError> {
@@ -452,6 +533,123 @@ impl SessionStorePort for InMemorySessionStore {
         recent.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then(a.root.cmp(&b.root)));
         recent.truncate(limit);
         Ok(recent)
+    }
+}
+
+#[async_trait]
+impl OrganizeStorePort for InMemorySessionStore {
+    async fn rename_session(&self, id: SessionId, title: &str) -> Result<(), StoreError> {
+        self.edit_session(id, |s| {
+            s.title = Some(title.trim().to_owned()).filter(|t| !t.is_empty());
+        })
+    }
+
+    async fn pin_session(&self, id: SessionId, pinned: bool) -> Result<(), StoreError> {
+        self.edit_session(id, |s| s.pinned = pinned)
+    }
+
+    async fn set_session_archived(&self, id: SessionId, archived: bool) -> Result<(), StoreError> {
+        self.edit_session(id, |s| s.archived = archived)
+    }
+
+    async fn branch_session(&self, id: SessionId) -> Result<SessionId, StoreError> {
+        self.check_failure()?;
+        let mut sessions = lock(&self.sessions);
+        let source = sessions.get(&id).ok_or(StoreError::NotFound(id))?;
+        let copy = StoredSession {
+            session: source.session.branch(source.timeline.len(), now_ms()),
+            timeline: source.timeline.clone(),
+            permission_rules: Vec::new(),
+            prompt_history: source.prompt_history.clone(),
+        };
+        let new_id = copy.session.id;
+        sessions.insert(new_id, copy);
+        Ok(new_id)
+    }
+
+    async fn set_project_archived(
+        &self,
+        id: ProjectId,
+        archived: bool,
+    ) -> Result<Project, StoreError> {
+        self.check_failure()?;
+        lock(&self.projects).edit(id, |p| {
+            p.archived = archived;
+            Ok(())
+        })
+    }
+
+    async fn delete_project(&self, id: ProjectId) -> Result<usize, StoreError> {
+        self.check_failure()?;
+        lock(&self.projects).remove(id)?;
+        let mut freed = 0;
+        for stored in lock(&self.sessions).values_mut() {
+            if stored.session.project_id == Some(id) {
+                stored.session.project_id = None;
+                stored.session.workspace_root = String::new();
+                freed += 1;
+            }
+        }
+        Ok(freed)
+    }
+}
+
+#[async_trait]
+impl ProjectStorePort for InMemorySessionStore {
+    async fn projects(&self) -> Result<Vec<Project>, StoreError> {
+        self.check_failure()?;
+        Ok(lock(&self.projects).all())
+    }
+
+    async fn create_project(&self, name: &str, roots: &[String]) -> Result<Project, StoreError> {
+        self.check_failure()?;
+        lock(&self.projects).create(name, roots)
+    }
+
+    async fn add_root(&self, id: ProjectId, root: &str) -> Result<Project, StoreError> {
+        self.check_failure()?;
+        self.edit_project(id, |p| p.add_root(root).map(drop))
+    }
+
+    async fn remove_root(&self, id: ProjectId, root: &str) -> Result<Project, StoreError> {
+        self.check_failure()?;
+        self.edit_project(id, |p| p.remove_root(root).map(drop))
+    }
+
+    async fn rename_project(&self, id: ProjectId, name: &str) -> Result<Project, StoreError> {
+        self.check_failure()?;
+        lock(&self.projects).edit(id, |p| p.rename(name))
+    }
+
+    async fn pin_project(&self, id: ProjectId, pinned: bool) -> Result<Project, StoreError> {
+        self.check_failure()?;
+        lock(&self.projects).edit(id, |p| {
+            p.pinned = pinned;
+            Ok(())
+        })
+    }
+
+    async fn move_session(
+        &self,
+        id: SessionId,
+        project: Option<ProjectId>,
+    ) -> Result<(), StoreError> {
+        self.check_failure()?;
+        let workspace_root = match project {
+            Some(id) => first_root(
+                &lock(&self.projects)
+                    .all()
+                    .into_iter()
+                    .find(|p| p.id == id)
+                    .ok_or(StoreError::ProjectNotFound(id))?,
+            ),
+            None => String::new(),
+        };
+        let mut sessions = lock(&self.sessions);
+        let stored = sessions.get_mut(&id).ok_or(StoreError::NotFound(id))?;
+        stored.session.project_id = project;
+        stored.session.workspace_root = workspace_root;
+        Ok(())
     }
 }
 

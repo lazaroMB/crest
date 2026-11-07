@@ -152,7 +152,8 @@ impl NodeDeps {
             events,
             agent: None,
             explore_agent: None,
-            workspace_root: ".".to_owned(),
+            // No directory until the session names one: not the process's.
+            workspace_root: String::new(),
             decider: Decider::none(),
             pricing: None,
             clock: system_now_ms,
@@ -974,7 +975,7 @@ mod tests {
             ctx.first_stage_of(&[Stage::Data, Stage::Observation]),
             Stage::Data
         );
-        assert_eq!(ctx.workspace_root(), ".");
+        assert_eq!(ctx.workspace_root(), "");
         assert!(ctx.explore_agent().is_err());
         let ctx = ctx.with_stages([Stage::Observation, Stage::Hypotheses].into());
         assert!(!ctx.has_stage(Stage::Data));

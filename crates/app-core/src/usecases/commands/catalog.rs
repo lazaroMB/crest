@@ -13,6 +13,48 @@ pub enum Handler {
     Controller,
 }
 
+/// The named group a built-in command belongs to in the palette.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandGroup {
+    /// This conversation (`/clear`, `/open`, `!`, `/aside`).
+    Chat,
+    /// Research, implement, simulate.
+    Flows,
+    /// Steer the running flow.
+    Stages,
+    /// How the agent runs.
+    ModelAndPermissions,
+    /// Projects, MCP, plugins.
+    Workspace,
+    /// Help, theme, account, quit.
+    App,
+}
+
+impl CommandGroup {
+    /// Every group, in the palette's order.
+    pub const ALL: [Self; 6] = [
+        Self::Chat,
+        Self::Flows,
+        Self::Stages,
+        Self::ModelAndPermissions,
+        Self::Workspace,
+        Self::App,
+    ];
+
+    /// The name the palette shows.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Chat => "Chat",
+            Self::Flows => "Flows",
+            Self::Stages => "Stages",
+            Self::ModelAndPermissions => "Model & permissions",
+            Self::Workspace => "Workspace",
+            Self::App => "App",
+        }
+    }
+}
+
 /// A row of the help for a `/` command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CommandInfo {
@@ -26,6 +68,8 @@ pub struct CommandInfo {
     pub description: &'static str,
     /// Who runs it.
     pub handler: Handler,
+    /// The palette group it is listed under.
+    pub group: CommandGroup,
 }
 
 /// The built-in commands: the session's first, then the controller's.
@@ -37,6 +81,7 @@ pub const CATALOG: &[CommandInfo] = &[
         description: "Open this help (also /h), on a section (commands, keys, tools, plugins, mcp, models, \
                       cli, files) or filtered by a search",
         handler: Handler::Ui,
+        group: CommandGroup::App,
     },
     CommandInfo {
         name: "model",
@@ -46,6 +91,7 @@ pub const CATALOG: &[CommandInfo] = &[
                       completes); `/model <alias>` sent as typed sets the next turn's model, `set <id>` saves one, \
                       `clear` drops the next turn's",
         handler: Handler::Ui,
+        group: CommandGroup::ModelAndPermissions,
     },
     CommandInfo {
         name: "theme",
@@ -54,6 +100,7 @@ pub const CATALOG: &[CommandInfo] = &[
         description: "Pick a color theme from the popup: moving previews it, Enter saves it, Esc goes back; \
                       `/theme <name>` saves one directly",
         handler: Handler::Ui,
+        group: CommandGroup::App,
     },
     CommandInfo {
         name: "mode",
@@ -61,6 +108,7 @@ pub const CATALOG: &[CommandInfo] = &[
         usage: "/mode <ask|auto-edit|plan>",
         description: "Change the permission mode",
         handler: Handler::Ui,
+        group: CommandGroup::ModelAndPermissions,
     },
     CommandInfo {
         name: "permissions",
@@ -69,6 +117,7 @@ pub const CATALOG: &[CommandInfo] = &[
         description: "List the permission rules of this session and project: d removes one, p moves a \
                       session rule to the project file",
         handler: Handler::Ui,
+        group: CommandGroup::ModelAndPermissions,
     },
     CommandInfo {
         name: "clear",
@@ -76,6 +125,7 @@ pub const CATALOG: &[CommandInfo] = &[
         usage: "/clear",
         description: "Start a new, empty session (not while a turn runs)",
         handler: Handler::Ui,
+        group: CommandGroup::Chat,
     },
     CommandInfo {
         name: "project",
@@ -83,6 +133,7 @@ pub const CATALOG: &[CommandInfo] = &[
         usage: "/project",
         description: "Close this project and choose another one",
         handler: Handler::Ui,
+        group: CommandGroup::Workspace,
     },
     CommandInfo {
         name: "login",
@@ -90,6 +141,7 @@ pub const CATALOG: &[CommandInfo] = &[
         usage: "/login [anthropic|opencode]",
         description: "Store an API key (Anthropic or OpenCode) in the system keyring and restart the agent",
         handler: Handler::Ui,
+        group: CommandGroup::App,
     },
     CommandInfo {
         name: "logout",
@@ -97,6 +149,7 @@ pub const CATALOG: &[CommandInfo] = &[
         usage: "/logout [anthropic|opencode]",
         description: "Delete the API key of one account (or of every account) from the system keyring",
         handler: Handler::Ui,
+        group: CommandGroup::App,
     },
     CommandInfo {
         name: "picker.files",
@@ -104,6 +157,7 @@ pub const CATALOG: &[CommandInfo] = &[
         usage: "/picker.files",
         description: "Find a file by name, with a preview; Enter inserts @path in the prompt",
         handler: Handler::Ui,
+        group: CommandGroup::Workspace,
     },
     CommandInfo {
         name: "picker.grep",
@@ -112,6 +166,7 @@ pub const CATALOG: &[CommandInfo] = &[
         description: "Search text in the workspace (ripgrep), with a preview; Enter inserts @path:line \
                       in the prompt",
         handler: Handler::Ui,
+        group: CommandGroup::Workspace,
     },
     CommandInfo {
         name: "modal",
@@ -119,6 +174,7 @@ pub const CATALOG: &[CommandInfo] = &[
         usage: "/modal close",
         description: "Close the front modal window",
         handler: Handler::Ui,
+        group: CommandGroup::App,
     },
     CommandInfo {
         name: "q",
@@ -126,14 +182,16 @@ pub const CATALOG: &[CommandInfo] = &[
         usage: "/q",
         description: "Quit crest (also /quit and /qa)",
         handler: Handler::Ui,
+        group: CommandGroup::App,
     },
     CommandInfo {
         name: "!",
         aliases: &[],
-        usage: "/! <command>",
+        usage: "! <command>",
         description: "Run a shell command in the workspace; its output is shown and goes to \
                       the model with the next prompt (also /!cmd)",
         handler: Handler::Controller,
+        group: CommandGroup::Chat,
     },
     CommandInfo {
         name: "implement",
@@ -142,6 +200,7 @@ pub const CATALOG: &[CommandInfo] = &[
         description: "Run the plan of a Spec task by task, one commit per task, with gates you \
                       answer from the input",
         handler: Handler::Controller,
+        group: CommandGroup::Flows,
     },
     CommandInfo {
         name: "implement",
@@ -149,6 +208,7 @@ pub const CATALOG: &[CommandInfo] = &[
         usage: "/implement resume",
         description: "Continue the last implementation where it stopped (also after an error)",
         handler: Handler::Controller,
+        group: CommandGroup::Flows,
     },
     CommandInfo {
         name: "implement",
@@ -156,6 +216,7 @@ pub const CATALOG: &[CommandInfo] = &[
         usage: "/implement cancel",
         description: "Stop the active or pending implementation for good (its journal is kept)",
         handler: Handler::Controller,
+        group: CommandGroup::Flows,
     },
     CommandInfo {
         name: "research",
@@ -164,6 +225,7 @@ pub const CATALOG: &[CommandInfo] = &[
         description: "Start the research flow on a problem (5 stages, depth picked by the \
                       triage); it ends in a Spec",
         handler: Handler::Controller,
+        group: CommandGroup::Flows,
     },
     CommandInfo {
         name: "research",
@@ -172,6 +234,7 @@ pub const CATALOG: &[CommandInfo] = &[
         description: "The 5-stage flow at quick depth: fewer explorers and a cheaper model \
                       (also -q)",
         handler: Handler::Controller,
+        group: CommandGroup::Flows,
     },
     CommandInfo {
         name: "research",
@@ -179,6 +242,7 @@ pub const CATALOG: &[CommandInfo] = &[
         usage: "/research --deep <problem>",
         description: "The full 14-stage flow, with experiments and a prototype (also -d)",
         handler: Handler::Controller,
+        group: CommandGroup::Flows,
     },
     CommandInfo {
         name: "research",
@@ -186,6 +250,7 @@ pub const CATALOG: &[CommandInfo] = &[
         usage: "/research",
         description: "Where the research flow is and what it cost so far",
         handler: Handler::Controller,
+        group: CommandGroup::Flows,
     },
     CommandInfo {
         name: "research",
@@ -194,6 +259,7 @@ pub const CATALOG: &[CommandInfo] = &[
         description: "Continue the last research flow (or number n of /research list), \
                       running a failed or interrupted stage again",
         handler: Handler::Controller,
+        group: CommandGroup::Flows,
     },
     CommandInfo {
         name: "research",
@@ -202,6 +268,7 @@ pub const CATALOG: &[CommandInfo] = &[
         description: "The open research flows of this workspace, newest first, with their \
                       pipeline and cost (all: also the finished and cancelled ones)",
         handler: Handler::Controller,
+        group: CommandGroup::Flows,
     },
     CommandInfo {
         name: "research",
@@ -210,6 +277,7 @@ pub const CATALOG: &[CommandInfo] = &[
         description: "Drop the last research flow (or number n of /research list, or every \
                       open one) for good; it is no longer pending",
         handler: Handler::Controller,
+        group: CommandGroup::Flows,
     },
     CommandInfo {
         name: "research",
@@ -218,6 +286,7 @@ pub const CATALOG: &[CommandInfo] = &[
         description: "Discovery engine: freeze the discovery once every section is approved \
                       and derive spec.md and plan.json",
         handler: Handler::Controller,
+        group: CommandGroup::Flows,
     },
     CommandInfo {
         name: "reopen",
@@ -226,6 +295,7 @@ pub const CATALOG: &[CommandInfo] = &[
         description: "Discovery engine: reopen a section; it and every later one lose their \
                       verdicts and are written again",
         handler: Handler::Controller,
+        group: CommandGroup::Stages,
     },
     CommandInfo {
         name: "retry",
@@ -233,6 +303,7 @@ pub const CATALOG: &[CommandInfo] = &[
         usage: "/retry",
         description: "Run the failed stage of the research flow again",
         handler: Handler::Controller,
+        group: CommandGroup::Stages,
     },
     CommandInfo {
         name: "stage",
@@ -240,6 +311,7 @@ pub const CATALOG: &[CommandInfo] = &[
         usage: "/stage",
         description: "Where the active flow is (research or implementation)",
         handler: Handler::Controller,
+        group: CommandGroup::Stages,
     },
     CommandInfo {
         name: "back",
@@ -247,6 +319,7 @@ pub const CATALOG: &[CommandInfo] = &[
         usage: "/back <stage>",
         description: "Take the research flow back to a stage, by number or name",
         handler: Handler::Controller,
+        group: CommandGroup::Stages,
     },
     CommandInfo {
         name: "skip",
@@ -254,6 +327,7 @@ pub const CATALOG: &[CommandInfo] = &[
         usage: "/skip",
         description: "Skip an optional stage of the research flow",
         handler: Handler::Controller,
+        group: CommandGroup::Stages,
     },
     CommandInfo {
         name: "abort",
@@ -261,6 +335,7 @@ pub const CATALOG: &[CommandInfo] = &[
         usage: "/abort",
         description: "Stop the active flow for good (its journal is kept)",
         handler: Handler::Controller,
+        group: CommandGroup::Stages,
     },
     CommandInfo {
         name: "aside",
@@ -269,6 +344,7 @@ pub const CATALOG: &[CommandInfo] = &[
         description: "Chat aside while a flow waits at a gate: lines go to the chat, with the \
                       gate as context, until /flow (also /aparte)",
         handler: Handler::Controller,
+        group: CommandGroup::Chat,
     },
     CommandInfo {
         name: "flow",
@@ -277,6 +353,7 @@ pub const CATALOG: &[CommandInfo] = &[
         description: "Back to the waiting flow: answers it, or proposes the answer from the \
                       side chat for you to confirm (also /volver)",
         handler: Handler::Controller,
+        group: CommandGroup::Stages,
     },
     CommandInfo {
         name: "open",
@@ -284,6 +361,7 @@ pub const CATALOG: &[CommandInfo] = &[
         usage: "/open @<path>",
         description: "Show a workspace file in a modal, 3D models included (type @ to complete the path)",
         handler: Handler::Controller,
+        group: CommandGroup::Chat,
     },
     CommandInfo {
         name: "simulate",
@@ -291,6 +369,7 @@ pub const CATALOG: &[CommandInfo] = &[
         usage: "/simulate <spec>",
         description: "Simulate the solution of a Spec and open the 3D board with every scenario",
         handler: Handler::Controller,
+        group: CommandGroup::Flows,
     },
     CommandInfo {
         name: "mcp",
@@ -300,6 +379,7 @@ pub const CATALOG: &[CommandInfo] = &[
                       restart, turn on or off, log in or out (OAuth) or approve one of the \
                       workspace config",
         handler: Handler::Controller,
+        group: CommandGroup::Workspace,
     },
     CommandInfo {
         name: "plugin",
@@ -307,6 +387,7 @@ pub const CATALOG: &[CommandInfo] = &[
         usage: "/plugin list",
         description: "List the plugins that declare capabilities and whether they are approved",
         handler: Handler::Controller,
+        group: CommandGroup::Workspace,
     },
     CommandInfo {
         name: "plugin",
@@ -314,6 +395,7 @@ pub const CATALOG: &[CommandInfo] = &[
         usage: "/plugin trust <name>",
         description: "Approve the capabilities (network, shell) a plugin declares",
         handler: Handler::Controller,
+        group: CommandGroup::Workspace,
     },
 ];
 

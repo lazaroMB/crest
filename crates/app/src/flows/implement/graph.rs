@@ -205,7 +205,11 @@ impl ImplementSession {
         plan_path: impl Into<String>,
     ) -> Result<Self, FlowError> {
         let plan_path = plan_path.into();
-        let root = deps.root().as_path().to_path_buf();
+        let root = deps
+            .root()
+            .ok_or(FlowError::NoDirectory)?
+            .as_path()
+            .to_path_buf();
         let id = Self::session_id(&root, &plan_path);
         Self::remember(&storage, &root, &plan_path).await?;
         let graph = implement_graph(deps)?;
@@ -375,7 +379,7 @@ mod tests {
         h.fs.set_file(plan, plan_json(&[("T1", &[])]));
         let storage: Arc<dyn SessionStorage> = Arc::new(InMemorySessionStorage::new());
 
-        let root = h.deps().root().as_path().to_path_buf();
+        let root = h.deps().root().unwrap().as_path().to_path_buf();
         assert_eq!(
             ImplementSession::pending(Arc::clone(&storage), &root)
                 .await

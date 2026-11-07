@@ -1,0 +1,67 @@
+.outline {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: flex-start;
+  gap: 4px;
+
+  &__rail {
+    display: flex;
+    flex-direction: column;
+    width: 18px;
+    padding: 4px 0;
+    cursor: pointer;
+  }
+
+  &__mark {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    height: 12px;
+  }
+
+  &__pill {
+    width: 10px;
+    height: 2px;
+    border-radius: 999px;
+    background: var(--muted-fg);
+
+    &--active {
+      width: 16px;
+      background: var(--foreground);
+    }
+  }
+
+  &__menu {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    width: 220px;
+    max-height: 320px;
+    overflow-y: auto;
+    padding: 8px 12px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--popover-bg);
+  }
+
+  &__menu-head {
+    display: flex;
+    justify-content: space-between;
+    font-size: var(--text-xs);
+    color: var(--muted-fg);
+  }
+
+  &__item {
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+
+    &--active {
+      color: var(--link);
+    }
+  }
+}

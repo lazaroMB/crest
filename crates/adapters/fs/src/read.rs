@@ -95,12 +95,9 @@ pub(crate) async fn list_dir(
         .map_err(|e| io_error(&path, &real, &e))?
     {
         let name = entry.file_name().to_string_lossy().into_owned();
-        let child = if path.is_root() {
-            WorkspacePath::parse(&name)
-        } else {
-            WorkspacePath::parse(&format!("{path}/{name}"))
-        };
-        let Ok(child) = child else {
+        // The rules match one component each and the directory was checked
+        // above, so the name alone is enough (and `path` may be absolute).
+        let Ok(child) = WorkspacePath::parse(&name) else {
             continue;
         };
         if guard.check_readable(&child).is_err() {

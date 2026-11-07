@@ -72,6 +72,7 @@ async fn open_shell_and_help_do_not_wait_for_the_running_turn() {
         trust_plugins: Vec::new(),
         resume: false,
         session_id: None,
+        project: None,
     };
     let app = build_app(&config, frontend(&terminal, approval), overrides)
         .await

@@ -1,0 +1,511 @@
+.icon {
+  flex: none;
+  display: block;
+}
+
+.icon-button {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius);
+  color: var(--muted-fg);
+
+  &:hover {
+    color: var(--foreground);
+    background: var(--list-selected-bg);
+  }
+}
+
+.chats {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  width: var(--chats-width);
+  height: 100%;
+  border-right: 1px solid var(--border);
+  background: var(--sidebar-bg);
+  color: var(--sidebar-fg);
+
+  &__top {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 6px 2px;
+  }
+
+  &__brand {
+    color: var(--foreground);
+    font-weight: 600;
+  }
+
+  &__logo-hover {
+    display: none;
+  }
+
+  &__logo:hover &__logo-mark,
+  &__logo:focus-visible &__logo-mark {
+    display: none;
+  }
+
+  &__logo:hover &__logo-hover,
+  &__logo:focus-visible &__logo-hover {
+    display: inline-flex;
+  }
+
+  &__nav {
+    display: flex;
+    flex-direction: column;
+    padding: 2px 4px 6px;
+  }
+
+  &__nav-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 6px;
+    text-align: left;
+    border-radius: var(--radius-sm);
+
+    &:hover {
+      background: var(--list-selected-bg);
+    }
+  }
+
+  &__search {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 6px 6px;
+    padding: 0 0 0 6px;
+    border: 1px solid var(--accent);
+    border-radius: var(--radius);
+    color: var(--muted-fg);
+
+    .icon-button {
+      width: 24px;
+      height: 24px;
+    }
+  }
+
+  &__search-input {
+    flex: 1;
+    min-width: 0;
+    padding: 4px 0;
+    font: inherit;
+    font-size: var(--text-sm);
+    color: var(--foreground);
+    background: transparent;
+    border: 0;
+    outline: none;
+  }
+
+  &__list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 4px 8px;
+  }
+
+  &__section + &__section {
+    margin-top: 8px;
+  }
+
+  &__heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 26px;
+    padding: 0 0 0 6px;
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted-fg);
+
+    .icon-button {
+      width: 22px;
+      height: 22px;
+    }
+  }
+
+  &__empty {
+    padding: 4px 8px;
+    font-size: var(--text-sm);
+    color: var(--muted-fg);
+
+    &--nested {
+      padding-left: 22px;
+    }
+  }
+
+  // The strip: one column of icons.
+  &--strip {
+    width: 48px;
+    align-items: center;
+    gap: 4px;
+    padding-top: 6px;
+
+    .icon-button {
+      width: 32px;
+      height: 32px;
+    }
+  }
+
+  &__strip-sep {
+    width: 20px;
+    margin: 4px 0;
+    border-top: 1px solid var(--border);
+  }
+}
+
+.strip-project {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: var(--text-sm);
+  color: var(--muted-fg);
+
+  &:hover,
+  &--open {
+    color: var(--foreground);
+    border-color: var(--accent);
+  }
+
+  &__name {
+    display: none;
+    position: absolute;
+    left: calc(100% + 8px);
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 6;
+    padding: 3px 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--popover-bg);
+    color: var(--foreground);
+    font-size: var(--text-sm);
+    white-space: nowrap;
+  }
+
+  &:hover &__name,
+  &:focus-visible &__name {
+    display: block;
+  }
+}
+
+// Hidden: a slim 36 px rail holds only the logo, reserved like any other
+// sidebar width so the session never starts underneath it. Hovering the rail
+// (or tabbing in) reveals the rest of the strip's rows further down the same
+// rail, never past its width, so the session keeps its margin at every step.
+.sidebar-hover-zone {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 5;
+  width: 36px;
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 6px;
+  border-right: 1px solid transparent;
+
+  .chats__logo {
+    opacity: 0.75;
+  }
+
+  &:hover,
+  &:focus-within {
+    background: var(--sidebar-bg);
+    border-right-color: var(--border);
+    padding-bottom: 6px;
+
+    .chats__logo {
+      opacity: 1;
+    }
+  }
+}
+
+.sidebar-hover-reveal {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: max-height 0.12s ease, opacity 0.1s ease;
+
+  .icon-button {
+    width: 32px;
+    height: 32px;
+  }
+}
+
+.sidebar-hover-zone:hover .sidebar-hover-reveal,
+.sidebar-hover-zone:focus-within .sidebar-hover-reveal {
+  max-height: 400px;
+  opacity: 1;
+  margin-top: 4px;
+}
+
+.project__row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+
+  &:hover {
+    background: var(--list-selected-bg);
+  }
+
+  &:hover .project__action {
+    visibility: visible;
+  }
+}
+
+.project__marker {
+  width: 12px;
+  color: var(--muted-fg);
+}
+
+.project__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project__pin,
+.project__dirs {
+  flex: none;
+  font-size: var(--text-xs);
+  color: var(--muted-fg);
+}
+
+.project__action {
+  visibility: hidden;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius-sm);
+  color: var(--muted-fg);
+
+  &:hover {
+    color: var(--foreground);
+  }
+}
+
+.chat-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px 3px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+
+  &--nested {
+    padding-left: 22px;
+  }
+
+  &:hover,
+  &--open {
+    background: var(--list-selected-bg);
+  }
+
+  &:hover &__more {
+    visibility: visible;
+  }
+
+  &__title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__branch {
+    flex: none;
+    color: var(--muted-fg);
+  }
+
+  &__badge {
+    font-size: var(--text-xs);
+    color: var(--muted-fg);
+  }
+
+  &__more {
+    visibility: hidden;
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    color: var(--muted-fg);
+  }
+}
+
+.chat-menu {
+  margin: 2px 8px 4px;
+  padding: 4px 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--popover-bg);
+  font-size: var(--text-sm);
+
+  &__label {
+    padding: 2px 8px;
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted-fg);
+  }
+
+  &__row {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    padding: 4px 8px;
+    text-align: left;
+
+    &:hover {
+      background: var(--list-selected-bg);
+    }
+
+    &--danger {
+      color: var(--error);
+    }
+
+    &--static:hover {
+      background: none;
+    }
+  }
+
+  &__root {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 4px 2px 8px;
+  }
+
+  &__path {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    direction: rtl;
+    text-align: left;
+    color: var(--foreground);
+  }
+
+  &__remove {
+    display: grid;
+    place-items: center;
+    width: 18px;
+    height: 18px;
+    color: var(--muted-fg);
+
+    &:hover:not(:disabled) {
+      color: var(--error);
+    }
+
+    &:disabled {
+      opacity: 0.3;
+      cursor: not-allowed;
+    }
+  }
+
+  &__input {
+    display: block;
+    width: calc(100% - 16px);
+    margin: 2px 8px;
+    padding: 2px 4px;
+    font: inherit;
+    color: var(--foreground);
+    background: var(--background);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    outline: none;
+
+    &:focus {
+      border-color: var(--accent);
+    }
+  }
+
+  &__hint {
+    padding: 4px 8px 0;
+    font-size: var(--text-xs);
+    color: var(--muted-fg);
+  }
+}
+
+.chats__archived-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 26px;
+  padding: 0 6px;
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted-fg);
+  border-radius: var(--radius-sm);
+
+  &:hover {
+    color: var(--foreground);
+    background: var(--list-selected-bg);
+  }
+}
+
+.chats__archived-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.archived-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px 3px 22px;
+  color: var(--muted-fg);
+  border-radius: var(--radius-sm);
+
+  &:hover {
+    background: var(--list-selected-bg);
+  }
+
+  &:hover &__restore {
+    visibility: visible;
+  }
+
+  &__title {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__restore {
+    visibility: hidden;
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 20px;
+    height: 20px;
+    color: var(--muted-fg);
+
+    &:hover {
+      color: var(--foreground);
+    }
+  }
+}

@@ -11,7 +11,8 @@
 //! Cancellation is done by dropping the returned future.
 
 use async_trait::async_trait;
-use domain::workspace::{PathError, WorkspacePath, WorkspaceRoot};
+use domain::roots::WorkspaceRoots;
+use domain::workspace::{PathError, WorkspacePath, deserialize_any_path};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -89,7 +90,9 @@ pub enum FsError {
 /// Input of the `read_file` tool.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ReadFileRequest {
-    /// File to read.
+    /// File to read. Relative to the first workspace root; an absolute path
+    /// must lie under one of the roots.
+    #[serde(deserialize_with = "deserialize_any_path")]
     pub path: WorkspacePath,
     /// 1-based number of the first line to return (default 1).
     #[serde(default)]
@@ -197,7 +200,9 @@ impl FileContent {
 /// Input of the `edit_file` tool.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct EditFileRequest {
-    /// File to edit; it must exist.
+    /// File to edit; it must exist. Relative to the first workspace root; an
+    /// absolute path must lie under one of the roots.
+    #[serde(deserialize_with = "deserialize_any_path")]
     pub path: WorkspacePath,
     /// Exact text to replace; it must occur exactly once in the file.
     pub old: String,
@@ -209,6 +214,9 @@ pub struct EditFileRequest {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct WriteFileRequest {
     /// File to create or overwrite; missing parent directories are created.
+    /// Relative to the first workspace root; an absolute path must lie under
+    /// one of the roots.
+    #[serde(deserialize_with = "deserialize_any_path")]
     pub path: WorkspacePath,
     /// Full new content of the file.
     pub content: String,
@@ -308,6 +316,14 @@ impl PendingChange {
     }
 }
 
+/// The first root as a session stores it (`Session::workspace_root`): empty
+/// for a chat without a directory.
+pub fn workspace_root_text(fs: &dyn FileSystemPort) -> String {
+    fs.roots()
+        .first()
+        .map_or_else(String::new, |root| root.as_path().display().to_string())
+}
+
 /// Most entries [`FileSystemPort::list_dir`] returns.
 pub const MAX_DIR_ENTRIES: usize = 10_000;
 
@@ -323,8 +339,11 @@ pub struct DirEntry {
 /// Reads and writes files inside one workspace, enforcing its guards.
 #[async_trait]
 pub trait FileSystemPort: Send + Sync {
-    /// The canonical root every path is relative to; fixed for the session.
-    fn root(&self) -> &WorkspaceRoot;
+    /// The canonical roots of the session, in order; fixed once it is open
+    /// (a project that gains a directory is seen the next time the session
+    /// opens). Empty for a standalone chat: every operation then fails with
+    /// [`PathError::NoRoots`].
+    fn roots(&self) -> &WorkspaceRoots;
 
     /// Reads a text file and returns the slice selected by `request` (see
     /// [`FileContent::from_text`]). Fails with [`FsError::Binary`] for
