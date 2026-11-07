@@ -656,8 +656,13 @@ fn open_shows_workspace_files_and_refuses_the_rest(cx: &mut TestAppContext) {
     assert!(blocks(&w, cx).is_empty(), "nothing goes to the timeline");
 
     for (line, needle) in [
-        ("/open @link.txt", "outside the workspace"),
-        ("/open @../outside.txt", "outside the workspace"),
+        // Each needle is unique: a result still in flight from the line
+        // before must not satisfy the wait, nor replace this line's notice.
+        ("/open @link.txt", "cannot open link.txt: it is outside"),
+        (
+            "/open @../outside.txt",
+            "cannot open ../outside.txt: it is outside",
+        ),
         ("/open @.env", "sensitive path pattern"),
         ("/open @nope.md", "does not exist"),
         ("/open @src", "is a directory"),

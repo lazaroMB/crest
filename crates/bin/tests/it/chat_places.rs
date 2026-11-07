@@ -34,7 +34,8 @@ fn dirs() -> Dirs {
         let dir = tmp.path().join(name);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("lib.rs"), "pub fn add() {}\n").unwrap();
-        std::fs::canonicalize(dir).unwrap()
+        // As the app does: `std`'s form is `\\?\C:\…` on Windows.
+        adapter_fs::guard::canonicalize_blocking(&dir).unwrap()
     };
     Dirs {
         api: make("api"),

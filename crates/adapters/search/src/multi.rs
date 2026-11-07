@@ -402,7 +402,7 @@ mod search_tests {
     use application_core::ports::search::{ContentSearchPort, FileSearchPort};
     use domain::workspace::PathError;
 
-    use self::fixture::{grep_request, shown, two};
+    use self::fixture::{grep_request, shown, slashed, two};
     use super::*;
     use crate::test_support::Workspace;
 
@@ -433,11 +433,16 @@ mod search_tests {
 
         /// The paths of `list` with `b`'s directory written `<b>`.
         pub fn shown(list: &FileList, b: &Workspace) -> Vec<String> {
-            let b = b.root.to_string_lossy().into_owned();
+            let b = slashed(&b.root);
             list.paths
                 .iter()
                 .map(|p| p.as_str().replace(&b, "<b>"))
                 .collect()
+        }
+
+        /// `path` as the results write it: with `/` on every platform.
+        pub fn slashed(path: &std::path::Path) -> String {
+            path.to_string_lossy().replace('\\', "/")
         }
 
         pub fn grep_request(pattern: &str, path: Option<&str>, limit: usize) -> GrepRequest {
@@ -591,7 +596,7 @@ mod search_tests {
             ("needle", Some(&in_a), 100, vec!["src/main.rs:1"], 1),
             ("zzz", None, 100, vec![], 0),
         ];
-        let b_dir = b.root.to_string_lossy().into_owned();
+        let b_dir = slashed(&b.root);
         for (pattern, path, limit, expected, total) in cases {
             let result = search
                 .grep(grep_request(pattern, path, limit))
@@ -639,7 +644,7 @@ mod search_tests {
         let (a_name, b_name) = (name_of(&a.root), name_of(&b.root));
         assert_eq!(tops, [(a_name.as_str(), false), (b_name.as_str(), true)]);
         let lib = &tree.children[1].children[0];
-        assert_eq!(lib.path.as_str(), b.root.join("lib").to_string_lossy());
+        assert_eq!(lib.path.as_str(), slashed(&b.root.join("lib")));
         // The path of a folder of the second root leads back into it.
         let request = TreeRequest {
             path: Some(lib.path.clone()),
