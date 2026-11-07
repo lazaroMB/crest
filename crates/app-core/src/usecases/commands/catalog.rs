@@ -39,6 +39,13 @@ pub const CATALOG: &[CommandInfo] = &[
         handler: Handler::Ui,
     },
     CommandInfo {
+        name: "tour",
+        aliases: &[],
+        usage: "/tour",
+        description: "Replay the welcome tour",
+        handler: Handler::Ui,
+    },
+    CommandInfo {
         name: "model",
         aliases: &[],
         usage: "/model [alias|set <id>|clear]",

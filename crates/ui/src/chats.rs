@@ -1035,6 +1035,7 @@ impl Render for ChatsPanel {
         );
         v_flex()
             .id("chats-panel")
+            .relative()
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::on_list_key))
             .w(px(PANEL_WIDTH))
@@ -1048,15 +1049,18 @@ impl Render for ChatsPanel {
             .child(
                 h_flex()
                     .id("chats-new")
+                    .relative()
                     .w_full()
                     .px_2()
                     .py_1()
                     .cursor_pointer()
                     .hover(move |style| style.bg(active).rounded_sm())
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(ChatsEvent::New)))
-                    .child(label("New chat")),
+                    .child(label("New chat"))
+                    .child(crate::tour::probe(crate::tour::Anchor::NewChat)),
             )
             .child(crate::keyscroll::list("chats-list", &self.scroll, rows).flex_1())
+            .child(crate::tour::probe(crate::tour::Anchor::Chats))
     }
 }
 

@@ -424,20 +424,31 @@ impl Render for RootView {
             .flex_1()
             .min_w_0()
             .h_full()
-            .child(div().id("timeline").flex_1().min_h_0().p_2().child(slot(
-                &self.timeline,
-                Some(StyleRefinement::default().size_full()),
-                "timeline",
-                cx,
-            )))
+            .child(
+                div()
+                    .id("timeline")
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .p_2()
+                    .child(slot(
+                        &self.timeline,
+                        Some(StyleRefinement::default().size_full()),
+                        "timeline",
+                        cx,
+                    ))
+                    .child(crate::tour::probe(crate::tour::Anchor::Timeline)),
+            )
             .children(self.activity.clone())
             .child(
                 div()
+                    .relative()
                     .px_2()
                     .pb_1()
                     .border_t_1()
                     .border_color(border)
-                    .child(slot(&self.input, None, "input", cx)),
+                    .child(slot(&self.input, None, "input", cx))
+                    .child(crate::tour::probe(crate::tour::Anchor::Prompt)),
             )
             .child(
                 div()
