@@ -1,6 +1,6 @@
 # Spec 0001: durable notices, a short-step log, and outline-only arrows
 
-Status: **proposed**. Source: Specky3 epic `CREST-UX` (`Weaknesses of the crest UI against the
+Status: **implemented** in `crates/ui` only (no CLI or headless change): sections 1 and 2 as the information mark (`crates/ui/src/info.rs`), section 3 as the outline arrows. Source: Specky3 epic `CREST-UX` (`Weaknesses of the crest UI against the
 standards for agentic interfaces`), node `#18` (Solution proposal) and spike `S01`
 (`.aos/tree/CREST-UX/nodes/17.md` and `18.md`). Prototyped, not yet built, in `mock/` (see
 `mock/src/visibility.js`). This spec is the port of that prototype into `crates/ui`.

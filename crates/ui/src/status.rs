@@ -14,12 +14,13 @@ use domain::git::GitStatus;
 use domain::model::ModelId;
 use domain::permission::PermissionMode;
 use gpui::{
-    App, Context, Hsla, IntoElement, ParentElement as _, Render, SharedString, Styled as _, Task,
-    Window, div,
+    App, Context, Entity, Focusable as _, Hsla, IntoElement, ParentElement as _, Render,
+    SharedString, Styled as _, Task, Window, div,
 };
 use gpui_component::{ActiveTheme as _, h_flex};
 
 use crate::activity::{Entry, Log};
+use crate::info::InfoView;
 
 /// How long a transient notice stays in the status bar.
 pub const NOTICE_TTL: Duration = Duration::from_secs(6);
@@ -293,6 +294,8 @@ impl StatusState {
 pub struct StatusView {
     state: StatusState,
     expiry: Option<Task<()>>,
+    /// The information mark, which floats over the corner above this bar.
+    info: Option<Entity<InfoView>>,
 }
 
 impl StatusView {
@@ -301,6 +304,7 @@ impl StatusView {
         Self {
             state: StatusState::new(workspace),
             expiry: None,
+            info: None,
         }
     }
 
@@ -313,6 +317,18 @@ impl StatusView {
     pub fn state_mut(&mut self, cx: &mut Context<Self>) -> &mut StatusState {
         cx.notify();
         &mut self.state
+    }
+
+    /// Sets the information mark this bar hosts.
+    pub fn set_info(&mut self, info: Entity<InfoView>, cx: &mut Context<Self>) {
+        self.info = Some(info);
+        cx.notify();
+    }
+
+    /// Whether the mark's panel has the keyboard.
+    pub fn info_focused(&self, window: &Window, cx: &App) -> bool {
+        let focus = self.info.as_ref().map(|info| info.focus_handle(cx));
+        focus.is_some_and(|focus| focus.contains_focused(window, cx))
     }
 
     /// Shows the git state of the workspace.
@@ -345,7 +361,7 @@ impl StatusView {
     }
 }
 
-fn notice_color(level: NoticeLevel, cx: &App) -> Hsla {
+pub(crate) fn notice_color(level: NoticeLevel, cx: &App) -> Hsla {
     let theme = cx.theme();
     match level {
         NoticeLevel::Info => theme.info,
@@ -383,24 +399,31 @@ impl Render for StatusView {
             );
         }
         if let Some(status) = self.state.git() {
-            let color = if status.conflicted > 0 {
-                theme.danger
-            } else if status.is_clean() {
-                theme.success
-            } else {
-                theme.warning
-            };
+            let color = git_color(status, theme);
             right = right
                 .child(div().text_color(color).child(SharedString::from(git)))
                 .child(sep());
         }
         right = right.child(div().text_color(muted).child(SharedString::from(workspace)));
         h_flex()
+            .relative()
             .w_full()
             .justify_between()
             .text_sm()
             .child(left)
             .child(right)
+            .children(self.info.clone())
+    }
+}
+
+/// Green when the tree is clean, amber with changes, red with conflicts.
+fn git_color(status: &GitStatus, theme: &gpui_component::Theme) -> Hsla {
+    if status.conflicted > 0 {
+        theme.danger
+    } else if status.is_clean() {
+        theme.success
+    } else {
+        theme.warning
     }
 }
 

@@ -2357,3 +2357,40 @@ fn the_welcome_screen_names_the_keys_of_the_keymap(cx: &mut TestAppContext) {
     assert!(row("F8").is_some_and(|what| what.starts_with("move the focus")));
     assert!(row("Ctrl+Shift+C").is_some(), "{welcome:?}");
 }
+
+#[gpui::test]
+fn a_failed_retry_toasts_then_waits_behind_the_mark_and_esc_returns_the_prompt(
+    cx: &mut TestAppContext,
+) {
+    let (h, cx) = harness(Vec::new(), cx);
+    assert!(cx.debug_bounds("info-mark").is_none(), "quiet while empty");
+    h.session.update(cx, |s, cx| {
+        s.dispatch(
+            DomainEvent::Retrying {
+                attempt: 1,
+                delay_ms: 500,
+            },
+            cx,
+        );
+    });
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("info-toast").is_some(), "the entry toasts");
+    cx.executor().advance_clock(crate::info::TOAST_FOR);
+    cx.run_until_parked();
+    assert!(
+        cx.debug_bounds("info-toast").is_none(),
+        "3 s later it parks"
+    );
+    let mark = cx.debug_bounds("info-mark").expect("the mark").center();
+    cx.simulate_click(mark, gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("info-panel").is_some());
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("info-panel").is_none(), "Esc closes it");
+    let focused = cx.update(|window, cx| {
+        let input = h.session.read(cx).input().clone();
+        input.read(cx).focus_handle(cx).contains_focused(window, cx)
+    });
+    assert!(focused, "the prompt has the keyboard back");
+}

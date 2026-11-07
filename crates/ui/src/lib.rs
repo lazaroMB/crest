@@ -10,6 +10,7 @@ pub mod chats;
 pub mod commands;
 pub mod form;
 pub mod help;
+pub mod info;
 pub mod input;
 pub mod keyscroll;
 pub mod kit;

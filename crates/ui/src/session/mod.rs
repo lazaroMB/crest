@@ -590,6 +590,7 @@ pub fn open(
         root.push_overlay(login, cx);
         root.push_overlay(approval, cx);
     });
+    crate::info::attach(&session, cx);
     session.update(cx, |session, cx| session.focus_input(window, cx));
     (root, session)
 }

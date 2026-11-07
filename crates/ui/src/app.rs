@@ -476,6 +476,7 @@ fn footer(root: &RootView, cx: &App) -> (impl IntoElement, impl IntoElement) {
         .border_color(border)
         .child(slot(&root.input, None, "input", cx));
     let status = div()
+        .debug_selector(|| "status-row".to_owned())
         .px_2()
         .py_1()
         .border_t_1()

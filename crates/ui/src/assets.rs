@@ -53,26 +53,37 @@ mod tests {
     use super::*;
     use gpui_component::IconNamed as _;
 
+    /// `(name, path)` of each `IconName` variant of `krate` listed.
+    macro_rules! icons {
+        ($krate:ident, [$($name:ident),*]) => {
+            vec![$((stringify!($name), $krate::IconName::$name.path())),*]
+        };
+    }
+
     /// Every icon crest draws, by the name it has in `IconName`, and the
     /// path it loads (the component's own, or the catalog's for the extras).
     fn used() -> Vec<(&'static str, SharedString)> {
-        vec![
-            ("Plus", gpui_component::IconName::Plus.path()),
-            ("Search", gpui_component::IconName::Search.path()),
-            ("Folder", gpui_component::IconName::Folder.path()),
-            ("Close", gpui_component::IconName::Close.path()),
-            ("Check", gpui_component::IconName::Check.path()),
-            ("Copy", gpui_component::IconName::Copy.path()),
-            ("Ellipsis", gpui_component::IconName::Ellipsis.path()),
-            ("GitBranch", gpui_kit_assets::IconName::GitBranch.path()),
-            ("Archive", gpui_kit_assets::IconName::Archive.path()),
-            (
-                "ArchiveRestore",
-                gpui_kit_assets::IconName::ArchiveRestore.path(),
-            ),
-            ("Trash", gpui_kit_assets::IconName::Trash.path()),
-            ("Pin", gpui_kit_assets::IconName::Pin.path()),
-        ]
+        // One list per icon crate: each name is the variant of `IconName`.
+        let component = icons!(
+            gpui_component,
+            [
+                Plus,
+                Search,
+                Folder,
+                Close,
+                Check,
+                Copy,
+                Ellipsis,
+                Info,
+                TriangleAlert,
+                CircleX
+            ]
+        );
+        let catalog = icons!(
+            gpui_kit_assets,
+            [GitBranch, Archive, ArchiveRestore, Trash, Pin]
+        );
+        [component, catalog].concat()
     }
 
     #[test]
