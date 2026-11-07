@@ -139,6 +139,7 @@ pub async fn grep(search: &RipgrepSearch, request: GrepRequest) -> Result<GrepRe
         hits: collector.hits,
         truncated: collector.truncated,
         total: collector.total,
+        notes: Vec::new(),
     })
 }
 

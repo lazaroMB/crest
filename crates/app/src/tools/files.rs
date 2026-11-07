@@ -65,9 +65,24 @@ fn search_error_message(err: &SearchError) -> String {
     }
 }
 
+/// `text` followed by the port's notes (a directory that was not searched,
+/// which directory a path belongs to), one `[note]` line each; `text` as it
+/// is when there are none (a single directory).
+fn with_notes(mut text: String, notes: &[String]) -> String {
+    for note in notes {
+        let _ = write!(text, "\n[{note}]");
+    }
+    text
+}
+
 /// Renders a list of paths, cut to `budget`, with a note when the port
 /// already cut it to the request limit.
 fn render_file_list(list: &FileList, budget: ResultBudget, empty: &str, hint: &str) -> String {
+    let text = render_paths(list, budget, empty, hint);
+    with_notes(text, &list.notes)
+}
+
+fn render_paths(list: &FileList, budget: ResultBudget, empty: &str, hint: &str) -> String {
     if list.paths.is_empty() {
         return empty.to_owned();
     }
@@ -91,7 +106,8 @@ files ignored by .gitignore and the .git directory are not.
 - To find a file whose name you roughly know, prefer `find_file`; to see the layout of \
 directories, prefer `tree`.
 - Returns at most `limit` paths (default 500); narrow `glob` when the list is cut.
-- Paths are relative to the workspace root.";
+- Paths are relative to the workspace root. A project with several directories lists all of \
+them: those of the first are relative, those of the others absolute (a note says which is which).";
 
 /// `list_files`: workspace files, optionally filtered by a glob.
 pub struct ListFilesTool {
@@ -151,7 +167,8 @@ Finds files by fuzzy-matching `query` against their paths (fzf), best match firs
 per line.
 - Use it when you know part of a file name or path, e.g. `run_turn` or `app/tools/reg`.
 - To search file contents use `grep`; to list files by pattern use `list_files` with a glob.
-- Returns at most `limit` paths (default 20). Paths are relative to the workspace root.";
+- Returns at most `limit` paths (default 20). Paths are relative to the workspace root; in a \
+project with several directories all are searched and those of the others are absolute.";
 
 /// `find_file`: fuzzy search of file paths.
 pub struct FindFileTool {
@@ -213,7 +230,9 @@ its context lines as `path-line- text`; groups of lines are separated by `--`.
 search for a literal string, `ignore_case` for a case-insensitive search and `word` to match \
 whole words only.
 - Narrow the search with `path` (a file or directory) and `glob` (e.g. `*.rs`).
-- Files ignored by .gitignore are skipped. Paths are relative to the workspace root.
+- Files ignored by .gitignore are skipped. Paths are relative to the workspace root; in a \
+project with several directories all are searched (`path` can be absolute to pick one) and \
+those of the others are absolute.
 - Returns at most `limit` matches (default 100) with `context` lines around each (default 2; \
 use 0 for just the matching lines). Refine the pattern when the result is cut.";
 
@@ -285,7 +304,10 @@ impl TypedTool for GrepTool {
                 Err(err) => return Ok(ToolOutput::error(search_error_message(&err))),
             };
             if result.hits.is_empty() {
-                return Ok(ToolOutput::text("No matches found."));
+                return Ok(ToolOutput::text(with_notes(
+                    "No matches found.".to_owned(),
+                    &result.notes,
+                )));
             }
             let items: Vec<String> = result
                 .hits
@@ -309,7 +331,7 @@ impl TypedTool for GrepTool {
                     result.total
                 );
             }
-            Ok(ToolOutput::text(out))
+            Ok(ToolOutput::text(with_notes(out, &result.notes)))
         };
         Ok(PreparedCall::new(subject, run.boxed()))
     }
@@ -322,7 +344,8 @@ per level.
 - Use it to get an overview of a project or a directory before reading files.
 - Expands `depth` levels below `path` (default 3); deeper directories show how many files \
 they contain instead. Empty and ignored directories are not shown.
-- Paths are relative to the workspace root.";
+- Paths are relative to the workspace root. A project with several directories shows each as a \
+top-level folder; paths under the others are absolute.";
 
 fn render_tree(node: &TreeNode, level: usize, lines: &mut Vec<String>) {
     let indent = "  ".repeat(level);
@@ -388,12 +411,18 @@ impl TypedTool for TreeTool {
         let run = async move {
             Ok(match search.tree(input).await {
                 Ok(tree) if tree.children.is_empty() && tree.omitted_files == 0 => {
-                    ToolOutput::text(format!("No files under {}.", tree.path))
+                    ToolOutput::text(with_notes(
+                        format!("No files under {}.", tree.path),
+                        &tree.notes,
+                    ))
                 }
                 Ok(tree) => {
                     let mut lines = Vec::new();
                     render_tree(&tree, 0, &mut lines);
-                    ToolOutput::text(inner_budget(budget).truncate_list(&lines))
+                    ToolOutput::text(with_notes(
+                        inner_budget(budget).truncate_list(&lines),
+                        &tree.notes,
+                    ))
                 }
                 Err(err) => ToolOutput::error(search_error_message(&err)),
             })

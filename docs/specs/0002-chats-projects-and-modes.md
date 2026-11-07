@@ -93,6 +93,14 @@ tools (`crates/app/src/tools/files.rs:46`) and `open_file` (`crates/app-core/src
 take the list. A standalone session has no root: a tool that needs one returns a message asking the
 person for a directory (S01 criterion 4) instead of resolving against the process's current directory.
 
+Status: the file tools, `open_file`, the sandbox, and now the search tools (`list_files`, `find_file`,
+`grep`, `tree`, plus the file tree panel and the `@` list, which read the same port) take the list.
+The searches run in every root with the same ignore and sensitive-path rules, name the paths of the
+first root relative and of the others absolute (`RootedPath::address`), share the limit between the
+roots, and note a root that cannot be read while the others answer. `run_command` keeps running in the
+first root (it has no directory argument). Not done: the tree panel watches only the first root for
+changes.
+
 ### 3. The sidebar model and three widths (spike S05, risks: pathways 1, 3, 6, 7)
 
 `crates/ui/src/chats.rs` replaces its per-directory catalog with the mock's `sidebarModel`:

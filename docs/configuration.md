@@ -344,6 +344,7 @@ The initial permission mode is chosen with `--mode` (`ask` by default). It is no
 
 - The default list is `.env*`, `*.pem`, `id_rsa*` and `.git/`.
 - In a project with several directories the patterns apply to each one, against the path inside that directory: a directory above it (`~/.git/proj`) does not trip them.
+- The search tools (`list_files`, `find_file`, `grep`, `tree`) apply them, and the ignore files (`.gitignore`, `.ignore`, `.rgignore`), in each directory of such a project; their limits count the merged answer. See [usage.md](usage.md#agent-tools).
 - Each pattern is matched against **every component** of the path: it only supports `*` and `?`, and cannot contain `/` except for a trailing `/`, which marks a directory. For example, `.env*` denies `.env` and `config/.env.local`, and `.git/` denies everything inside `.git`.
 
 ```lua

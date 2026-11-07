@@ -296,6 +296,17 @@ pub fn deserialize_any_path<'de, D: Deserializer<'de>>(
     WorkspacePath::parse_any(&raw).map_err(serde::de::Error::custom)
 }
 
+/// [`deserialize_any_path`] for an optional path (`null` or missing is
+/// `None`), used by the search tools so they can name a directory under any
+/// root of a project.
+pub fn deserialize_any_path_opt<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<WorkspacePath>, D::Error> {
+    let raw = Option::<Cow<'de, str>>::deserialize(deserializer)?;
+    raw.map(|raw| WorkspacePath::parse_any(&raw).map_err(serde::de::Error::custom))
+        .transpose()
+}
+
 impl JsonSchema for WorkspacePath {
     fn inline_schema() -> bool {
         true

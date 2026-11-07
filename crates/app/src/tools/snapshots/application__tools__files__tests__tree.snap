@@ -4,7 +4,7 @@ expression: def
 ---
 {
   "name": "tree",
-  "description": "Shows the directory tree under `path` (the workspace root when omitted), built from the file listing: directories first and marked with a trailing `/`, two spaces of indentation per level.\n- Use it to get an overview of a project or a directory before reading files.\n- Expands `depth` levels below `path` (default 3); deeper directories show how many files they contain instead. Empty and ignored directories are not shown.\n- Paths are relative to the workspace root.",
+  "description": "Shows the directory tree under `path` (the workspace root when omitted), built from the file listing: directories first and marked with a trailing `/`, two spaces of indentation per level.\n- Use it to get an overview of a project or a directory before reading files.\n- Expands `depth` levels below `path` (default 3); deeper directories show how many files they contain instead. Empty and ignored directories are not shown.\n- Paths are relative to the workspace root. A project with several directories shows each as a top-level folder; paths under the others are absolute.",
   "input_schema": {
     "type": "object",
     "properties": {
@@ -13,7 +13,7 @@ expression: def
           "string",
           "null"
         ],
-        "description": "Directory to start from; the workspace root when omitted.",
+        "description": "Directory to start from; the workspace root when omitted. With several\ndirectories, an absolute path names one under any of them and the\ndefault shows every directory.",
         "default": null
       },
       "depth": {

@@ -29,6 +29,7 @@ use application_core::ports::search::{
     GrepRequest, GrepResult, ListFilesRequest, SearchError, TreeNode, TreeRequest,
 };
 use async_trait::async_trait;
+use domain::roots::WorkspaceRoots;
 use domain::workspace::{PathError, SensitivePathRules, WorkspaceRoot};
 
 use tokio::sync::OnceCell;
@@ -39,6 +40,7 @@ pub mod detect;
 pub mod files;
 pub mod find;
 pub mod grep;
+pub mod multi;
 pub mod process;
 
 #[cfg(test)]
@@ -47,9 +49,10 @@ mod test_support;
 /// Search adapter backed by `rg` and `fzf`.
 #[derive(Debug, Clone)]
 pub struct RipgrepSearch {
-    /// `None` for a chat without a directory, where every search fails with
+    /// The directories searched, the first one being the project's first. Empty
+    /// for a chat without a directory, where every search fails with
     /// [`PathError::NoRoots`].
-    root: Option<WorkspaceRoot>,
+    roots: Vec<WorkspaceRoot>,
     rg: OsString,
     fzf: OsString,
     timeout: Duration,
@@ -60,9 +63,9 @@ pub struct RipgrepSearch {
 }
 
 /// An adapter over `root` with the default tools, timeout and rules.
-fn open(root: Option<WorkspaceRoot>) -> RipgrepSearch {
+fn open(roots: Vec<WorkspaceRoot>) -> RipgrepSearch {
     RipgrepSearch {
-        root,
+        roots,
         rg: Tool::Ripgrep.program().into(),
         fzf: Tool::Fzf.program().into(),
         timeout: DEFAULT_SEARCH_TIMEOUT,
@@ -71,10 +74,10 @@ fn open(root: Option<WorkspaceRoot>) -> RipgrepSearch {
     }
 }
 
-/// The directory searches run in: the first root of the session. Searches
-/// stay in it even when the session has more.
+/// The directory a single-root search runs in: the only root of the search
+/// (or of the copy [`multi`] scopes to one root of a project).
 pub(crate) fn directory(search: &RipgrepSearch) -> Result<&WorkspaceRoot, PathError> {
-    search.root.as_ref().ok_or(PathError::NoRoots)
+    search.roots.first().ok_or(PathError::NoRoots)
 }
 
 impl RipgrepSearch {
@@ -82,7 +85,7 @@ impl RipgrepSearch {
     /// from `PATH`, [`DEFAULT_SEARCH_TIMEOUT`] and the default sensitive
     /// path rules.
     pub fn new(root: WorkspaceRoot) -> Self {
-        open(Some(root))
+        open(vec![root])
     }
 
     /// Uses `program` (a name looked up in `PATH`, or a path) as `rg`.
@@ -98,6 +101,20 @@ impl RipgrepSearch {
         self.fzf = program.into();
         self.fzf_status = Arc::default();
         self
+    }
+
+    /// Searches every directory of `roots` (the first one is the base of
+    /// relative paths) instead of the one given to [`Self::new`]. An empty
+    /// list keeps the adapter as it is.
+    #[must_use]
+    pub fn with_roots(self, roots: &WorkspaceRoots) -> Self {
+        match roots.is_empty() {
+            true => self,
+            false => Self {
+                roots: roots.iter().cloned().collect(),
+                ..self
+            },
+        }
     }
 
     /// Sets the timeout applied to each search.
@@ -118,7 +135,7 @@ impl RipgrepSearch {
     /// fails with [`PathError::NoRoots`], and nothing is searched in the
     /// process's own working directory.
     pub fn standalone() -> Self {
-        open(None)
+        open(Vec::new())
     }
 
     /// Checks the configured `rg` and `fzf` (meant for startup; see
@@ -135,22 +152,22 @@ impl RipgrepSearch {
 #[async_trait]
 impl FileSearchPort for RipgrepSearch {
     async fn list_files(&self, request: ListFilesRequest) -> Result<FileList, SearchError> {
-        files::list_files(self, request).await
+        multi::files(self, multi::Files::List(request)).await
     }
 
     async fn find_file(&self, request: FindFileRequest) -> Result<FileList, SearchError> {
-        find::find_file(self, request).await
+        multi::files(self, multi::Files::Find(request)).await
     }
 
     async fn tree(&self, request: TreeRequest) -> Result<TreeNode, SearchError> {
-        files::tree(self, request).await
+        multi::tree(self, request).await
     }
 }
 
 #[async_trait]
 impl ContentSearchPort for RipgrepSearch {
     async fn grep(&self, request: GrepRequest) -> Result<GrepResult, SearchError> {
-        grep::grep(self, request).await
+        multi::grep(self, request).await
     }
 }
 

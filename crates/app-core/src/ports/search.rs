@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use domain::workspace::{PathError, WorkspacePath};
+use domain::workspace::{PathError, WorkspacePath, deserialize_any_path_opt};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -122,8 +122,10 @@ impl FindFileRequest {
 /// Input of the `tree` tool.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct TreeRequest {
-    /// Directory to start from; the workspace root when omitted.
-    #[serde(default)]
+    /// Directory to start from; the workspace root when omitted. With several
+    /// directories, an absolute path names one under any of them and the
+    /// default shows every directory.
+    #[serde(default, deserialize_with = "deserialize_any_path_opt")]
     pub path: Option<WorkspacePath>,
     /// How many directory levels to expand below `path` (default 3).
     #[serde(default = "default_tree_depth")]
@@ -149,6 +151,11 @@ pub struct FileList {
     pub truncated: bool,
     /// How many paths matched before applying the limit.
     pub total: usize,
+    /// What the reader should know about the listing: a directory that
+    /// could not be searched, or which directory the paths belong to when
+    /// there are several. Empty for a single directory.
+    #[serde(default)]
+    pub notes: Vec<String>,
 }
 
 impl FileList {
@@ -161,6 +168,7 @@ impl FileList {
             truncated: total > paths.len(),
             paths,
             total,
+            notes: Vec::new(),
         }
     }
 }
@@ -190,6 +198,9 @@ pub struct TreeNode {
     /// Number of files below this directory that were not expanded because
     /// of the depth limit (0 for files and fully expanded directories).
     pub omitted_files: usize,
+    /// Directories that could not be listed (set on the top node only).
+    #[serde(default)]
+    pub notes: Vec<String>,
 }
 
 impl TreeNode {
@@ -253,6 +264,7 @@ impl Builder {
                 kind,
                 children: Vec::new(),
                 omitted_files: 0,
+                notes: Vec::new(),
             };
         }
         if depth == 0 {
@@ -262,6 +274,7 @@ impl Builder {
                 kind,
                 children: Vec::new(),
                 omitted_files: self.files_below,
+                notes: Vec::new(),
             };
         }
         let mut children: Vec<TreeNode> = self
@@ -284,6 +297,7 @@ impl Builder {
             kind,
             children,
             omitted_files: 0,
+            notes: Vec::new(),
         }
     }
 }
@@ -337,8 +351,10 @@ pub struct GrepRequest {
     /// Regular expression (ripgrep syntax) to search for, or a literal
     /// string when `fixed` is true.
     pub pattern: String,
-    /// File or directory to search in; the whole workspace when omitted.
-    #[serde(default)]
+    /// File or directory to search in; the whole workspace (every directory
+    /// of a project) when omitted. An absolute path names one under any of
+    /// the directories.
+    #[serde(default, deserialize_with = "deserialize_any_path_opt")]
     pub path: Option<WorkspacePath>,
     /// Optional glob that searched files must match, e.g. `*.rs`.
     #[serde(default)]
@@ -409,6 +425,10 @@ pub struct GrepHit {
 pub struct GrepResult {
     /// The returned matches, at most `limit`.
     pub hits: Vec<GrepHit>,
+    /// Directories that could not be searched, and which directory the
+    /// paths belong to when there are several. Empty for a single directory.
+    #[serde(default)]
+    pub notes: Vec<String>,
     /// Whether more matches existed than were returned.
     pub truncated: bool,
     /// How many matches were seen before applying the limit. When the

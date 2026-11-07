@@ -59,3 +59,40 @@ async fn the_rule_subject_of_an_absolute_path_is_its_relative_address() {
         assert_eq!(prepared.subject, subject, "{path}");
     }
 }
+
+/// Notes (a directory that was not searched, the legend of the roots) follow
+/// the answer, one `[note]` line each; a single directory has none.
+#[test]
+fn notes_follow_the_answer_one_line_each() {
+    let notes = |items: &[&str]| items.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>();
+    for (text, given, expected) in [
+        ("a\nb", notes(&[]), "a\nb"),
+        (
+            "a",
+            notes(&["x: not searched (gone)"]),
+            "a\n[x: not searched (gone)]",
+        ),
+        (
+            "No files found.",
+            notes(&["l", "m"]),
+            "No files found.\n[l]\n[m]",
+        ),
+    ] {
+        assert_eq!(super::with_notes(text.to_owned(), &given), expected);
+    }
+}
+
+/// The search tools can name a directory under any root: an absolute path
+/// parses (the adapter places it), `..` out of a root still does not.
+#[test]
+fn search_paths_may_be_absolute_but_not_climb_out() {
+    for (path, ok) in [("/a/b", true), ("src", true), ("../x", false), ("", false)] {
+        let tree = json!({ "path": path });
+        let grep = json!({ "pattern": "p", "path": path });
+        let parsed = (
+            serde_json::from_value::<TreeRequest>(tree).is_ok(),
+            serde_json::from_value::<GrepRequest>(grep).is_ok(),
+        );
+        assert_eq!(parsed, (ok, ok), "{path:?}");
+    }
+}

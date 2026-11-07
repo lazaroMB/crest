@@ -640,6 +640,8 @@ pub async fn build_app(
         prompt_history,
         ..
     } = opened.resumed;
+    // The searches, the file tree and the `@` list span every directory too.
+    let search = search.with_roots(&opened.roots);
     let guard = WorkspaceGuard::new(opened.roots).with_sensitive_rules(rules);
     *image_guard.write().unwrap_or_else(PoisonError::into_inner) = guard.clone();
 
