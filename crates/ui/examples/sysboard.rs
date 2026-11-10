@@ -168,7 +168,19 @@ fn schedule(
             started.set(Instant::now());
             report(&board, ix, elapsed, cx);
             match steps.get(ix) {
-                Some((_, step)) => board.update(cx, *step),
+                Some((name, step)) => {
+                    if *name == "opened" {
+                        // The board is on screen: `scripts/screenshots.sh` captures.
+                        let size = window.viewport_size();
+                        eprintln!(
+                            "sysboard: ready {}x{} scale {}",
+                            f32::from(size.width),
+                            f32::from(size.height),
+                            window.scale_factor()
+                        );
+                    }
+                    board.update(cx, *step);
+                }
                 None => {
                     eprintln!("sysboard: done after {n} frames");
                     if quit {
