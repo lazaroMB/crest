@@ -27,6 +27,14 @@ export const api = {
   interrupt: (chatId) => call("POST", `/api/interrupt/${chatId}`),
   setStatus: (patch) => call("PATCH", "/api/status", patch),
 
+  mcpServers: () => call("GET", "/api/mcp"),
+  mcpAdd: (spec) => call("POST", "/api/mcp", { spec }),
+  mcpUpdate: (name, spec) => call("PATCH", `/api/mcp/${name}`, { spec }),
+  mcpRemove: (name) => call("DELETE", `/api/mcp/${name}`),
+  mcpTestSpec: (spec) => call("POST", "/api/mcp/test", { spec }),
+  /** test | restart | login | cancel | logout | trust | enable | disable */
+  mcpAction: (name, action) => call("POST", `/api/mcp/${name}/${action}`),
+
   /** Runs a turn; `onEvent` gets every event until `{ type: "done" }`. */
   turn(chatId, prompt, onEvent) {
     const query = new URLSearchParams({ chat: chatId, prompt });

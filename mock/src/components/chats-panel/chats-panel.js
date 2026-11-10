@@ -13,6 +13,9 @@
 // directories from anywhere, renames it, pins it, and archives it. Archiving
 // hides a chat or a project from the lists above without deleting it; the
 // Archived section is the only place to see it again and restore it.
+//
+// The full sidebar ends in a dock that opens the MCP servers manager (its dot
+// is the worst state among the servers); the strip keeps only the dot.
 
 import { h } from "../../lib/h.js";
 import {
@@ -25,6 +28,7 @@ import {
   moveChat,
   newChat,
   openChat,
+  openMcp,
   pinProject,
   removeProjectRoot,
   renameChat,
@@ -40,6 +44,7 @@ import { setUi } from "../../store.js";
 import { archivedModel, chatRoots, sidebarModel } from "../../organization.js";
 import { icon } from "../icons.js";
 import { Brand } from "../brand/brand.js";
+import { Dot } from "../mcp-manager/mcp-manager.js";
 import "./chats-panel.scss";
 
 const BADGE = { running: "●", waiting: "⏳" };
@@ -291,6 +296,55 @@ function SearchField(state) {
   return h("div", { class: "chats__search" }, icon("search", 14), input, iconButton("close", "Close search", () => setSearch(null)));
 }
 
+const MCP_TITLE = "MCP servers (<C-g>S · /mcp)";
+
+/** The worst state of the servers decides the dock's dot; the line below counts them. */
+function mcpSummary(servers) {
+  const count = (state) => servers.filter((s) => s.state === state).length;
+  const ready = count("ready");
+  const login = count("needs-login") + count("untrusted");
+  const failed = count("failed");
+  const starting = count("starting");
+  const dot = failed ? "failed" : login ? "needs-login" : starting ? "starting" : ready ? "ready" : "disabled";
+  const parts = [
+    ready && `${ready} ok`,
+    starting && `${starting} starting`,
+    login && h("span", { class: "chats-dock__warn" }, `${login} need you`),
+    failed && h("span", { class: "chats-dock__error" }, `${failed} failed`),
+  ].filter(Boolean);
+  return { dot, parts };
+}
+
+function McpDock(state) {
+  const { dot, parts } = mcpSummary(state.mcp);
+  return h(
+    "div",
+    { class: "chats-dock" },
+    h(
+      "button",
+      { class: ["chats-dock__button", state.ui.mcp.open && "chats-dock__button--open"], title: MCP_TITLE, onClick: () => openMcp() },
+      Dot(dot),
+      h("span", { class: "chats-dock__label" }, "MCP servers"),
+      h("span", { class: "chats-dock__count" }, state.mcp.length),
+    ),
+    h(
+      "div",
+      { class: "chats-dock__status" },
+      parts.length ? parts.flatMap((p, i) => (i ? [h("span", { class: "sep" }, " · "), p] : [p])) : h("span", { class: "muted" }, "none yet · add one"),
+    ),
+  );
+}
+
+/** The strip's dock: the dot alone, only once there is a server to show. */
+function McpStripDot(state) {
+  if (!state.mcp.length) return null;
+  return h(
+    "button",
+    { class: ["icon-button", "strip-mcp", state.ui.mcp.open && "strip-mcp--open"], title: MCP_TITLE, "aria-label": "MCP servers", onClick: () => openMcp() },
+    Dot(mcpSummary(state.mcp).dot),
+  );
+}
+
 function Full(state) {
   const { projects, standalone } = sidebarModel(state.organization, { query: state.ui.search ?? "" });
   const menu = state.ui.menu;
@@ -326,6 +380,7 @@ function Full(state) {
       ),
       ArchivedSection(state),
     ),
+    McpDock(state),
   );
 }
 
@@ -361,6 +416,7 @@ function Strip(state) {
     { class: ["chats", "chats--strip", state.ui.focus === "chats" && "chats--focused"], "data-sidebar": "strip" },
     logoButton("Expand the sidebar (<C-g>s)", () => setSidebar("full")),
     ...StripRows(state),
+    McpStripDot(state),
   );
 }
 

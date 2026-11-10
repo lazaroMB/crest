@@ -509,3 +509,70 @@
     }
   }
 }
+
+// The MCP dock at the foot of the full sidebar: a button with the worst
+// state's dot and the count, then a status line in the status bar's colors.
+.chats-dock {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  height: auto;
+  margin-top: auto;
+  border-top: 1px solid var(--border);
+
+  &__button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 4px;
+    padding: 6px 8px;
+    border-radius: var(--radius-sm);
+    text-align: left;
+
+    &:hover,
+    &--open {
+      background: var(--list-selected-bg);
+    }
+  }
+
+  &__label {
+    flex: 1;
+  }
+
+  &__count {
+    padding: 0 6px;
+    border-radius: var(--radius-sm);
+    background: var(--button-bg);
+    font-size: var(--text-xs);
+    color: var(--muted-fg);
+  }
+
+  &__status {
+    padding: 4px 12px;
+    border-top: 1px solid var(--border);
+    background: var(--title-bar-bg);
+    font-size: var(--text-sm);
+    color: var(--muted-fg);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &__warn {
+    color: var(--warning);
+  }
+
+  &__error {
+    color: var(--error);
+  }
+}
+
+// The strip's dock: the dot alone, pushed to the bottom.
+.strip-mcp {
+  margin-top: auto;
+  margin-bottom: 6px;
+
+  &--open {
+    background: var(--list-selected-bg);
+  }
+}

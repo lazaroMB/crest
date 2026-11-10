@@ -1,8 +1,9 @@
 // The prompt: a + button, the chosen chat mode as a chip, "❯" and a textarea
 // that grows with its text (crates/ui/src/input.rs).
 //
-// + opens a menu: the chat mode (Chat, Research, Deep research) and what to add
-// (a workspace file with @, a command with /). The mode stays until changed;
+// + opens a menu: the chat mode (Chat, Research, Deep research), what to add
+// (a workspace file with @, a command with /) and what to manage (the MCP
+// servers, the same as /mcp). The mode stays until changed;
 // in research it sends "/research <text>", in deep research
 // "/research --deep <text>", the same lines a person can type. <C-g>m cycles it.
 //
@@ -51,6 +52,7 @@ export function mountPromptInput(root) {
     ...CHAT_MODES.map((m) => ({ kind: "mode", id: m.id, icon: MODE_ICON[m.id], label: m.label, hint: m.hint })),
     { kind: "insert", text: "@", icon: "file", label: "File from the workspace", hint: "@" },
     { kind: "insert", text: "/", icon: "slash", label: "Command", hint: "/" },
+    { kind: "command", command: "/mcp", icon: "panel", label: "MCP servers", hint: "/mcp" },
   ];
 
   function resize() {
@@ -90,13 +92,19 @@ export function mountPromptInput(root) {
         h("div", { class: "mode-menu__sep" }),
         h("div", { class: "mode-menu__label-row" }, "Add"),
         items.filter((it) => it.kind === "insert").map((it) => item(it, items.indexOf(it))),
+        h("div", { class: "mode-menu__sep" }),
+        h("div", { class: "mode-menu__label-row" }, "Manage"),
+        items.filter((it) => it.kind === "command").map((it) => item(it, items.indexOf(it))),
       ),
     );
   }
 
   function choose(it) {
     if (it.kind === "mode") setChatMode(it.id);
-    else {
+    else if (it.kind === "command") {
+      toggleModeMenu(false);
+      return runCommand(it.command);
+    } else {
       toggleModeMenu(false);
       setValue(textarea.value + it.text);
     }
