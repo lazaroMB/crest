@@ -124,6 +124,7 @@ fn in_git_dir(path: &Path) -> bool {
 /// ignore costs a reload that finds nothing new.
 pub struct Ignored {
     root: PathBuf,
+    canonical: Option<PathBuf>,
     matcher: Gitignore,
 }
 
@@ -138,8 +139,10 @@ impl Ignored {
                 let _ = builder.add(file);
             }
         }
+        let canonical = root.canonicalize().ok().filter(|c| c != root);
         Self {
             root: root.to_owned(),
+            canonical,
             matcher: builder.build().unwrap_or_else(|_| Gitignore::empty()),
         }
     }
@@ -147,7 +150,41 @@ impl Ignored {
     /// Whether `path` (absolute, as the watcher reports it) or one of its
     /// directories is ignored. Paths outside the root are not.
     pub fn is_ignored(&self, path: &Path) -> bool {
+        // Try the path as given and, on macOS, its canonical form, so an
+        // event reported under `/private/var/...` for a root opened as
+        // `/var/...` is still recognised.
+        if self.is_ignored_one(path) {
+            return true;
+        }
+        if let Some(canonical) = &self.canonical {
+            // Rebase the path onto the canonical root if it sits under the
+            // given root, then test again.
+            if let Ok(relative) = path.strip_prefix(&self.root) {
+                let rebased = canonical.join(relative);
+                if self.is_ignored_one(&rebased) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    fn is_ignored_one(&self, path: &Path) -> bool {
         let Ok(relative) = path.strip_prefix(&self.root) else {
+            // The path may already be canonical; try that root too.
+            if let Some(canonical) = &self.canonical {
+                let Ok(relative) = path.strip_prefix(canonical) else {
+                    return false;
+                };
+                if relative.as_os_str().is_empty() {
+                    return false;
+                }
+                return in_git_dir(relative)
+                    || self
+                        .matcher
+                        .matched_path_or_any_parents(relative, path.is_dir())
+                        .is_ignore();
+            }
             return false;
         };
         if relative.as_os_str().is_empty() {
@@ -1111,7 +1148,13 @@ mod tests {
         std::fs::write(root.join(".gitignore"), "target/\n").unwrap();
         std::fs::create_dir_all(root.join("target/debug")).unwrap();
         std::fs::create_dir_all(root.join("src")).unwrap();
+        // Let the kernel settle any events produced by creating the
+        // directories above before the watcher starts, so the watcher's
+        // SinceNow baseline excludes them.
+        std::thread::sleep(Duration::from_millis(200));
         let (_watcher, mut pings) = DirWatcher::new(root).unwrap();
+        // Drain any stray events FSEvents may still deliver at startup.
+        let _ = pinged(&mut pings, Duration::from_millis(300));
 
         std::fs::write(root.join("target/debug/app.o"), "").unwrap();
         assert!(!pinged(&mut pings, Duration::from_millis(400)), "ignored");
