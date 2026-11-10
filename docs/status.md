@@ -29,10 +29,8 @@ crest is a **work in progress**. Every phase of the original plan is implemented
 ## Not available yet
 
 - The font is not configurable (JetBrains Mono when installed).
-- `app.opt.leader` only affects mappings defined in Lua; the builtin ones always use `Ctrl+G`. Actions such as `session.resume` are not implemented.
-- The Chats panel lists every project's chats, opens, renames and deletes them with the mouse; there is no key binding or `/` command for it yet, and the last chat of the workspace is the one resumed at start.
+- Actions such as `session.resume` are not implemented.
 - Compaction assumes a 200,000-token context window, whatever the model, and its threshold is not configurable.
-- `/mcp trust` takes effect the next time you open crest; `--trust-mcp` starts the server in the same run. (`/plugin trust`, by contrast, takes effect at once.)
 - Plugin capabilities cover HTTP(S) to listed hosts and listed programs; there is no file-system capability, and a slow `app.http` or `app.shell.run` call holds the Lua VM (other hooks wait) until it finishes or times out.
 - Simulation (MVP): flat state machines, FIFO queues and timers as self-messages; no latency percentiles, load generators, fault toggles in the board, GIF/video export or re-simulation inside `board.html` yet, and the board has only a dark theme. See [docs/research/solution-simulator.md](research/solution-simulator.md).
 - Modals draw images, documents, tables, diagrams and 3D models (OBJ, STL, PLY, geometry only) natively, but cannot embed web pages (links open the browser), PDFs or a terminal yet; images larger than the GPU's texture limit (often 8192 or 16384 px) fail to draw. See [docs/research/rich-content-modals.md](research/rich-content-modals.md) for the roadmap.

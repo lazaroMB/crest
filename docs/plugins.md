@@ -259,8 +259,13 @@ The constructors return plain tables that describe nodes. Lua never touches GPUI
 | `app.ui.link(text, url)` or `app.ui.link(url)` | link | Opens the URL in your browser. Only `http`, `https` and `mailto` are accepted. |
 | `app.ui.diff(unified)` | colored diff | A unified diff (`@@`, `+`, `-` lines). |
 | `app.ui.csv(text [, { header = true, delimiter = "," }])` | table | Parses CSV (quotes, `""`, quoted newlines, `\r\n`) into a table node. Numbers become numbers (so they sort as such), empty cells nulls; short rows are padded. `header = false` names the columns `column 1`, `column 2`... Use `delimiter = "\t"` for TSV. |
+| `app.ui.graph{ title, directed, layout, direction, seed, nodes, edges, groups }` | graph | Nodes and edges laid out in layers, by forces or on a grid; pan, zoom, click a node to focus it. |
+| `app.ui.filter_list{ title, columns, items, facets, follow }` | filterable list | Records with a text or `/regex/` filter and facet chips. |
+| `app.ui.tree{ title, columns, nodes, expand_depth }` | tree | Nested rows with typed columns (`text`, `number`, `duration`, `bar`), badges and inline bars. |
+| `app.ui.timeline{ title, unit, rows, range }` | timeline | Rows of spans on a time axis (zoom, pan, tooltip); a span's end is `stop` (or `["end"]`). |
 | `app.ui.block(name, node)` | the `Custom` block | Validates the whole tree and wraps it as the plugin's block. It must be **returned** from the handler. |
 | `app.ui.plate{ format, wells, value_label, title, scale, center }` | the `Plate` block | The fields of the `show_plate` tool. Not a node: a whole block, already wrapped like `app.ui.block`, to be **returned** from the handler. |
+| `app.ui.material{ name, designation, condition, properties, notes }` | the `Material` block | A material data card: `properties` is a list of `{ name, symbol, value, unit, condition, source }` (a property without `source` shows as unverified). A whole block, like `app.ui.plate`. |
 
 An invalid argument (a table row of a different width, a series of a different length...) raises a Lua error prefixed with `app.ui.<function>:`, and the tool fails with that message. If you nest deeper than the window draws, the excess is cut off with a marker.
 
