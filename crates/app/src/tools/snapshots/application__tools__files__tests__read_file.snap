@@ -4,13 +4,13 @@ expression: def
 ---
 {
   "name": "read_file",
-  "description": "Reads a text file of the workspace. Lines are returned numbered as `cat -n` does (line number, a tab, the line); the numbers are not part of the file.\n- `path` is relative to the workspace root.\n- Returns up to 2000 lines by default. For long files pass `offset` (1-based first line) and `limit` (number of lines) to read a range; a cut result ends with the offset to continue.\n- Binary files are rejected, and files over 2 MB can only be read with an explicit range.\n- Read a file before editing it, so `edit_file` gets the exact current text.",
+  "description": "Reads a text file of the workspace. Lines are returned numbered as `cat -n` does (line number, a tab, the line); the numbers are not part of the file.\n- `path` is relative to the workspace root (the first directory of a project); an absolute path names a file under any of its directories.\n- Returns up to 2000 lines by default. For long files pass `offset` (1-based first line) and `limit` (number of lines) to read a range; a cut result ends with the offset to continue.\n- Binary files are rejected, and files over 2 MB can only be read with an explicit range.\n- Read a file before editing it, so `edit_file` gets the exact current text.",
   "input_schema": {
     "type": "object",
     "properties": {
       "path": {
         "type": "string",
-        "description": "File to read."
+        "description": "File to read. Relative to the first workspace root; an absolute path\nmust lie under one of the roots."
       },
       "offset": {
         "type": [

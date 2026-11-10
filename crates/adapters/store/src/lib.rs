@@ -2,11 +2,15 @@
 //! graph-flow's `SessionStorage` for the investigative flow's checkpoints and
 //! the discovery engine's log and source store.
 
+pub(crate) mod chats;
 pub mod db;
 pub mod discovery;
 pub mod graphflow;
 pub mod migrations;
 pub mod path;
+pub mod projects;
+#[cfg(test)]
+mod seed;
 pub mod session;
 
 pub use discovery::SqliteDiscoveryStore;

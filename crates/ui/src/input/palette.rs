@@ -3,10 +3,14 @@
 use std::rc::Rc;
 
 use application_core::keymap::{Key, KeyCode, Modifiers};
-use gpui::{App, Context, ParentElement as _, SharedString, Styled as _, Window, div};
-use gpui_component::{ActiveTheme as _, h_flex};
+use gpui::{
+    App, Context, Div, IntoElement as _, ParentElement as _, SharedString, Styled as _, WeakEntity,
+    Window, div,
+};
+use gpui_component::{ActiveTheme as _, Theme, h_flex};
 
-use super::completion::{Popup, PopupKey, palette_top, window_note};
+use super::completion::{Paint, Popup, PopupKey, palette_top, window_note};
+use super::groups::{GroupRow, PaletteView, group_indices, view_of};
 use super::model_popup::model_key;
 use super::path_popup::path_key;
 use super::popups::Completion;
@@ -25,7 +29,7 @@ pub fn palette_matches<'a>(commands: &'a [CommandRow], text: &str) -> Vec<&'a Co
 }
 
 /// [`palette_matches`] as indices into `commands`.
-fn palette_indices(commands: &[CommandRow], text: &str) -> Vec<usize> {
+pub(super) fn palette_indices(commands: &[CommandRow], text: &str) -> Vec<usize> {
     let Some(typed) = text.strip_prefix('/') else {
         return Vec::new();
     };
@@ -97,30 +101,56 @@ pub(super) fn choice(row: &CommandRow) -> Choice {
     Choice::Run(fixed.join(" "))
 }
 
+/// What `Tab` and `Enter` do on the chosen row of a list of commands: `Tab`
+/// completes it, `Enter` runs it (or completes it up to its argument).
+fn command_key(key: &Key, choice: &Choice) -> PopupKey {
+    match (key.code, choice) {
+        (KeyCode::Tab, Choice::Run(line)) => PopupKey::SetText(format!("/{line} ")),
+        (KeyCode::Tab | KeyCode::Enter, Choice::Complete(line)) => PopupKey::SetText(line.clone()),
+        (KeyCode::Enter, Choice::Run(line)) => PopupKey::Run(line.clone()),
+        _ => PopupKey::Ignored,
+    }
+}
+
 impl InputView {
     /// The commands the `/` palette offers.
     pub fn set_commands(&mut self, commands: Vec<CommandRow>, cx: &mut Context<Self>) {
         self.commands = commands;
         self.palette_rows.take();
+        self.palette_group = None;
         cx.notify();
     }
 
-    /// The commands the palette shows for the current text.
+    /// The view the palette has for the current text.
+    pub(super) fn palette_view(&self, text: &str) -> PaletteView<'_> {
+        view_of(text, self.palette_group.as_deref())
+    }
+
+    /// The commands the palette shows for the current text: those of the
+    /// opened group, or the matches of what follows the `/`. Empty in the
+    /// groups view, which lists [`Self::palette_groups`].
     pub fn palette(&self, cx: &App) -> Vec<&CommandRow> {
         if self.palette_hidden {
             return Vec::new();
         }
         let text = self.shared_text(cx);
-        let mut cached = self.palette_rows.borrow_mut();
-        let rows = match cached.as_ref() {
-            Some((key, rows)) if *key == text => Rc::clone(rows),
-            _ => {
-                let rows: Rc<[usize]> = palette_indices(&self.commands, &text).into();
-                *cached = Some((text, Rc::clone(&rows)));
-                rows
+        let indices: Rc<[usize]> = match self.palette_view(&text) {
+            PaletteView::Groups => return Vec::new(),
+            PaletteView::Group(label) => group_indices(&self.commands, label).into(),
+            PaletteView::Search => {
+                let mut cached = self.palette_rows.borrow_mut();
+                match cached.as_ref() {
+                    Some((key, rows)) if *key == text => Rc::clone(rows),
+                    _ => {
+                        let rows: Rc<[usize]> = palette_indices(&self.commands, &text).into();
+                        *cached = Some((text, Rc::clone(&rows)));
+                        rows
+                    }
+                }
             }
         };
-        rows.iter()
+        indices
+            .iter()
             .filter_map(|&ix| self.commands.get(ix))
             .collect()
     }
@@ -165,88 +195,155 @@ impl InputView {
                         // Saving replaces the preview.
                         self.theme_previewing = false;
                     }
-                    self.record(&format!("/{line}"), cx);
-                    self.editor
-                        .update(cx, |editor, cx| editor.set_value("", window, cx));
-                    cx.emit(InputEvent::Command(line));
+                    self.run_line(line, window, cx);
                 }
                 PopupKey::Ignored => return false,
             }
+            return true;
+        }
+        let groups = self.palette_groups(cx);
+        if !groups.is_empty() {
+            return self.groups_key(key, &groups);
+        }
+        if self.leave_group(key, cx) {
             return true;
         }
         let choices: Vec<Choice> = self.palette(cx).into_iter().map(choice).collect();
         if choices.is_empty() {
             return false;
         }
-        let len = choices.len();
-        let selected = self.palette_selected.min(len - 1);
-        match (key.code, &choices[selected]) {
-            (KeyCode::Down | KeyCode::Up, _) => {
-                let ix = if key.code == KeyCode::Down {
-                    (selected + 1) % len
-                } else {
-                    (selected + len - 1) % len
-                };
-                self.palette_top = palette_top(ix, self.palette_top, len);
-                self.palette_selected = ix;
-            }
-            (KeyCode::Esc, _) => self.palette_hidden = true,
-            (KeyCode::Tab, Choice::Run(line)) => self.set_text(&format!("/{line} "), window, cx),
-            (KeyCode::Tab | KeyCode::Enter, Choice::Complete(line)) => {
-                self.set_text(line, window, cx);
-            }
-            (KeyCode::Enter, Choice::Run(line)) => {
-                let line = line.clone();
-                self.record(&format!("/{line}"), cx);
-                self.editor
-                    .update(cx, |editor, cx| editor.set_value("", window, cx));
-                cx.emit(InputEvent::Command(line));
-            }
+        if self.palette_step(key, choices.len()) {
+            return true;
+        }
+        match command_key(key, &choices[self.palette_selected.min(choices.len() - 1)]) {
+            PopupKey::SetText(text) => self.set_text(&text, window, cx),
+            PopupKey::Run(line) => self.run_line(line, window, cx),
             _ => return false,
         }
         true
     }
 
-    pub(super) fn render_palette(&self, cx: &App) -> Option<gpui::AnyElement> {
+    /// Records `/line`, clears the prompt and runs the command.
+    fn run_line(&mut self, line: String, window: &mut Window, cx: &mut Context<Self>) {
+        self.record(&format!("/{line}"), cx);
+        self.editor
+            .update(cx, |editor, cx| editor.set_value("", window, cx));
+        cx.emit(InputEvent::Command(line));
+    }
+
+    pub(super) fn render_palette(
+        &self,
+        cx: &App,
+        view: &WeakEntity<Self>,
+    ) -> Option<gpui::AnyElement> {
+        let theme = cx.theme();
+        let (selected, top) = (self.palette_selected, self.palette_top);
+        let paint = Paint {
+            selected,
+            top,
+            theme,
+            view,
+        };
+        let groups = self.palette_groups(cx);
+        if !groups.is_empty() {
+            let items = completion::render_rows("palette", groups.iter(), &paint, |group| {
+                group_row(group, theme)
+            });
+            let note = window_note(top, groups.len()).unwrap_or_default();
+            let keys = "↑↓ choose · Enter or → open a group · type to filter · Esc hide";
+            return Some(completion::frame(
+                "command-palette",
+                items,
+                format!("{keys}{note}"),
+                theme,
+            ));
+        }
         let rows = self.palette(cx);
         if rows.is_empty() {
             return None;
         }
-        let theme = cx.theme();
-        let total = rows.len();
-        let top = self.palette_top;
-        let note = window_note(top, total).unwrap_or_default();
-        let items = completion::render_rows(
-            "palette",
-            rows.iter(),
-            total,
-            self.palette_selected,
-            top,
-            theme,
-            |row| {
-                h_flex()
-                    .gap_3()
-                    .px_2()
-                    .child(
-                        div()
-                            .text_color(theme.primary)
-                            .child(SharedString::from(row.usage.clone())),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_color(theme.muted_foreground)
-                            .child(SharedString::from(row.description.clone())),
-                    )
-            },
-        );
+        let opened = self.palette_group.as_deref();
+        let mut items = completion::render_rows("palette", rows.iter(), &paint, |row| {
+            command_row(row, opened.is_none(), theme)
+        });
+        let keys = match opened {
+            Some(label) => {
+                items.insert(0, group_title(label, theme));
+                "↑↓ choose · Tab complete · Enter run · ← all groups · Esc hide"
+            }
+            None => "↑↓ choose · Tab complete · Enter run · Esc hide",
+        };
+        let note = window_note(top, rows.len()).unwrap_or_default();
         Some(completion::frame(
             "command-palette",
             items,
-            format!("↑↓ choose · Tab complete · Enter run · Esc hide{note}"),
+            format!("{keys}{note}"),
             theme,
         ))
     }
+}
+
+/// A row of the groups view: the group, how its commands are typed, how many.
+fn group_row(group: &GroupRow, theme: &Theme) -> Div {
+    h_flex()
+        .gap_3()
+        .px_2()
+        .child(
+            div()
+                .w_48()
+                .flex_none()
+                .child(SharedString::from(group.label.clone())),
+        )
+        .child(muted_cell(group.names.join(" "), theme))
+        .child(small_note(group.count.to_string(), theme))
+}
+
+/// A row of a list of commands: usage, what it does and, in a search
+/// across all groups, the group it belongs to.
+fn command_row(row: &CommandRow, tagged: bool, theme: &Theme) -> Div {
+    let line = h_flex()
+        .gap_3()
+        .px_2()
+        .child(
+            div()
+                .flex_none()
+                .text_color(theme.primary)
+                .child(SharedString::from(row.usage.clone())),
+        )
+        .child(muted_cell(row.description.clone(), theme));
+    if tagged {
+        line.child(small_note(row.group.clone(), theme))
+    } else {
+        line
+    }
+}
+
+/// The name of the opened group above its commands.
+fn group_title(label: &str, theme: &Theme) -> gpui::AnyElement {
+    div()
+        .px_2()
+        .pb_1()
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .child(SharedString::from(format!("← {label}")))
+        .into_any_element()
+}
+
+/// Small muted text at the end of a row (a count, a group).
+pub(super) fn small_note(text: String, theme: &Theme) -> Div {
+    div()
+        .flex_none()
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .child(SharedString::from(text))
+}
+
+/// The text of a row that takes the room left, cut off at its end.
+pub(super) fn muted_cell(text: String, theme: &Theme) -> Div {
+    div()
+        .flex_1()
+        .min_w_0()
+        .truncate()
+        .text_color(theme.muted_foreground)
+        .child(SharedString::from(text))
 }

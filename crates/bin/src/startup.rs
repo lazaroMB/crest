@@ -12,6 +12,7 @@ use adapter_shell::RtkRewriter;
 use adapter_web::{CurlWeb, brave_key_from_env_or_keyring};
 use application::decide::{DECISION_OPTION, Decider, DecisionOptions};
 use application::ports::decision::DecisionPort;
+use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use application::ports::llm::ModelCatalogPort;
 use application::ports::plugin::{
     AppOptions, ConfigSources, LoadedConfig, PluginDiagnostic, PluginHostPort,
@@ -129,6 +130,31 @@ pub fn diagnostic(d: &PluginDiagnostic) -> String {
     match d.line {
         Some(line) => format!("{}:{line}: {}", d.source, d.message),
         None => format!("{}: {}", d.source, d.message),
+    }
+}
+
+/// Tells the front end what happened while starting: each problem of the
+/// config files as an error block, each warning, then each info notice.
+pub fn announce(
+    events: &dyn EventSink,
+    errors: &[PluginDiagnostic],
+    warnings: &[String],
+    notices: impl IntoIterator<Item = String>,
+) {
+    for error in errors {
+        events.emit(DomainEvent::BlockAdded {
+            block: config_error_block(error),
+        });
+    }
+    let warnings = warnings
+        .iter()
+        .cloned()
+        .map(|message| (NoticeLevel::Warning, message));
+    let notices = notices
+        .into_iter()
+        .map(|message| (NoticeLevel::Info, message));
+    for (level, message) in warnings.chain(notices) {
+        events.emit(DomainEvent::Notice { level, message });
     }
 }
 

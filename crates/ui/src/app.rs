@@ -20,6 +20,8 @@ use gpui_component::{ActiveTheme as _, Root, Theme, h_flex, v_flex};
 
 pub use application_core::window::WindowMode;
 
+use crate::chats::ChatsPanel;
+
 actions!(crest, [Quit, ToggleFullscreen]);
 
 /// Monospace family used when the options name none.
@@ -114,7 +116,7 @@ where
     let failure = std::rc::Rc::new(std::cell::RefCell::new(None));
     let failure_in_app = failure.clone();
 
-    gpui_platform::application().run(move |cx: &mut App| {
+    crate::assets::install(gpui_platform::application()).run(move |cx: &mut App| {
         gpui_component::init(cx);
         apply_theme(&opts, cx);
         bind_app_keys(cx);
@@ -298,6 +300,8 @@ pub struct RootView {
     activity: Option<AnyView>,
     status: Option<AnyView>,
     side_panel: Option<SidePanel>,
+    /// The chats sidebar, laid out over the top left of the body.
+    sidebar: Option<Entity<ChatsPanel>>,
     overlays: Vec<Overlay>,
 }
 
@@ -323,8 +327,17 @@ impl RootView {
             activity: None,
             status: None,
             side_panel: None,
+            sidebar: None,
             overlays: Vec::new(),
         }
+    }
+
+    /// Fills the chats sidebar. It sits over the top left of the body, above
+    /// the prompt and the status bar, which span the whole window; the body
+    /// leaves it the room its width asks for ([`ChatsPanel::layout`]).
+    pub fn set_sidebar(&mut self, sidebar: Entity<ChatsPanel>, cx: &mut Context<Self>) {
+        self.sidebar = Some(sidebar);
+        cx.notify();
     }
 
     /// Fills the side panel on the left (the workspace tree), `width(cx)`
@@ -416,67 +429,110 @@ fn slot(
 }
 
 impl Render for RootView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
-        let border = theme.border;
-        let status_bg = theme.title_bar;
-        let session = v_flex()
-            .flex_1()
-            .min_w_0()
-            .h_full()
-            .child(div().id("timeline").flex_1().min_h_0().p_2().child(slot(
-                &self.timeline,
-                Some(StyleRefinement::default().size_full()),
-                "timeline",
-                cx,
-            )))
-            .children(self.activity.clone())
-            .child(
-                div()
-                    .px_2()
-                    .pb_1()
-                    .border_t_1()
-                    .border_color(border)
-                    .child(slot(&self.input, None, "input", cx)),
-            )
-            .child(
-                div()
-                    .px_2()
-                    .py_1()
-                    .border_t_1()
-                    .border_color(border)
-                    .bg(status_bg)
-                    .child(slot(&self.status, None, "status", cx)),
-            );
-        let side_panel = self.side_panel.as_ref().map(|panel| {
-            let width = (panel.width)(cx);
-            panel
-                .view
-                .clone()
-                .cached(StyleRefinement::default().w(width).h_full().flex_none())
-        });
-        let overlays = self.overlays.iter().map(|overlay| {
-            let view = overlay.view.clone();
-            if overlay.cached {
-                view.cached(
-                    StyleRefinement::default()
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .size_full(),
-                )
-                .into_any_element()
-            } else {
-                view.into_any_element()
-            }
-        });
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let (prompt, status) = footer(self, cx);
         div()
             .id("crest-root")
             .track_focus(&self.focus_handle)
             .relative()
             .size_full()
-            .child(h_flex().size_full().children(side_panel).child(session))
-            .children(overlays)
+            .child(
+                v_flex()
+                    .size_full()
+                    .child(body(self, cx))
+                    .child(prompt)
+                    .child(status),
+            )
+            .children(self.overlays.iter().map(overlay_element))
+    }
+}
+
+/// The timeline and the activity line: what the conversation shows.
+fn conversation(root: &RootView, cx: &App) -> impl IntoElement {
+    v_flex()
+        .debug_selector(|| "conversation".to_owned())
+        .flex_1()
+        .min_w_0()
+        .h_full()
+        .child(div().id("timeline").flex_1().min_h_0().p_2().child(slot(
+            &root.timeline,
+            Some(StyleRefinement::default().size_full()),
+            "timeline",
+            cx,
+        )))
+        .children(root.activity.clone())
+}
+
+/// The prompt and the status bar. They span the whole window; the sidebar
+/// and the tree stop where the prompt starts.
+fn footer(root: &RootView, cx: &App) -> (impl IntoElement, impl IntoElement) {
+    let theme = cx.theme();
+    let (border, status_bg) = (theme.border, theme.title_bar);
+    let prompt = div()
+        .debug_selector(|| "prompt-row".to_owned())
+        .px_2()
+        .pb_1()
+        .border_t_1()
+        .border_color(border)
+        .child(slot(&root.input, None, "input", cx));
+    let status = div()
+        .debug_selector(|| "status-row".to_owned())
+        .px_2()
+        .py_1()
+        .border_t_1()
+        .border_color(border)
+        .bg(status_bg)
+        .child(slot(&root.status, None, "status", cx));
+    (prompt, status)
+}
+
+/// What is above the prompt: the sidebar, the tree and the conversation.
+/// The sidebar is an overlay on the top left, drawn last so it paints over
+/// the band and the column the layout keeps free for it; the hidden state
+/// floats its rows over the conversation without taking any room.
+fn body(root: &RootView, cx: &App) -> impl IntoElement {
+    let side_panel = root.side_panel.as_ref().map(|panel| {
+        let width = (panel.width)(cx);
+        panel
+            .view
+            .clone()
+            .cached(StyleRefinement::default().w(width).h_full().flex_none())
+    });
+    let room = root
+        .sidebar
+        .as_ref()
+        .map(|sidebar| sidebar.read(cx).layout());
+    div()
+        .id("crest-body")
+        .relative()
+        .flex_1()
+        .min_h_0()
+        .w_full()
+        .child(
+            h_flex()
+                .size_full()
+                .pl(room.map_or(px(0.), |room| room.reserve))
+                .pt(room.map_or(px(0.), |room| room.band))
+                .children(side_panel)
+                .child(conversation(root, cx)),
+        )
+        .children(root.sidebar.clone())
+}
+
+/// A layer above the window: cached ones fill it.
+fn overlay_element(overlay: &Overlay) -> AnyElement {
+    let view = overlay.view.clone();
+    if overlay.cached {
+        view.cached(
+            StyleRefinement::default()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full(),
+        )
+        .into_any_element()
+    } else {
+        view.into_any_element()
     }
 }
 

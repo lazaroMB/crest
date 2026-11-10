@@ -111,6 +111,7 @@ async fn snapshot() -> HelpSnapshot {
         trust_plugins: Vec::new(),
         resume: false,
         session_id: None,
+        project: None,
     };
     let app = build_app(&config, frontend(&terminal, approval), overrides)
         .await
@@ -128,6 +129,19 @@ async fn the_help_lists_plugins_tools_commands_keys_and_servers() {
     let issue = help.commands.iter().find(|c| c.name == "issue").unwrap();
     assert_eq!(issue.description, "Show a Jira issue");
     assert_eq!(issue.source, "jira");
+    assert_eq!(issue.group, "Plugin · jira");
+    let group = |name: &str| {
+        help.commands
+            .iter()
+            .find(|c| c.name == name)
+            .unwrap()
+            .group
+            .as_str()
+    };
+    assert_eq!(
+        (group("research"), group("!"), group("flow")),
+        ("Flows", "Chat", "Stages")
+    );
     for name in ["implement", "research", "simulate", "mcp", "plugin"] {
         assert!(help.commands.iter().any(|c| c.name == name), "{name}");
     }

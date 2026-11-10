@@ -133,10 +133,13 @@ fn the_controller_commands_read_their_arguments() {
 #[test]
 fn every_catalog_name_and_alias_is_a_command() {
     for info in CATALOG {
-        assert!(
-            info.usage.starts_with(&format!("/{}", info.name)),
-            "{info:?}"
-        );
+        // The shell command is typed as a bare `!` (`! ls`), not `/!`.
+        let typed = if info.name == "!" {
+            "!".to_owned()
+        } else {
+            format!("/{}", info.name)
+        };
+        assert!(info.usage.starts_with(&typed), "{info:?}");
         assert!(!info.description.is_empty(), "{info:?}");
         for name in std::iter::once(&info.name).chain(info.aliases) {
             let command = Command::parse(name);
@@ -275,4 +278,25 @@ fn dispatch_leaves_the_session_commands_and_unknown_actions() {
         assert!(run(&fake, line).is_none(), "{line}");
     }
     assert!(fake.calls.lock().unwrap().is_empty());
+}
+
+#[test]
+fn every_group_is_used_and_the_shell_is_in_chat() {
+    for group in CommandGroup::ALL {
+        assert!(CATALOG.iter().any(|info| info.group == group), "{group:?}");
+    }
+    let shell = CATALOG.iter().find(|info| info.name == "!").unwrap();
+    assert_eq!(shell.group.label(), "Chat");
+    let labels = CommandGroup::ALL.map(CommandGroup::label);
+    assert_eq!(
+        labels,
+        [
+            "Chat",
+            "Flows",
+            "Stages",
+            "Model & permissions",
+            "Workspace",
+            "App"
+        ]
+    );
 }

@@ -1,0 +1,12 @@
+.error-block {
+  padding-left: 8px;
+  border-left: 2px solid var(--error);
+
+  &__message {
+    color: var(--error);
+  }
+
+  &__hint {
+    color: var(--muted-fg);
+  }
+}

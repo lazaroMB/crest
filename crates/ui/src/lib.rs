@@ -3,12 +3,14 @@
 pub mod activity;
 pub mod app;
 pub mod approval;
+pub mod assets;
 pub mod blocks;
 pub mod brand;
 pub mod chats;
 pub mod commands;
 pub mod form;
 pub mod help;
+pub mod info;
 pub mod input;
 pub mod keyscroll;
 pub mod kit;

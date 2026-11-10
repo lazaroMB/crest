@@ -108,6 +108,7 @@ async fn fixture(server: &MockServer, trust_plugins: &[&str]) -> Fixture {
         trust_plugins: trust_plugins.iter().map(|s| (*s).to_owned()).collect(),
         resume: false,
         session_id: None,
+        project: None,
     };
     let app = build_app(&config, frontend(&terminal, approval), overrides)
         .await

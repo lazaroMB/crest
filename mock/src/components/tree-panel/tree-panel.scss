@@ -1,0 +1,40 @@
+.tree {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  width: var(--tree-width);
+  height: 100%;
+  border-right: 1px solid var(--border);
+
+  &--focused {
+    border-right-color: var(--accent);
+  }
+
+  &__header {
+    padding: 4px 8px;
+    color: var(--muted-fg);
+  }
+
+  &__list {
+    flex: 1;
+    overflow-y: auto;
+  }
+
+  &__row {
+    display: flex;
+    gap: 4px;
+    padding: 1px 8px;
+    white-space: nowrap;
+    cursor: pointer;
+
+    &:hover {
+      background: var(--list-hover-bg);
+    }
+  }
+
+  &__marker {
+    width: 12px;
+    color: var(--muted-fg);
+    white-space: pre;
+  }
+}

@@ -4,7 +4,7 @@ expression: def
 ---
 {
   "name": "list_files",
-  "description": "Lists files in the workspace, one path per line, sorted by path. Hidden files are included; files ignored by .gitignore and the .git directory are not.\n- Use it to see what exists, optionally narrowed with `glob` (e.g. `**/*.rs`, `src/**/mod.rs`).\n- To find a file whose name you roughly know, prefer `find_file`; to see the layout of directories, prefer `tree`.\n- Returns at most `limit` paths (default 500); narrow `glob` when the list is cut.\n- Paths are relative to the workspace root.",
+  "description": "Lists files in the workspace, one path per line, sorted by path. Hidden files are included; files ignored by .gitignore and the .git directory are not.\n- Use it to see what exists, optionally narrowed with `glob` (e.g. `**/*.rs`, `src/**/mod.rs`).\n- To find a file whose name you roughly know, prefer `find_file`; to see the layout of directories, prefer `tree`.\n- Returns at most `limit` paths (default 500); narrow `glob` when the list is cut.\n- Paths are relative to the workspace root. A project with several directories lists all of them: those of the first are relative, those of the others absolute (a note says which is which).",
   "input_schema": {
     "type": "object",
     "properties": {

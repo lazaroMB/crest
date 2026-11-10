@@ -4,13 +4,13 @@ expression: def
 ---
 {
   "name": "edit_file",
-  "description": "Edits an existing file by replacing one exact occurrence of `old` with `new`.\n- `old` must match the current file content exactly, including whitespace and indentation, and must appear exactly once: when it appears several times, include more surrounding lines to make it unique. Do not include the line numbers that `read_file` prints.\n- Read the file first. To create a file or rewrite it entirely, use `write_file`.\n- The user sees the diff and may need to approve it before it is written.\n- `path` is relative to the workspace root.",
+  "description": "Edits an existing file by replacing one exact occurrence of `old` with `new`.\n- `old` must match the current file content exactly, including whitespace and indentation, and must appear exactly once: when it appears several times, include more surrounding lines to make it unique. Do not include the line numbers that `read_file` prints.\n- Read the file first. To create a file or rewrite it entirely, use `write_file`.\n- The user sees the diff and may need to approve it before it is written.\n- `path` is relative to the workspace root (the first directory of a project); an absolute path names a file under any of its directories.",
   "input_schema": {
     "type": "object",
     "properties": {
       "path": {
         "type": "string",
-        "description": "File to edit; it must exist."
+        "description": "File to edit; it must exist. Relative to the first workspace root; an\nabsolute path must lie under one of the roots."
       },
       "old": {
         "type": "string",

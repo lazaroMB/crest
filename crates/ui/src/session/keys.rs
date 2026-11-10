@@ -83,9 +83,10 @@ impl Session {
         if self.input.read(cx).owns_focus(window, cx) {
             return;
         }
-        // The chat rename field is a text input outside the prompt. Its
-        // keys stay there; a printable key must not fall into the prompt.
-        if crate::chats::rename_has_focus(window, cx) {
+        // The chat rename and search fields are text inputs outside the
+        // prompt. Their keys stay there; a printable key must not fall into
+        // the prompt.
+        if crate::chats::field_has_focus(window, cx) {
             return;
         }
         let Some(key) = key_from_keystroke(&event.keystroke) else {
@@ -239,13 +240,15 @@ impl Session {
         }
     }
 
-    /// Whether a picker, the approval dialog, a modal, the key dialog or a
+    /// Whether a picker, the approval dialog, the information panel, a modal, the
+    /// key dialog or a
     /// waiting form (or a widget's text input) has the focus. Keys typed there never reach the
     /// prompt (the API key must not land in it).
     fn overlay_focused(&self, window: &Window, cx: &App) -> bool {
         self.login.read(cx).is_open()
             || self.picker.read(cx).is_open()
             || self.approval.focus_handle(cx).contains_focused(window, cx)
+            || self.status.read(cx).info_focused(window, cx)
             || self.modal.read(cx).is_open()
             || crate::blocks::form::owns_focus(window, cx)
             || crate::widgets::owns_focus(window, cx)
@@ -264,7 +267,7 @@ impl Session {
                 .update(cx, |view, cx| view.select_last_if_none(cx));
         } else if in_timeline && tree_shown {
             self.tree.update(cx, |tree, cx| tree.focus(window, cx));
-        } else if (in_timeline || in_tree) && self.chats_shown {
+        } else if (in_timeline || in_tree) && self.sidebar != crate::chats::SidebarWidth::Strip {
             cx.emit(SessionEvent::Chats(crate::chats::ChatsCommand::Focus));
         } else {
             self.focus_input(window, cx);

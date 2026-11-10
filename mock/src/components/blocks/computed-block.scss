@@ -1,0 +1,79 @@
+.computed {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+
+  &__head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  &__chip {
+    padding: 0 6px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    font-size: var(--text-xs);
+    color: var(--muted-fg);
+
+    &:hover {
+      background: var(--muted-bg);
+    }
+  }
+
+  &__pill {
+    padding: 0 6px;
+    border-radius: var(--radius-sm);
+    font-size: var(--text-xs);
+
+    @each $tone in success, error, warning, info {
+      &--#{$tone} {
+        color: var(--#{$tone});
+        background: color-mix(in srgb, var(--#{$tone}) 15%, transparent);
+      }
+    }
+  }
+
+  &__why {
+    margin-top: 4px;
+    font-size: var(--text-sm);
+    color: var(--muted-fg);
+  }
+
+  &__values {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    gap: 8px 16px;
+    margin: 10px 0;
+
+    dt {
+      font-size: var(--text-xs);
+      color: var(--muted-fg);
+    }
+
+    dd {
+      margin: 0;
+      font-variant-numeric: tabular-nums;
+    }
+  }
+
+  &__foot {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: var(--text-xs);
+  }
+
+  &__button {
+    padding: 2px 8px;
+    border-radius: var(--radius-sm);
+    background: var(--button-bg);
+    color: var(--button-fg);
+    border: 1px solid var(--border);
+
+    &:hover {
+      background: var(--button-hover-bg);
+    }
+  }
+}

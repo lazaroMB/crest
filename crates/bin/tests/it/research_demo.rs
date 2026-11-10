@@ -331,6 +331,7 @@ async fn open(
         trust_plugins: Vec::new(),
         resume: false,
         session_id: None,
+        project: None,
     };
     let app = build_app(&config, frontend(&terminal, approval.clone()), overrides)
         .await

@@ -20,8 +20,8 @@ use clap::CommandFactory as _;
 use domain::model::{ModelPolicy, ModelRole, ResolveRequest};
 use domain::permission::ToolEffect;
 use ui::help::{
-    BUILTIN_SOURCE, CliRow, CommandRow, HelpSnapshot, McpRow, ModelRow, PathRow, PluginRow,
-    ToolRow, ToolSource, key_rows,
+    CliRow, CommandRow, HelpSnapshot, McpRow, ModelRow, PathRow, PluginRow, ToolRow, ToolSource,
+    key_rows,
 };
 
 use crate::args::Args;
@@ -413,6 +413,28 @@ fn mcp_rows(specs: &[McpServerSpec], statuses: &[McpServerStatus]) -> Vec<McpRow
         .collect()
 }
 
+/// The controller's commands (the catalog's), then those of `init.lua`.
+fn command_rows(source: &HelpSource) -> Vec<CommandRow> {
+    let mut commands: Vec<CommandRow> = commands_of(Handler::Controller)
+        .map(CommandRow::builtin)
+        .collect();
+    commands.extend(source.commands.iter().map(|c| {
+        let plugin = if c.plugin.is_empty() {
+            GLOBAL_CONFIG
+        } else {
+            &c.plugin
+        };
+        let usage = format!("/{} [args]", c.name);
+        CommandRow::of_plugin(
+            plugin,
+            &c.name,
+            &usage,
+            c.description.as_deref().unwrap_or_default(),
+        )
+    }));
+    commands
+}
+
 /// The help's snapshot of `source`; `statuses` are the MCP servers' states
 /// now.
 #[must_use]
@@ -421,25 +443,7 @@ pub fn snapshot(
     trust: &PluginTrust,
     statuses: &[McpServerStatus],
 ) -> HelpSnapshot {
-    // The controller's commands (the catalog's), then those of `init.lua`.
-    let mut commands: Vec<CommandRow> = commands_of(Handler::Controller)
-        .map(|info| CommandRow {
-            name: info.name.into(),
-            usage: info.usage.into(),
-            description: info.description.into(),
-            source: BUILTIN_SOURCE.into(),
-        })
-        .collect();
-    commands.extend(source.commands.iter().map(|c| CommandRow {
-        name: c.name.clone(),
-        usage: format!("/{} [args]", c.name),
-        description: c.description.clone().unwrap_or_default(),
-        source: if c.plugin.is_empty() {
-            GLOBAL_CONFIG.to_owned()
-        } else {
-            c.plugin.clone()
-        },
-    }));
+    let commands = command_rows(source);
 
     let (keymap, _) = crate::keys::keymap(&source.keymaps, &source.options);
     let leader = keymap.leader().to_owned();

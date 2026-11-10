@@ -70,6 +70,7 @@ fn config(workspace: &Path, resume: bool) -> Config {
         trust_plugins: Vec::new(),
         resume,
         session_id: None,
+        project: None,
     }
 }
 
