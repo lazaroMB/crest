@@ -4,14 +4,24 @@
 //!
 //! `cargo run -p ui --features examples --example showcase -- --scene <name>`
 //!
+//! Every scene runs in the real `Workbench` (the chats sidebar on the left,
+//! the session beside it), over a scripted controller and an in-memory
+//! workspace.
+//!
 //! Scenes: `hero` (a turn with tool calls, a diff, a chart and an answer),
-//! `research` (the research flow at work), `approval` (an edit waiting for
-//! the user), `help` (the help modal), `model` (a 3D model opened with
-//! `/open`), `modal` (a plugin modal with rich content), `blocks` (a chart
-//! and tables), `routing` (how a prompt is routed) and `technical` (a
-//! statistics card with its provenance, a trace waterfall and a form that
-//! waits for an answer). Each one prints `showcase: ready` once it is on
-//! screen and stays open; `scripts/screenshots.sh` captures the window then.
+//! `sidebar` (the full chats sidebar: projects, pinned and branched chats,
+//! Wild Chats, Archived), `tour` (the welcome tour on its second step),
+//! `menu` (the menu of the prompt's `+` button), `info` (the information
+//! mark with its kept notices), `picker` (the grep picker with its preview),
+//! `permissions` (the `/permissions` modal), `research` (the research flow
+//! at work), `approval` (an edit waiting for the user), `help` (the help
+//! modal), `model` (a 3D model opened with `/open`), `modal` (a plugin
+//! modal with rich content), `blocks` (a chart and tables), `routing` (how
+//! a prompt is routed) and `technical` (a statistics card with its
+//! provenance, a trace waterfall and a form that waits for an answer). Each
+//! one prints `showcase: ready <w>x<h> scale <s> bounds <x>,<y>,<w>,<h>` once
+//! it is on screen and stays open; `scripts/screenshots.sh` captures the
+//! window then.
 
 #[path = "support/mod.rs"]
 mod support;
@@ -23,10 +33,13 @@ use std::time::Duration;
 use application_core::ports::approval::{
     ApprovalPort as _, ApprovalPreview, ApprovalRequest, ApprovalRequestId,
 };
-use application_core::ports::events::{DomainEvent, EventSink};
+use application_core::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use application_core::ports::form::{FormPort as _, FormRequest, FormRequestId};
+use application_core::ports::projects::{ProjectBrowserPort, RecentWorkspace};
 use application_core::usecases::commands::{Command, ResearchCommand};
+use application_core::usecases::permissions::RuleListing;
 use application_testing::fs::InMemoryFs;
+use application_testing::projects::InMemoryDirs;
 use application_testing::system::RecordingSink;
 use domain::block::{
     Block, BlockKind, Cell, ChartKind, ChartSpec, Column, CustomNode, DiffSpec, MermaidSpec,
@@ -44,21 +57,25 @@ use domain::git::GitStatus;
 use domain::modal::{ModalId, ModalPosition, ModalSpec, Percent};
 use domain::model::{ModelId, ModelRole};
 use domain::model3d::{ModelMesh, ModelSpec, UpAxis};
-use domain::permission::{PermissionMode, ToolEffect};
+use domain::permission::{
+    PermissionMode, PermissionRule, RuleDecision, RuleMatcher, RuleScope, ToolEffect,
+};
 use domain::widget::timeline::{Span, SpanStatus, TimeUnit, TimelineRow, TimelineSpec};
 use domain::workspace::WorkspaceRoot;
 use futures::FutureExt as _;
 use futures::channel::oneshot;
 use futures::future::BoxFuture;
-use gpui::{App, Entity};
+use gpui::{App, Entity, Window};
 use serde_json::json;
 use ui::approval::UiApproval;
+use ui::chats::{Archive, ArchivedProject, Branch, Catalog, ChatEntry, ProjectChats, SidebarWidth};
 use ui::form::UiForm;
 use ui::help::{CommandRow, HelpSnapshot, PluginRow, ToolRow, ToolSource};
 use ui::session::{
     ModelChoice, Reply, Session, SessionController, SessionParts, TurnEnd, TurnRequest,
     prompt_block,
 };
+use ui::workbench::{ProjectOpener, Workbench};
 
 const HERO_PROMPT: &str = "add() returns the difference for negative numbers: find out why, \
                            fix it and chart how long each test takes";
@@ -67,6 +84,7 @@ const BLOCKS_PROMPT: &str = "summarize the last release with a chart and a table
 const ROUTING_PROMPT: &str = "draw how a prompt is routed";
 const TECHNICAL_PROMPT: &str = "is the new build faster? compare the response times, show me the \
                                 slowest request and ask me what to ship";
+const INFO_PROMPT: &str = "the tests fail on negative numbers: find out why and fix it";
 const DIFF: &str = "--- a/src/math.rs
 +++ b/src/math.rs
 @@ -1,7 +1,7 @@
@@ -884,6 +902,19 @@ impl SessionController for Fake {
         on_thread(move || {
             if request.prompt == APPROVAL_PROMPT {
                 approval(&sink, &approver, &request.prompt);
+            } else if request.prompt == INFO_PROMPT {
+                // Two notices the information mark keeps, then the hero turn.
+                sink.emit(DomainEvent::Notice {
+                    level: NoticeLevel::Warning,
+                    message: "retrying in 2.0s (attempt 2): the model answered 529".into(),
+                });
+                pause(200);
+                sink.emit(DomainEvent::Notice {
+                    level: NoticeLevel::Error,
+                    message: "opencode-go:glm-5.3 failed (rate limited), using claude-sonnet-5-5"
+                        .into(),
+                });
+                hero(&sink, &request.prompt);
             } else if request.prompt == TECHNICAL_PROMPT {
                 technical(&sink, &form, &request.prompt);
             } else if request.prompt == BLOCKS_PROMPT {
@@ -966,6 +997,134 @@ impl SessionController for Fake {
     fn help(&self) -> BoxFuture<'static, HelpSnapshot> {
         futures::future::ready(help_snapshot()).boxed()
     }
+
+    /// The rules the `/permissions` modal lists: one of each kind.
+    fn permission_rules(&self) -> BoxFuture<'static, RuleListing> {
+        let command =
+            |words: &[&str]| RuleMatcher::Command(words.iter().map(|w| (*w).to_owned()).collect());
+        futures::future::ready(RuleListing {
+            session: vec![
+                PermissionRule::new(
+                    "run_command",
+                    command(&["cargo", "test"]),
+                    RuleDecision::AllowAlways,
+                ),
+                PermissionRule::new(
+                    "run_command",
+                    command(&["git", "status"]),
+                    RuleDecision::AllowAlways,
+                ),
+            ],
+            project: vec![
+                PermissionRule::new(
+                    "edit_file",
+                    RuleMatcher::Prefix("src/".into()),
+                    RuleDecision::AllowAlways,
+                )
+                .with_scope(RuleScope::Project),
+                PermissionRule::new(
+                    "run_command",
+                    command(&["cargo", "fmt"]),
+                    RuleDecision::AllowAlways,
+                )
+                .with_scope(RuleScope::Project),
+            ],
+            deny: vec![
+                PermissionRule::new("run_command", command(&["rm", "-rf"]), RuleDecision::Deny)
+                    .with_scope(RuleScope::Project),
+                PermissionRule::new(
+                    "run_command",
+                    command(&["git", "push", "--force"]),
+                    RuleDecision::Deny,
+                )
+                .with_scope(RuleScope::Project),
+            ],
+            project_file: Some("/workspace/.crest/permissions.local.toml".into()),
+            warnings: Vec::new(),
+        })
+        .boxed()
+    }
+}
+
+/// The projects and chats the sidebar lists.
+struct Opener {
+    catalog: Catalog,
+}
+
+impl ProjectOpener for Opener {
+    fn open(&self, _dir: std::path::PathBuf) -> BoxFuture<'static, Result<SessionParts, String>> {
+        futures::future::ready(Err("the showcase has one session".to_owned())).boxed()
+    }
+
+    fn recent(&self) -> BoxFuture<'static, Vec<RecentWorkspace>> {
+        futures::future::ready(Vec::new()).boxed()
+    }
+
+    fn browser(&self) -> Arc<dyn ProjectBrowserPort> {
+        Arc::new(InMemoryDirs::new("/home/u").with_project("/workspace"))
+    }
+
+    fn catalog(&self) -> BoxFuture<'static, Catalog> {
+        futures::future::ready(self.catalog.clone()).boxed()
+    }
+}
+
+/// Two projects (one pinned, one with a branched chat), two Wild Chats and
+/// an Archived section; the open chat is `latest` of `p-calc`.
+fn catalog() -> Catalog {
+    let chat = |id: &str, title: &str| ChatEntry::new(id, title);
+    Catalog {
+        projects: vec![
+            ProjectChats {
+                id: "p-calc".into(),
+                name: "calc".into(),
+                root: "/workspace".into(),
+                roots: vec!["/workspace".into(), "/workspace/docs-site".into()],
+                pinned: true,
+                chats: vec![
+                    ChatEntry {
+                        pinned: true,
+                        ..chat("latest", "add() and negative numbers")
+                    },
+                    ChatEntry {
+                        branch: Some(Branch {
+                            from: "add() and negative numbers".into(),
+                            after: 6,
+                        }),
+                        ..chat("branch", "try the checked_add route instead")
+                    },
+                    chat("c3", "release notes for v0.18"),
+                    chat("c4", "why is the board slow on Intel?"),
+                ],
+            },
+            ProjectChats {
+                id: "p-api".into(),
+                name: "api".into(),
+                root: "/home/u/api".into(),
+                roots: vec!["/home/u/api".into()],
+                pinned: false,
+                chats: vec![
+                    chat("a1", "rate limiting middleware"),
+                    chat("a2", "migrate the sessions store to sqlx"),
+                ],
+            },
+        ],
+        chats: vec![
+            ChatEntry {
+                pinned: true,
+                ..chat("w1", "Rust 2024 edition: what changed")
+            },
+            chat("w2", "what is a Welch t-test?"),
+        ],
+        archived: Archive {
+            projects: vec![ArchivedProject {
+                id: "p-old".into(),
+                name: "legacy-cli".into(),
+                chats: 7,
+            }],
+            chats: vec![chat("old1", "first prototype of the board")],
+        },
+    }
 }
 
 fn tool(name: &str, description: &str, source: ToolSource, effect: &str) -> ToolRow {
@@ -1042,20 +1201,83 @@ fn help_snapshot() -> HelpSnapshot {
     }
 }
 
+/// The window of `scene`, in logical pixels: wider for the full sidebar.
+fn window_size(scene: &str) -> (f32, f32) {
+    match scene {
+        "sidebar" | "tour" => (1600.0, 1000.0),
+        _ => (1280.0, 960.0),
+    }
+}
+
+/// How wide the sidebar opens in `scene`.
+fn sidebar_width(scene: &str) -> SidebarWidth {
+    match scene {
+        "sidebar" | "tour" => SidebarWidth::Full,
+        _ => SidebarWidth::Strip,
+    }
+}
+
+const MATH_RS: &str = "//! Integer arithmetic of the calculator.
+
+/// Adds two integers.
+pub fn add(a: i64, b: i64) -> i64 {
+    if b < 0 { a - b.abs() } else { a + b }
+}
+
+/// Subtracts `b` from `a`.
+pub fn sub(a: i64, b: i64) -> i64 {
+    a - b
+}
+
+/// Multiplies two integers, saturating at the bounds.
+pub fn mul(a: i64, b: i64) -> i64 {
+    a.saturating_mul(b)
+}
+
+/// Divides `a` by `b`; `None` when `b` is zero.
+pub fn div(a: i64, b: i64) -> Option<i64> {
+    (b != 0).then(|| a / b)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn adds_positive_numbers() {
+        assert_eq!(add(2, 3), 5);
+    }
+
+    #[test]
+    fn adds_negative_numbers() {
+        assert_eq!(add(-2, -3), -5);
+    }
+}
+";
+
 fn main() {
     let scene = std::env::args()
         .skip_while(|arg| arg != "--scene")
         .nth(1)
         .unwrap_or_else(|| "hero".into());
-    support::run_sized("crest", (1280.0, 960.0), move |window, cx| {
+    let size = window_size(&scene);
+    support::run_sized("crest", size, move |window, cx| {
         let root = WorkspaceRoot::new("/workspace").unwrap_or_else(|err| panic!("{err}"));
         let fs = Arc::new(
             InMemoryFs::new(root)
+                .with_file("src/math.rs", MATH_RS)
                 .with_file(
-                    "src/math.rs",
-                    "pub fn add(a: i64, b: i64) -> i64 { a + b }\n",
+                    "src/lib.rs",
+                    "pub mod math;\n\npub use math::{add, div, mul, sub};\n",
                 )
-                .with_file("tests/math.rs", "#[test]\nfn adds() {}\n"),
+                .with_file(
+                    "tests/math.rs",
+                    "use calc::add;\n\n#[test]\nfn adds() {\n    assert_eq!(add(2, 2), 4);\n}\n",
+                )
+                .with_file(
+                    "README.md",
+                    "# calc\n\nA small calculator crate used by the crest showcase.\n",
+                ),
         );
         let (sink, events) = RecordingSink::with_channel();
         let (approval, approvals) = UiApproval::channel();
@@ -1066,20 +1288,37 @@ fn main() {
             form: Arc::new(form),
             mode: Mutex::new(PermissionMode::Ask),
         });
-        let mut parts = SessionParts::new(controller, events, approvals, fs.clone(), fs);
+        let mut parts = SessionParts::new(controller, events, approvals, fs.clone(), fs.clone());
+        parts.fs = Some(fs);
         parts.forms = Some(forms);
         parts.workspace_label = "calc".into();
+        parts.workspace_dir = Some("/workspace".into());
         parts.model = Some(ModelId::new("claude-sonnet-5-5"));
-        let (root, session) = ui::session::open(parts, window, cx);
+        parts.session_id = Some("latest".into());
+        parts.project_id = Some("p-calc".into());
+        let opener = Arc::new(Opener { catalog: catalog() });
+        let workbench = Workbench::new_with_session(opener, parts, "/workspace".into(), window, cx);
+        let Some(session) = workbench.read(cx).session().cloned() else {
+            eprintln!("showcase: the workbench opened no session");
+            cx.quit();
+            return workbench.into();
+        };
+        let width = sidebar_width(&scene);
+        workbench
+            .read(cx)
+            .chats()
+            .clone()
+            .update(cx, |chats, cx| chats.set_width(width, cx));
         play(&scene, window.window_handle(), session, cx);
-        root.into()
+        workbench.into()
     });
 }
 
-/// What each scene types (a prompt sent with `Enter`, or keys).
+/// What each scene types (a prompt sent with `Enter`, or keys) or does to
+/// the session.
 fn script(scene: &str) -> Vec<Step> {
     match scene {
-        "hero" => vec![Step::Send(HERO_PROMPT)],
+        "hero" | "sidebar" => vec![Step::Send(HERO_PROMPT)],
         "research" => vec![Step::Send(
             "/research add() returns the difference for negative numbers",
         )],
@@ -1093,6 +1332,32 @@ fn script(scene: &str) -> Vec<Step> {
             Step::Send("/open @models/gear.stl"),
         ],
         "modal" => vec![Step::Send(HERO_PROMPT), Step::Send("/demo")],
+        "tour" => vec![
+            Step::Send(HERO_PROMPT),
+            Step::Act(|session, _, cx| session.update(cx, |session, cx| session.open_tour(cx))),
+            Step::Act(tour_next),
+            Step::Act(tour_next),
+        ],
+        "menu" => vec![
+            Step::Send(HERO_PROMPT),
+            Step::Act(|session, window, cx| {
+                let input = session.read(cx).input().clone();
+                input.update(cx, |input, cx| input.toggle_mode_menu(window, cx));
+            }),
+            Step::Keys("down"),
+        ],
+        "info" => vec![
+            Step::Send(INFO_PROMPT),
+            Step::Act(|session, window, cx| {
+                let status = session.read(cx).status().clone();
+                let info = status.read(cx).info().cloned();
+                if let Some(info) = info {
+                    info.update(cx, |info, cx| info.toggle(window, cx));
+                }
+            }),
+        ],
+        "picker" => vec![Step::Send(HERO_PROMPT), Step::Keys("ctrl-g f g a d d")],
+        "permissions" => vec![Step::Send(HERO_PROMPT), Step::Keys("ctrl-g shift-a")],
         other => {
             eprintln!("showcase: unknown scene {other:?}");
             Vec::new()
@@ -1100,9 +1365,20 @@ fn script(scene: &str) -> Vec<Step> {
     }
 }
 
+/// The tour's **Next**.
+fn tour_next(session: &Entity<Session>, window: &mut Window, cx: &mut App) {
+    session.update(cx, |session, cx| {
+        session.tour_act(ui::tour::Action::Next, window, cx);
+    });
+}
+
 enum Step {
+    /// Puts the text in the prompt and sends it.
     Send(&'static str),
+    /// Keystrokes, space separated.
     Keys(&'static str),
+    /// Something done to the session itself.
+    Act(fn(&Entity<Session>, &mut Window, &mut App)),
 }
 
 fn play(scene: &str, window: gpui::AnyWindowHandle, session: Entity<Session>, cx: &mut App) {
@@ -1123,6 +1399,13 @@ fn play(scene: &str, window: gpui::AnyWindowHandle, session: Entity<Session>, cx
                     "enter"
                 }
                 Step::Keys(keys) => keys,
+                Step::Act(act) => {
+                    window
+                        .update(cx, |_, window, cx| act(&session, window, cx))
+                        .ok();
+                    wait(1_500).await;
+                    continue;
+                }
             };
             for key in keys.split(' ') {
                 if let Ok(keystroke) = gpui::Keystroke::parse(key) {
@@ -1133,7 +1416,22 @@ fn play(scene: &str, window: gpui::AnyWindowHandle, session: Entity<Session>, cx
             }
             wait(4_000).await;
         }
-        eprintln!("showcase: ready");
+        window
+            .update(cx, |_, window, _| {
+                let size = window.viewport_size();
+                let scale = window.scale_factor();
+                let bounds = window.bounds();
+                eprintln!(
+                    "showcase: ready {}x{} scale {scale} bounds {},{},{},{}",
+                    f32::from(size.width),
+                    f32::from(size.height),
+                    f32::from(bounds.origin.x),
+                    f32::from(bounds.origin.y),
+                    f32::from(bounds.size.width),
+                    f32::from(bounds.size.height),
+                );
+            })
+            .ok();
     })
     .detach();
 }

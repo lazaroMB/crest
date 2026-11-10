@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Proposed. Nothing in it is implemented in crest; the technical plan is [0002-chats-projects-and-modes.md](../specs/0002-chats-projects-and-modes.md). |
+| **Status** | Implemented (PR #56, on `main` after v0.18.0); the technical plan is [0002-chats-projects-and-modes.md](../specs/0002-chats-projects-and-modes.md). |
 | **Author** | AI (Cursor), from a Specky3 discovery |
 | **Approver** | The crest maintainers |
 | **Date** | 2026-11-01 |

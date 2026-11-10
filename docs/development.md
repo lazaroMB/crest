@@ -134,14 +134,14 @@ GPUI makes `target/` big and links slow, so the workspace trims both:
 
 ### Screenshots
 
-The README's screenshots (`assets/screenshots/`) come from the UI examples, which run on scripted fakes (no API key): the `showcase` example has one scene per screenshot (`hero`, `research`, `approval`, `help`, `model`, `modal`, `blocks`, `routing` and `technical`, the last one a statistics card, a trace waterfall and a form), and `sysboard` draws the simulation board. `scripts/screenshots.sh` builds them, opens each window on the X display (through XWayland under a Wayland session), captures it with ImageMagick's `import` and writes the PNGs:
+The README's screenshots (`assets/screenshots/`) come from the UI examples, which run on scripted fakes (no API key). The `showcase` example opens the real `Workbench` (the chats sidebar beside the session) and has one scene per screenshot: `hero`, `sidebar` (the full sidebar with projects, pinned and branched chats, Wild Chats and Archived), `tour` (the welcome tour on its second step), `menu` (the menu of the prompt's `+` button), `info` (the information mark with its kept notices), `picker` (the grep picker with its preview), `permissions`, `research`, `approval`, `help`, `model`, `modal`, `blocks`, `routing` and `technical` (a statistics card, a trace waterfall and a form); `sysboard` draws the simulation board. `scripts/screenshots.sh` builds them, opens each window, waits for the example's `ready` line (it carries the viewport size and the scale factor), captures the window, drops the title bar, applies the scene's crop and writes PNGs up to 1800 px wide:
 
 ```bash
 scripts/screenshots.sh              # every scene
 scripts/screenshots.sh hero help    # some of them
 ```
 
-It needs ImageMagick and `xprop`; the windows show up on your screen for a few seconds. Run it again when the UI changes.
+On Linux it captures with ImageMagick's `import` on the X display (through XWayland under a Wayland session) and needs ImageMagick and `xprop`. On macOS it captures with `screencapture -l` and the window id that `scripts/macos/window-id.swift` finds from the example's pid; it needs ImageMagick and `swiftc` (the Xcode command line tools), and the first run asks for the Screen Recording permission for your terminal (a blank capture means it was just granted: run again). Install JetBrains Mono first, or the text measures differently from the other screenshots. The windows show up on your screen for a few seconds. Run it again when the UI changes.
 
 ## Before every commit
 

@@ -12,9 +12,11 @@ crest is the workspace where a coding agent **shows its work, verifies it, and l
 4. **Open and portable.** crest reads the `AGENTS.md` and `CLAUDE.md` your project already has, talks to any model provider (cloud or local), and is free software. Leaving costs nothing.
 5. **Programmable.** Tools, commands, hooks, blocks, modals and whole **pipelines** are Lua, in a sandbox, with capabilities you approve.
 
-## Where we are (v0.17)
+## Where we are (v0.18, and main after it)
 
-- A native GPUI window: a timeline of rich blocks, a prompt with history, a status bar with model, permission mode, cost and git; a Chats panel that lists every project's chats and a rail of the questions asked.
+- A native GPUI window: a timeline of rich blocks, a prompt with history and a `+` menu for its mode (chat, research, deep research), a status bar with model, permission mode, cost and git, an information mark that keeps the errors and warnings, and a rail of the questions asked. A welcome tour on the first start (`/tour`).
+- Your work organised: a sidebar in three widths (hidden, a strip of marks, the full list) with projects that span several directories, their chats pinned, renamed, moved, archived or branched from a point of a conversation, and Wild Chats with no directory at all.
+- Keys you own: `keymap.toml` without Lua, a leader that moves the builtin mappings too, pickers with a preview of images and 3D models, overlays that all close the same way, and a which-key popup. Permission rules by pattern, with a `Tab` ladder in the approval dialog. A design system (tokens and a kit) behind every view, and read-only tool calls that run in parallel.
 - Blocks for technical work: test reports, findings, datasets, traces, flame graphs, logs, query plans, waveforms, CAD parts, molecules, sequences, spectra, maps, Gantt charts and more, computed from the file and summarised to the model.
 - Numbers you can verify: statistics, calc sheets with units, solvers and engineering cards computed by deterministic engines, with provenance, Recompute, number slots in the reply and reproduce lines for Python and R; TeX math in replies; `ask_user` forms answered in the chat.
 - Guided workflows: research (from a problem to a Spec and a plan: five stages by default, with the independent work in parallel and gates only where you decide, or the full fourteen with `--deep`), implementation (task by task, one commit each, a report) and simulation (a Spec's scenarios on a 3D board).
