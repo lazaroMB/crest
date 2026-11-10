@@ -9,6 +9,7 @@ export const state = {
   notice: null, // { id, level, text } on the status bar, gone after 6 s
   notices: [], // errors and warnings kept until dismissed
   toast: null, // { id, level, text } in the corner, gone after 3 s
+  mcp: [], // the MCP servers: { name, transport, origin, source, state, message, config, tools, log, … }
 
   turn: {
     chatId: null,
@@ -39,6 +40,19 @@ export const state = {
     outlineOpen: false,
     infoOpen: false,
     approvalIndex: 0,
+    mcp: {
+      open: false,
+      selected: null, // server name
+      tab: "overview", // overview | tools | log
+      filter: "",
+      toolFilter: "",
+      openTool: null, // the tool name whose arguments are shown
+      form: null, // { mode: "add" | "edit", name, draft, error, test, testing, oauthOpen }
+      confirmDelete: false,
+      pending: {}, // server name -> "test" | "login" | "restart" | …
+      results: {}, // server name -> { ok, text } of its last test or login
+      revealed: {}, // "server/key" -> true when a secret value is shown
+    },
   },
 };
 

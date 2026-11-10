@@ -50,10 +50,8 @@ use application::ports::fs::{
     ReadFileRequest, WriteFileRequest,
 };
 use application::ports::llm::{ModelCatalogPort, ModelInfo};
-use application::ports::mcp::{McpPort, McpServerState};
-use application::ports::plugin::{
-    CallbackId, ConfigOrigin, McpServerSpec, PluginError, PluginHostPort, PluginOutput,
-};
+use application::ports::mcp::McpPort;
+use application::ports::plugin::{CallbackId, PluginError, PluginHostPort, PluginOutput};
 use application::ports::projects::{BrowseError, DirListing, ProjectBrowserPort, RecentWorkspace};
 use application::ports::search::{
     ContentSearchPort, FileList, FileSearchPort, FindFileRequest, GrepRequest, GrepResult,
@@ -63,9 +61,10 @@ use application::ports::store::{SessionStorePort as _, StoreError};
 use application::usecases::approval::lock_permissions;
 use application::usecases::cancel::CancelToken;
 use application::usecases::commands::{
-    Command, CommandHandler, ImplementCommand, MCP_USAGE, McpCommand, PLUGIN_USAGE, PluginCommand,
+    Command, CommandHandler, ImplementCommand, McpCommand, PLUGIN_USAGE, PluginCommand,
     ReplyFuture, ResearchCommand, dispatch,
 };
+use application::usecases::mcp_servers::{McpAction, McpDraft, McpListing};
 use application::usecases::permissions::{
     ProjectRules, RuleListing, load_rules, promote_rule, remove_rule,
 };
@@ -75,7 +74,7 @@ use application::usecases::simulate::{
 };
 use application::usecases::user_blocks::{chat_only_notice, user_blocks};
 use async_trait::async_trait;
-use domain::block::{Block, BlockKind, Cell, Column, TableSpec};
+use domain::block::{Block, BlockKind};
 use domain::conversation::{ImageAttachment, SessionId, StopReason};
 use domain::git::GitStatus;
 use domain::model::{Account, ModelId, ModelPolicy, ProviderId, ResolveRequest, SpecSource};
@@ -85,6 +84,9 @@ use domain::workspace::{WorkspacePath, WorkspaceRoot};
 use futures::FutureExt as _;
 use futures::channel::{mpsc, oneshot};
 use futures::future::BoxFuture;
+use futures::stream::BoxStream;
+
+use crate::mcp_control::McpControl;
 use tokio::runtime::Handle;
 use tokio::task::AbortHandle;
 use ui::approval::UiApproval;
@@ -290,7 +292,7 @@ pub struct UiController {
     models: Vec<ModelChoice>,
     plugins: Option<Arc<dyn PluginHostPort>>,
     commands: HashMap<String, CallbackId>,
-    mcp: Arc<McpCommands>,
+    mcp: Arc<McpControl>,
     plugin_trust: Arc<PluginTrust>,
     events: Arc<dyn EventSink>,
     flow: ActiveFlow,
@@ -551,182 +553,6 @@ async fn answer_gate(active: &mut Option<ImplementSession>, line: &str, events: 
     }
 }
 
-/// What `/mcp` needs: the declared servers, the approvals store and the
-/// running servers.
-struct McpCommands {
-    specs: Vec<McpServerSpec>,
-    workspace: PathBuf,
-    store: Option<PathBuf>,
-    servers: Option<(Arc<adapter_mcp::McpManager>, Arc<dyn McpPort>)>,
-}
-
-impl McpCommands {
-    /// `/mcp <args>`.
-    async fn run(self: Arc<Self>, command: McpCommand) -> Reply {
-        match command {
-            McpCommand::List => self.list().await,
-            McpCommand::Tools(name) => self.tools(&name).await,
-            McpCommand::Trust(name) => self.trust(&name).await,
-            McpCommand::Manage { verb, name } => self.manage(verb.as_str(), &name).await,
-            McpCommand::Invalid => Reply::Notice(NoticeLevel::Warning, MCP_USAGE.into()),
-        }
-    }
-
-    fn port(&self) -> Option<&Arc<dyn McpPort>> {
-        self.servers.as_ref().map(|(_, port)| port)
-    }
-
-    fn no_servers() -> Reply {
-        Reply::Notice(
-            NoticeLevel::Info,
-            "no MCP server is declared (app.mcp in init.lua)".into(),
-        )
-    }
-
-    /// Every server with its state, transport, origin and what to do next.
-    async fn list(&self) -> Reply {
-        let Some(port) = self.port() else {
-            return Self::no_servers();
-        };
-        let statuses = port.servers().await;
-        let origin = |name: &str| {
-            self.specs
-                .iter()
-                .find(|s| s.name == name)
-                .map_or("", |s| match s.origin {
-                    ConfigOrigin::Global => "global",
-                    ConfigOrigin::Workspace => "workspace",
-                })
-        };
-        let rows = statuses
-            .iter()
-            .map(|status| {
-                let detail = match &status.state {
-                    McpServerState::Untrusted => format!("/mcp trust {}", status.name),
-                    McpServerState::Disabled => format!("/mcp enable {}", status.name),
-                    McpServerState::NeedsLogin { .. } => format!("/mcp login {}", status.name),
-                    McpServerState::Ready { .. } => format!("/mcp tools {}", status.name),
-                    state => state.message().unwrap_or_default().to_owned(),
-                };
-                vec![
-                    Cell::Text(status.name.clone()),
-                    Cell::Text(status.state.label()),
-                    Cell::Text(status.transport.clone()),
-                    Cell::Text(origin(&status.name).to_owned()),
-                    Cell::Text(detail),
-                ]
-            })
-            .collect();
-        Reply::block(Block::new(BlockKind::Table(TableSpec {
-            columns: ["MCP server", "State", "Transport", "Config", "Detail"]
-                .map(Column::new)
-                .to_vec(),
-            rows,
-        })))
-    }
-
-    /// The tools of `name`, as the model sees them.
-    async fn tools(&self, name: &str) -> Reply {
-        let Some(port) = self.port() else {
-            return Self::no_servers();
-        };
-        let Some(status) = port.servers().await.into_iter().find(|s| s.name == name) else {
-            return Reply::Notice(
-                NoticeLevel::Warning,
-                format!("/mcp: no MCP server `{name}`"),
-            );
-        };
-        if !matches!(status.state, McpServerState::Ready { .. }) {
-            let why = status.state.message().unwrap_or_default();
-            return Reply::Notice(
-                NoticeLevel::Warning,
-                format!(
-                    "MCP server `{name}` is {}{}",
-                    status.state.label(),
-                    if why.is_empty() {
-                        String::new()
-                    } else {
-                        format!(": {why}")
-                    }
-                ),
-            );
-        }
-        let tools = port.list_tools().await.unwrap_or_default();
-        let rows: Vec<Vec<Cell>> = tools
-            .into_iter()
-            .filter(|t| t.server == name)
-            .map(|tool| {
-                let summary = tool.description.lines().next().unwrap_or_default();
-                let summary: String = summary.chars().take(160).collect();
-                vec![Cell::Text(tool.qualified_name()), Cell::Text(summary)]
-            })
-            .collect();
-        if rows.is_empty() {
-            return Reply::Notice(
-                NoticeLevel::Info,
-                format!("MCP server `{name}` offers no tools"),
-            );
-        }
-        Reply::block(Block::new(BlockKind::Table(TableSpec {
-            columns: vec![Column::new("Tool"), Column::new("Description")],
-            rows,
-        })))
-    }
-
-    /// `restart`, `enable`, `disable`, `login` or `logout` of `name`.
-    async fn manage(&self, verb: &str, name: &str) -> Reply {
-        let Some(port) = self.port() else {
-            return Self::no_servers();
-        };
-        let done = match verb {
-            "restart" => port
-                .restart(name)
-                .await
-                .map(|()| format!("MCP server `{name}` restarting")),
-            "enable" => port
-                .set_enabled(name, true)
-                .await
-                .map(|()| format!("MCP server `{name}` enabled")),
-            "disable" => port.set_enabled(name, false).await.map(|()| {
-                format!("MCP server `{name}` disabled for this session (disabled = true in init.lua keeps it off)")
-            }),
-            "login" => port.login(name).await,
-            _ => port.logout(name).await.map(|deleted| {
-                if deleted {
-                    format!("MCP server `{name}`: login tokens deleted")
-                } else {
-                    format!("MCP server `{name}` had no stored login")
-                }
-            }),
-        };
-        match done {
-            Ok(message) => Reply::Notice(NoticeLevel::Info, message),
-            Err(err) => Reply::Notice(NoticeLevel::Warning, format!("/mcp {verb}: {err}")),
-        }
-    }
-
-    /// Approves the workspace server `name` and starts it.
-    async fn trust(self: &Arc<Self>, name: &str) -> Reply {
-        // Reads and writes the store file: off the async workers.
-        let this = Arc::clone(self);
-        let owned = name.to_owned();
-        let saved = tokio::task::spawn_blocking(move || {
-            crate::mcp::trust_declared(&this.specs, &this.workspace, this.store.as_deref(), &owned)
-        })
-        .await
-        .unwrap_or_else(|err| Err(err.to_string()));
-        match saved {
-            Ok(message) => {
-                if let Some((manager, _)) = &self.servers {
-                    let _ = manager.trust(name);
-                }
-                Reply::Notice(NoticeLevel::Info, message)
-            }
-            Err(message) => Reply::Notice(NoticeLevel::Warning, format!("/mcp trust: {message}")),
-        }
-    }
-}
-
 /// `/plugin <args>`: `trust <name>` or `list`.
 async fn plugin_command(trust: Arc<PluginTrust>, command: PluginCommand) -> Reply {
     match command {
@@ -763,15 +589,15 @@ impl UiController {
         let prompt_history = Arc::clone(app.shared_prompt_history());
         let models = model_choices(app.model_policy());
         let plugins = app.plugins.clone();
-        let mcp = Arc::new(McpCommands {
-            specs: app.mcp_specs.clone(),
-            workspace: app.workspace.as_path().to_path_buf(),
-            store: app.mcp_trust_path.clone(),
-            servers: app
-                .mcp
+        let mcp = Arc::new(McpControl::new(
+            app.mcp_specs.clone(),
+            app.workspace.as_path().to_path_buf(),
+            app.mcp_trust_path.clone(),
+            app.mcp_config.clone(),
+            app.mcp
                 .as_ref()
                 .map(|servers| (Arc::clone(&servers.manager), Arc::clone(&servers.port))),
-        });
+        ));
         let plugin_trust = Arc::new(PluginTrust {
             decls: app.plugin_capabilities.clone(),
             store: app.plugin_trust_path.clone(),
@@ -1628,12 +1454,63 @@ impl SessionController for UiController {
     }
 
     fn help(&self) -> BoxFuture<'static, HelpSnapshot> {
-        let (help, trust) = (Arc::clone(&self.help), Arc::clone(&self.plugin_trust));
+        let help = self.help.with_mcp_specs(self.mcp.specs());
+        let trust = Arc::clone(&self.plugin_trust);
         let mcp = self.mcp.port().cloned();
         let task = self
             .handle
             .spawn(async move { help_snapshot(&help, &trust, mcp.as_deref()).await });
         task.map(Result::unwrap_or_default).boxed()
+    }
+
+    fn mcp_servers(&self) -> BoxFuture<'static, McpListing> {
+        let mcp = Arc::clone(&self.mcp);
+        let task = self.handle.spawn(async move { mcp.listing().await });
+        task.map(Result::unwrap_or_default).boxed()
+    }
+
+    fn mcp_act(
+        &self,
+        name: String,
+        action: McpAction,
+    ) -> BoxFuture<'static, Result<String, String>> {
+        let mcp = Arc::clone(&self.mcp);
+        let task = self
+            .handle
+            .spawn(async move { mcp.act(&name, action).await });
+        task.map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
+            .boxed()
+    }
+
+    fn mcp_save(
+        &self,
+        previous: Option<String>,
+        draft: McpDraft,
+    ) -> BoxFuture<'static, Result<String, String>> {
+        let mcp = Arc::clone(&self.mcp);
+        let task = self
+            .handle
+            .spawn(async move { mcp.save(previous, draft).await });
+        task.map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
+            .boxed()
+    }
+
+    fn mcp_remove(&self, name: String) -> BoxFuture<'static, Result<String, String>> {
+        let mcp = Arc::clone(&self.mcp);
+        let task = self.handle.spawn(async move { mcp.remove(&name).await });
+        task.map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
+            .boxed()
+    }
+
+    fn mcp_test(&self, draft: McpDraft) -> BoxFuture<'static, Result<String, String>> {
+        let mcp = Arc::clone(&self.mcp);
+        let task = self.handle.spawn(async move { mcp.test(draft).await });
+        task.map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
+            .boxed()
+    }
+
+    fn mcp_changes(&self) -> BoxStream<'static, ()> {
+        self.mcp.changes()
     }
 }
 
@@ -2577,45 +2454,6 @@ mod tests {
             panic!("an unknown plugin warns");
         };
         assert!(missing.contains("no plugin `x`"), "{missing}");
-    }
-
-    #[test]
-    fn mcp_trust_saves_the_approval_or_explains_the_usage() {
-        use application::ports::plugin::{ConfigOrigin, McpTransport};
-        let dir = tempfile::tempdir().unwrap();
-        let spec = McpServerSpec {
-            origin: ConfigOrigin::Workspace,
-            ..McpServerSpec::new(
-                "git",
-                McpTransport::Stdio {
-                    command: "mcp-git".into(),
-                    args: Vec::new(),
-                    env: std::collections::BTreeMap::new(),
-                    cwd: None,
-                },
-            )
-        };
-        let trust = Arc::new(McpCommands {
-            specs: vec![spec],
-            workspace: dir.path().to_path_buf(),
-            store: Some(dir.path().join("trust.json")),
-            servers: None,
-        });
-        let runtime = tokio::runtime::Runtime::new().unwrap();
-        let run = |args: &str| runtime.block_on(Arc::clone(&trust).run(McpCommand::parse(args)));
-        assert!(matches!(
-            run("trust git"),
-            Reply::Notice(NoticeLevel::Info, _)
-        ));
-        assert!(dir.path().join("trust.json").exists());
-        let Reply::Notice(NoticeLevel::Warning, usage) = run("frobnicate git") else {
-            panic!("a usage warning");
-        };
-        assert!(usage.contains("/mcp trust"), "{usage}");
-        let Reply::Notice(NoticeLevel::Info, none) = run("list") else {
-            panic!("a notice without servers");
-        };
-        assert!(none.contains("no MCP server"), "{none}");
     }
 
     #[test]

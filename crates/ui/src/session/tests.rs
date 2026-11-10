@@ -31,7 +31,15 @@ use crate::commands::unknown_command_hint;
 use crate::help::{HelpView, Section, help_modal_id};
 use crate::input::ModelPopup;
 use crate::input::attachments::ImageMode;
+use crate::mcp::{McpTab, McpView};
 use crate::permissions::PermissionsView;
+use application_core::ports::mcp::{McpServerState, McpTool};
+use application_core::ports::plugin::{
+    ConfigOrigin, McpOAuthClient, McpServerSpec, McpSource, McpTransport,
+};
+use application_core::usecases::mcp_servers::{
+    McpAction, McpDraft, McpListing, McpServerInfo, McpToolInfo,
+};
 
 /// A controller over the real `AgentService`, running each turn on its
 /// own thread as the binary runs it on tokio.
@@ -41,6 +49,12 @@ struct AgentController {
     events: Arc<dyn EventSink>,
     /// Keys given to `login`, in order.
     logins: Arc<Mutex<Vec<String>>>,
+    /// The MCP servers, as the manager would list them.
+    mcp: Arc<Mutex<Vec<McpServerInfo>>>,
+    /// What the manager asked (`act github test`, `save None files`...).
+    mcp_calls: Arc<Mutex<Vec<String>>>,
+    /// The change stream, handed to the first session that asks.
+    mcp_changes: Arc<Mutex<Option<futures::channel::mpsc::UnboundedReceiver<()>>>>,
 }
 
 impl SessionController for AgentController {
@@ -255,6 +269,201 @@ impl SessionController for AgentController {
         };
         Some(futures::future::ready(reply).boxed())
     }
+
+    fn mcp_servers(&self) -> BoxFuture<'static, McpListing> {
+        let servers = self.mcp.lock().unwrap().clone();
+        futures::future::ready(McpListing {
+            servers,
+            can_edit: true,
+            global_file: Some("/home/u/.config/crest/mcp.json".into()),
+            workspace_file: Some("/ws/.crest/mcp.json".into()),
+        })
+        .boxed()
+    }
+
+    /// Changes the fixture as the real manager would; `login` never
+    /// answers (the browser), `cancel-login` does.
+    fn mcp_act(
+        &self,
+        name: String,
+        action: McpAction,
+    ) -> BoxFuture<'static, Result<String, String>> {
+        self.mcp_calls
+            .lock()
+            .unwrap()
+            .push(format!("act {name} {}", action.as_str()));
+        let mut servers = self.mcp.lock().unwrap();
+        let Some(server) = servers.iter_mut().find(|s| s.spec.name == name) else {
+            return futures::future::ready(Err(format!("no MCP server `{name}`"))).boxed();
+        };
+        let said = match action {
+            McpAction::Disable => {
+                server.state = McpServerState::Disabled;
+                format!("MCP server `{name}` disabled")
+            }
+            McpAction::Enable | McpAction::Restart | McpAction::Trust => {
+                server.state = McpServerState::Ready {
+                    tool_count: server.tools.len(),
+                };
+                format!("MCP server `{name}` restarting")
+            }
+            McpAction::Test => "connected in 12 ms · 2 tools".to_owned(),
+            McpAction::Login => return futures::future::pending().boxed(),
+            McpAction::CancelLogin => "login cancelled".to_owned(),
+            McpAction::Logout => {
+                server.logged_in = Some(false);
+                format!("MCP server `{name}`: login tokens deleted")
+            }
+        };
+        futures::future::ready(Ok(said)).boxed()
+    }
+
+    fn mcp_save(
+        &self,
+        previous: Option<String>,
+        draft: McpDraft,
+    ) -> BoxFuture<'static, Result<String, String>> {
+        self.mcp_calls
+            .lock()
+            .unwrap()
+            .push(format!("save {previous:?} {}", draft.name));
+        let mut servers = self.mcp.lock().unwrap();
+        let taken: Vec<String> = servers
+            .iter()
+            .map(|s| s.spec.name.clone())
+            .filter(|n| previous.as_deref() != Some(n.as_str()))
+            .collect();
+        let spec = match draft.validate(&taken) {
+            Ok(spec) => spec,
+            Err(problem) => return futures::future::ready(Err(problem)).boxed(),
+        };
+        let name = spec.name.clone();
+        let info = McpServerInfo::new(spec, McpServerState::Starting);
+        match previous.and_then(|p| servers.iter().position(|s| s.spec.name == p)) {
+            Some(at) => servers[at] = info,
+            None => servers.push(info),
+        }
+        futures::future::ready(Ok(format!("MCP server `{name}` saved; starting"))).boxed()
+    }
+
+    fn mcp_remove(&self, name: String) -> BoxFuture<'static, Result<String, String>> {
+        self.mcp_calls
+            .lock()
+            .unwrap()
+            .push(format!("remove {name}"));
+        self.mcp.lock().unwrap().retain(|s| s.spec.name != name);
+        futures::future::ready(Ok(format!("MCP server `{name}` removed"))).boxed()
+    }
+
+    fn mcp_test(&self, draft: McpDraft) -> BoxFuture<'static, Result<String, String>> {
+        self.mcp_calls
+            .lock()
+            .unwrap()
+            .push(format!("test-spec {}", draft.name));
+        futures::future::ready(Ok("connected in 3 ms · 2 tools".to_owned())).boxed()
+    }
+
+    fn mcp_changes(&self) -> futures::stream::BoxStream<'static, ()> {
+        match self.mcp_changes.lock().unwrap().take() {
+            Some(rx) => rx.boxed(),
+            None => futures::stream::pending().boxed(),
+        }
+    }
+}
+
+/// The MCP servers of the harness: two of every kind the manager shows.
+fn mcp_fixture() -> Vec<McpServerInfo> {
+    let stdio = |command: &str| McpTransport::Stdio {
+        command: command.into(),
+        args: vec!["-y".into()],
+        env: std::collections::BTreeMap::from([("API_KEY".to_owned(), "secret".to_owned())]),
+        cwd: None,
+    };
+    let http = |url: &str| McpTransport::Http {
+        url: url.into(),
+        headers: std::collections::BTreeMap::new(),
+        oauth: Some(McpOAuthClient::default()),
+    };
+    let spec = |name: &str, transport, origin, source| {
+        let mut spec = McpServerSpec::new(name, transport);
+        spec.origin = origin;
+        spec.source = source;
+        spec
+    };
+    let tool = |name: &str| {
+        McpToolInfo::from(&McpTool {
+            server: "github".into(),
+            name: name.into(),
+            description: format!("{name} something"),
+            input_schema: json!({
+                "type": "object",
+                "properties": { "owner": { "type": "string", "description": "the owner" } },
+                "required": ["owner"]
+            }),
+        })
+    };
+    let mut github = McpServerInfo::new(
+        spec(
+            "github",
+            http("https://api.githubcopilot.com/mcp/"),
+            ConfigOrigin::Global,
+            McpSource::Json,
+        ),
+        McpServerState::Ready { tool_count: 2 },
+    );
+    github.tools = vec![tool("list_issues"), tool("create_issue")];
+    github.logged_in = Some(true);
+    let filesystem = McpServerInfo::new(
+        spec(
+            "filesystem",
+            stdio("npx"),
+            ConfigOrigin::Global,
+            McpSource::Lua,
+        ),
+        McpServerState::Ready { tool_count: 0 },
+    );
+    let linear = McpServerInfo::new(
+        spec(
+            "linear",
+            http("https://mcp.linear.app/mcp"),
+            ConfigOrigin::Global,
+            McpSource::Json,
+        ),
+        McpServerState::NeedsLogin {
+            message: "the server answered 401".into(),
+        },
+    );
+    let mut postgres = McpServerInfo::new(
+        spec(
+            "postgres",
+            stdio("uvx"),
+            ConfigOrigin::Workspace,
+            McpSource::Json,
+        ),
+        McpServerState::Failed {
+            message: "exited during startup".into(),
+        },
+    );
+    postgres.stderr = vec!["connection refused".into()];
+    let repo = McpServerInfo::new(
+        spec(
+            "repo-tools",
+            stdio("./tools/mcp"),
+            ConfigOrigin::Workspace,
+            McpSource::Lua,
+        ),
+        McpServerState::Untrusted,
+    );
+    let browser = McpServerInfo::new(
+        spec(
+            "browser",
+            stdio("npx"),
+            ConfigOrigin::Global,
+            McpSource::Json,
+        ),
+        McpServerState::Disabled,
+    );
+    vec![github, filesystem, linear, postgres, repo, browser]
 }
 
 struct Harness {
@@ -267,6 +476,12 @@ struct Harness {
     sink: Arc<RecordingSink>,
     logins: Arc<Mutex<Vec<String>>>,
     reopens: Rc<RefCell<Vec<SessionEvent>>>,
+    /// The MCP servers the controller lists.
+    mcp: Arc<Mutex<Vec<McpServerInfo>>>,
+    /// What the manager asked of the controller.
+    mcp_calls: Arc<Mutex<Vec<String>>>,
+    /// Tells the session the MCP servers changed.
+    mcp_tx: futures::channel::mpsc::UnboundedSender<()>,
 }
 
 /// Hosts the root view as the window's root.
@@ -377,11 +592,17 @@ fn harness_parts(
     let permissions = Arc::clone(service.permissions());
     let logins = Arc::new(Mutex::new(Vec::new()));
     let resume_pending = !conversation.pending_tool_uses().is_empty();
+    let mcp = Arc::new(Mutex::new(mcp_fixture()));
+    let mcp_calls = Arc::new(Mutex::new(Vec::new()));
+    let (mcp_tx, mcp_rx) = futures::channel::mpsc::unbounded();
     let controller = Arc::new(AgentController {
         service: Arc::new(service),
         conversation: Arc::new(futures::lock::Mutex::new(conversation)),
         events: sink.clone(),
         logins: Arc::clone(&logins),
+        mcp: Arc::clone(&mcp),
+        mcp_calls: Arc::clone(&mcp_calls),
+        mcp_changes: Arc::new(Mutex::new(Some(mcp_rx))),
     });
     let mut parts = SessionParts::new(controller, events, approvals, fs.clone(), fs.clone());
     parts.fs = Some(fs);
@@ -416,6 +637,9 @@ fn harness_parts(
             sink,
             logins,
             reopens,
+            mcp,
+            mcp_calls,
+            mcp_tx,
         },
         cx,
     )
@@ -2462,5 +2686,533 @@ fn the_tour_opens_once_on_a_clear_session(cx: &mut TestAppContext) {
     );
     h.session.read_with(cx, |session, _| {
         assert_eq!(session.tour_step(), Some(crate::tour::Step::Welcome));
+    });
+}
+
+// ------------------------------------------------------------------ /mcp
+
+fn mcp_view(h: &Harness, cx: &mut VisualTestContext) -> Option<Entity<McpView>> {
+    h.session.read_with(cx, |s, cx| s.mcp_view(cx))
+}
+
+fn mcp_names(view: &Entity<McpView>, cx: &mut VisualTestContext) -> Vec<String> {
+    view.read_with(cx, |v, _| {
+        v.rows()
+            .iter()
+            .map(|row| v.listing().servers[row.index].spec.name.clone())
+            .collect()
+    })
+}
+
+fn mcp_calls(h: &Harness) -> Vec<String> {
+    h.mcp_calls.lock().unwrap().clone()
+}
+
+/// Runs `/<text>` as the palette would, even while a modal has the keys.
+fn mcp_cmd(h: &Harness, cx: &mut VisualTestContext, text: &str) {
+    h.session
+        .update_in(cx, |session, window, cx| session.command(text, window, cx));
+    cx.run_until_parked();
+}
+
+fn drawn(cx: &mut VisualTestContext, selector: &'static str) -> bool {
+    cx.update(|window, _| window.refresh());
+    cx.run_until_parked();
+    cx.debug_bounds(selector).is_some()
+}
+
+#[gpui::test]
+fn slash_mcp_opens_the_manager_grouped_by_origin(cx: &mut TestAppContext) {
+    use crate::mcp::model::Group;
+    let (h, cx) = harness(Vec::new(), cx);
+    send("/mcp", cx);
+    cx.run_until_parked();
+    let view = mcp_view(&h, cx).expect("/mcp opens the manager");
+    assert_eq!(
+        mcp_names(&view, cx),
+        [
+            "github",
+            "filesystem",
+            "linear",
+            "browser",
+            "postgres",
+            "repo-tools"
+        ]
+    );
+    view.read_with(cx, |v, _| {
+        let groups: Vec<_> = v.rows().iter().map(|row| row.group).collect();
+        assert_eq!(
+            groups,
+            [
+                Group::Global,
+                Group::Global,
+                Group::Global,
+                Group::Global,
+                Group::Workspace,
+                Group::Workspace
+            ]
+        );
+        assert_eq!(v.selected(), 0);
+        assert_eq!(v.tab(), McpTab::Overview);
+        assert!(v.listing().can_edit);
+    });
+    cx.update(|window, cx| {
+        assert!(view.focus_handle(cx).contains_focused(window, cx));
+    });
+    for selector in [
+        "mcp-list",
+        "mcp-row-0",
+        "mcp-add",
+        "mcp-detail",
+        "mcp-detail-head",
+        "mcp-actions",
+        "mcp-tab-tools",
+        "mcp-overview",
+        "mcp-keys",
+    ] {
+        assert!(drawn(cx, selector), "{selector} is drawn");
+    }
+    assert!(
+        mcp_calls(&h).is_empty(),
+        "opening runs nothing: {:?}",
+        mcp_calls(&h)
+    );
+}
+
+#[gpui::test]
+fn leader_s_opens_the_mcp_manager_and_esc_gives_the_prompt_back(cx: &mut TestAppContext) {
+    let (h, cx) = harness(Vec::new(), cx);
+    cx.simulate_keystrokes("ctrl-g shift-s");
+    cx.run_until_parked();
+    let view = mcp_view(&h, cx).expect("<leader>S opens the manager");
+    cx.update(|window, cx| {
+        assert!(view.focus_handle(cx).contains_focused(window, cx));
+    });
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert!(mcp_view(&h, cx).is_none(), "Esc closes it");
+    cx.update(|window, cx| {
+        let input = h.session.read(cx).input().focus_handle(cx);
+        assert!(
+            input.contains_focused(window, cx),
+            "the prompt has the focus back"
+        );
+    });
+}
+
+#[gpui::test]
+fn tab_cycles_the_tabs_and_slash_mcp_tools_opens_the_tools_tab(cx: &mut TestAppContext) {
+    let (h, cx) = harness(Vec::new(), cx);
+    send("/mcp", cx);
+    cx.run_until_parked();
+    let view = mcp_view(&h, cx).expect("the manager");
+    cx.simulate_keystrokes("tab");
+    view.read_with(cx, |v, _| assert_eq!(v.tab(), McpTab::Tools));
+    cx.simulate_keystrokes("tab");
+    view.read_with(cx, |v, _| assert_eq!(v.tab(), McpTab::Log));
+    cx.simulate_keystrokes("tab");
+    view.read_with(cx, |v, _| assert_eq!(v.tab(), McpTab::Overview));
+    cx.simulate_keystrokes("shift-tab");
+    view.read_with(cx, |v, _| assert_eq!(v.tab(), McpTab::Log));
+    assert!(drawn(cx, "mcp-log-empty"), "nothing logged yet");
+
+    // The manager is open: `/mcp tools github` only moves it.
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    send("/mcp tools github", cx);
+    cx.run_until_parked();
+    let view = mcp_view(&h, cx).expect("open again");
+    view.read_with(cx, |v, _| {
+        assert_eq!(v.tab(), McpTab::Tools);
+        assert_eq!(
+            v.selected_server().map(|s| s.spec.name.as_str()),
+            Some("github")
+        );
+    });
+    assert!(drawn(cx, "mcp-tool-0"));
+    assert!(!drawn(cx, "mcp-param"), "folded");
+    cx.simulate_keystrokes("o");
+    assert!(drawn(cx, "mcp-param"), "o unfolds the first tool");
+    cx.simulate_keystrokes("down");
+    view.read_with(cx, |v, _| {
+        assert_eq!(
+            v.selected_server().map(|s| s.spec.name.as_str()),
+            Some("filesystem")
+        );
+        assert_eq!(v.tab(), McpTab::Tools, "the tab stays");
+    });
+}
+
+#[gpui::test]
+fn a_opens_the_add_form_and_esc_leaves_the_form_but_keeps_the_modal(cx: &mut TestAppContext) {
+    let (h, cx) = harness(Vec::new(), cx);
+    send("/mcp", cx);
+    cx.run_until_parked();
+    let view = mcp_view(&h, cx).expect("the manager");
+    cx.simulate_keystrokes("a");
+    cx.run_until_parked();
+    view.read_with(cx, |v, _| assert!(v.form().is_some_and(|f| f.is_add())));
+    assert!(drawn(cx, "mcp-form"));
+    assert!(drawn(cx, "mcp-templates"));
+    cx.update(|window, cx| {
+        assert!(
+            view.read(cx).field_focused(window, cx),
+            "the name field has the focus"
+        );
+    });
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    view.read_with(cx, |v, _| {
+        assert!(v.form().is_some(), "Esc only leaves the field")
+    });
+    cx.update(|window, cx| assert!(!view.read(cx).field_focused(window, cx)));
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    view.read_with(cx, |v, _| {
+        assert!(v.form().is_none(), "Esc closes the form")
+    });
+    assert!(mcp_view(&h, cx).is_some(), "the modal stays");
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert!(mcp_view(&h, cx).is_none(), "the third Esc closes the modal");
+}
+
+#[gpui::test]
+fn ctrl_enter_validates_the_form_then_saves_and_selects_the_server(cx: &mut TestAppContext) {
+    let (h, cx) = harness(Vec::new(), cx);
+    send("/mcp", cx);
+    cx.run_until_parked();
+    let view = mcp_view(&h, cx).expect("the manager");
+    cx.simulate_keystrokes("a");
+    cx.run_until_parked();
+    cx.simulate_keystrokes("ctrl-enter");
+    cx.run_until_parked();
+    view.read_with(cx, |v, _| {
+        assert_eq!(
+            v.form_error(),
+            Some("the name takes letters, digits, - and _")
+        );
+    });
+    assert!(drawn(cx, "mcp-form-error"));
+    assert!(mcp_calls(&h).is_empty(), "nothing saved");
+
+    cx.simulate_input("files");
+    cx.simulate_keystrokes("ctrl-enter");
+    cx.run_until_parked();
+    view.read_with(cx, |v, _| {
+        assert_eq!(v.form_error(), Some("a stdio server needs a command"));
+    });
+    cx.simulate_keystrokes("tab");
+    cx.simulate_input("npx");
+    cx.simulate_keystrokes("ctrl-enter");
+    cx.run_until_parked();
+    assert_eq!(mcp_calls(&h), ["save None files"]);
+    view.read_with(cx, |v, _| {
+        assert!(v.form().is_none(), "saved: the form closes");
+        assert_eq!(
+            v.selected_server().map(|s| s.spec.name.as_str()),
+            Some("files"),
+            "the new server is chosen"
+        );
+        assert!(v.status().is_some_and(|s| s.contains("saved")));
+    });
+    let saved = h
+        .mcp
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|s| s.spec.name == "files")
+        .cloned();
+    let saved = saved.expect("the controller has it");
+    assert_eq!(saved.spec.origin, ConfigOrigin::Global);
+    assert_eq!(saved.spec.source, McpSource::Json);
+    match &saved.spec.transport {
+        McpTransport::Stdio { command, .. } => assert_eq!(command, "npx"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[gpui::test]
+fn e_prefills_the_edit_form_and_is_refused_for_init_lua_servers(cx: &mut TestAppContext) {
+    let (h, cx) = harness(Vec::new(), cx);
+    send("/mcp github", cx);
+    cx.run_until_parked();
+    let view = mcp_view(&h, cx).expect("the manager");
+    cx.simulate_keystrokes("e");
+    cx.run_until_parked();
+    view.read_with(cx, |v, cx| {
+        let form = v.form().expect("the edit form");
+        assert!(!form.is_add());
+        assert_eq!(form.name(cx), "github");
+        assert_eq!(
+            form.kind,
+            application_core::usecases::mcp_servers::McpKind::Http
+        );
+        assert!(form.oauth);
+    });
+    cx.simulate_keystrokes("escape escape");
+    cx.run_until_parked();
+    view.read_with(cx, |v, _| assert!(v.form().is_none()));
+    cx.simulate_keystrokes("down");
+    view.read_with(cx, |v, _| {
+        assert_eq!(
+            v.selected_server().map(|s| s.spec.name.as_str()),
+            Some("filesystem")
+        );
+    });
+    cx.simulate_keystrokes("e");
+    cx.run_until_parked();
+    view.read_with(cx, |v, _| {
+        assert!(v.form().is_none(), "init.lua servers have no form");
+        assert!(
+            v.status().is_some_and(|s| s.contains("init.lua")),
+            "{:?}",
+            v.status()
+        );
+    });
+    cx.simulate_keystrokes("d");
+    view.read_with(cx, |v, _| {
+        assert!(!v.confirming());
+        assert!(v.status().is_some_and(|s| s.contains("remove it there")));
+    });
+}
+
+#[gpui::test]
+fn d_asks_first_enter_removes_and_esc_keeps(cx: &mut TestAppContext) {
+    let (h, cx) = harness(Vec::new(), cx);
+    send("/mcp", cx);
+    cx.run_until_parked();
+    let view = mcp_view(&h, cx).expect("the manager");
+    cx.simulate_keystrokes("d");
+    view.read_with(cx, |v, _| assert!(v.confirming()));
+    assert!(drawn(cx, "mcp-confirm"));
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    view.read_with(cx, |v, _| assert!(!v.confirming(), "Esc keeps it"));
+    assert!(mcp_view(&h, cx).is_some(), "and the modal stays");
+    cx.simulate_keystrokes("d enter");
+    cx.run_until_parked();
+    assert_eq!(mcp_calls(&h), ["remove github"]);
+    assert_eq!(
+        mcp_names(&view, cx),
+        ["filesystem", "linear", "browser", "postgres", "repo-tools"]
+    );
+    view.read_with(cx, |v, _| {
+        assert_eq!(
+            v.selected_server().map(|s| s.spec.name.as_str()),
+            Some("filesystem")
+        );
+    });
+}
+
+#[gpui::test]
+fn space_toggles_the_server_and_t_r_l_run_the_actions(cx: &mut TestAppContext) {
+    let (h, cx) = harness(Vec::new(), cx);
+    send("/mcp", cx);
+    cx.run_until_parked();
+    let view = mcp_view(&h, cx).expect("the manager");
+    cx.simulate_keystrokes("space");
+    cx.run_until_parked();
+    view.read_with(cx, |v, _| {
+        assert_eq!(
+            v.selected_server().map(|s| s.state.clone()),
+            Some(McpServerState::Disabled)
+        );
+    });
+    cx.simulate_keystrokes("space");
+    cx.run_until_parked();
+    view.read_with(cx, |v, _| {
+        assert!(v.selected_server().is_some_and(McpServerInfo::enabled));
+    });
+    cx.simulate_keystrokes("t");
+    cx.run_until_parked();
+    view.read_with(cx, |v, _| {
+        assert_eq!(
+            v.result("github"),
+            Some(&Ok("connected in 12 ms · 2 tools".to_owned()))
+        );
+    });
+    assert!(drawn(cx, "mcp-result"));
+    cx.simulate_keystrokes("r");
+    cx.run_until_parked();
+    assert_eq!(
+        mcp_calls(&h),
+        [
+            "act github disable",
+            "act github enable",
+            "act github test",
+            "act github restart"
+        ]
+    );
+
+    // linear needs a login: `l` waits for the browser until it is cancelled.
+    cx.simulate_keystrokes("down down l");
+    cx.run_until_parked();
+    view.read_with(cx, |v, _| {
+        assert_eq!(v.pending().get("linear"), Some(&McpAction::Login));
+    });
+    assert!(drawn(cx, "mcp-banner-login"));
+    let cancel = cx
+        .debug_bounds("mcp-login-cancel")
+        .expect("the Cancel button");
+    cx.simulate_click(cancel.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    view.read_with(cx, |v, _| {
+        assert!(v.pending().is_empty(), "{:?}", v.pending())
+    });
+    assert!(mcp_calls(&h).ends_with(&[
+        "act linear login".to_owned(),
+        "act linear cancel-login".to_owned()
+    ]));
+
+    // `l` on a stdio server only hints.
+    cx.simulate_keystrokes("down l");
+    view.read_with(cx, |v, _| {
+        assert!(
+            v.status().is_some_and(|s| s.contains("OAuth")),
+            "{:?}",
+            v.status()
+        );
+    });
+}
+
+#[gpui::test]
+fn slash_mcp_subcommands_route_to_the_manager(cx: &mut TestAppContext) {
+    let (h, cx) = harness(Vec::new(), cx);
+    send("/mcp add", cx);
+    cx.run_until_parked();
+    let view = mcp_view(&h, cx).expect("/mcp add opens the manager");
+    view.read_with(cx, |v, _| assert!(v.form().is_some_and(|f| f.is_add())));
+    // The modal has the keys: the commands below come from the palette's
+    // path, as a plugin or a keymap would send them.
+    mcp_cmd(&h, cx, "mcp postgres");
+    view.read_with(cx, |v, _| {
+        assert!(v.form().is_none(), "a server closes the form");
+        assert_eq!(
+            v.selected_server().map(|s| s.spec.name.as_str()),
+            Some("postgres")
+        );
+    });
+    assert!(drawn(cx, "mcp-banner"), "the failed banner");
+    mcp_cmd(&h, cx, "mcp remove postgres");
+    view.read_with(cx, |v, _| assert!(v.confirming()));
+    mcp_cmd(&h, cx, "mcp restart browser");
+    view.read_with(cx, |v, _| {
+        assert!(
+            v.status().is_some_and(|s| s.contains("turn the server on")),
+            "a disabled server is not restarted: {:?}",
+            v.status()
+        );
+    });
+    assert!(mcp_calls(&h).is_empty());
+    mcp_cmd(&h, cx, "mcp restart filesystem");
+    assert_eq!(mcp_calls(&h), ["act filesystem restart"]);
+    mcp_cmd(&h, cx, "mcp nope");
+    view.read_with(cx, |v, _| {
+        assert_eq!(v.status(), Some("no MCP server named nope"));
+    });
+    mcp_cmd(&h, cx, "mcp bogus x");
+    let notice = h.session.read_with(cx, |s, cx| {
+        let state = s.status().read(cx).state();
+        state.notice(Instant::now()).map(|n| n.message.clone())
+    });
+    assert!(
+        notice
+            .as_deref()
+            .is_some_and(|n| n.starts_with("usage: /mcp")),
+        "{notice:?}"
+    );
+}
+
+#[gpui::test]
+fn the_filter_narrows_the_servers(cx: &mut TestAppContext) {
+    let (h, cx) = harness(Vec::new(), cx);
+    send("/mcp", cx);
+    cx.run_until_parked();
+    let view = mcp_view(&h, cx).expect("the manager");
+    cx.simulate_keystrokes("/");
+    cx.update(|window, cx| assert!(view.read(cx).is_filtering(window, cx)));
+    cx.simulate_input("git");
+    cx.run_until_parked();
+    assert_eq!(mcp_names(&view, cx), ["github"]);
+    cx.simulate_keystrokes("enter");
+    cx.update(|window, cx| assert!(!view.read(cx).is_filtering(window, cx)));
+    cx.simulate_keystrokes("/");
+    cx.simulate_keystrokes("escape");
+    cx.update(|window, cx| assert!(!view.read(cx).is_filtering(window, cx)));
+    assert!(
+        mcp_view(&h, cx).is_some(),
+        "Esc in the filter keeps the modal"
+    );
+}
+
+#[gpui::test]
+fn a_change_on_the_stream_refreshes_the_listing_and_the_dock_summary(cx: &mut TestAppContext) {
+    let (h, cx) = harness(Vec::new(), cx);
+    let summaries = |h: &Harness| -> Vec<String> {
+        h.reopens
+            .borrow()
+            .iter()
+            .filter_map(|e| match e {
+                SessionEvent::Mcp(summary) => Some(summary.text()),
+                _ => None,
+            })
+            .collect()
+    };
+    // The summary of the start went out before the test listened; a
+    // change brings a new one.
+    h.mcp_tx.unbounded_send(()).unwrap();
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+    assert_eq!(
+        summaries(&h).last().map(String::as_str),
+        Some("2 ok · 2 need you · 1 failed"),
+        "{:?}",
+        summaries(&h)
+    );
+    send("/mcp", cx);
+    cx.run_until_parked();
+    let view = mcp_view(&h, cx).expect("the manager");
+    {
+        let mut servers = h.mcp.lock().unwrap();
+        for server in servers.iter_mut() {
+            if server.spec.name == "postgres" {
+                server.state = McpServerState::Ready { tool_count: 1 };
+            }
+        }
+    }
+    h.mcp_tx.unbounded_send(()).unwrap();
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+    view.read_with(cx, |v, _| {
+        let postgres = v.listing().get("postgres").expect("still listed");
+        assert_eq!(postgres.state, McpServerState::Ready { tool_count: 1 });
+    });
+    assert_eq!(
+        summaries(&h).last().map(String::as_str),
+        Some("3 ok · 2 need you"),
+        "{:?}",
+        summaries(&h)
+    );
+}
+
+#[gpui::test]
+fn the_plus_menu_row_opens_the_mcp_manager(cx: &mut TestAppContext) {
+    let (h, cx) = harness(Vec::new(), cx);
+    cx.update(|window, _| window.refresh());
+    cx.run_until_parked();
+    let button = cx.debug_bounds("prompt-mode-button").expect("the + button");
+    cx.simulate_click(button.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    assert!(
+        h.session
+            .read_with(cx, |s, cx| s.input().read(cx).mode_menu_open())
+    );
+    // `Up` wraps to the last row: MCP servers.
+    cx.simulate_keystrokes("up enter");
+    cx.run_until_parked();
+    let view = mcp_view(&h, cx).expect("the row opens the manager");
+    cx.update(|window, cx| {
+        assert!(view.focus_handle(cx).contains_focused(window, cx));
     });
 }

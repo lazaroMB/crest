@@ -15,6 +15,8 @@ pub mod help;
 pub mod images;
 pub mod keys;
 pub mod mcp;
+pub mod mcp_config;
+pub mod mcp_control;
 pub mod opencode;
 mod organize;
 pub mod permissions;

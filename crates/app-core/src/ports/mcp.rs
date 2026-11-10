@@ -5,9 +5,13 @@
 //! each other or with built-in tools. See [`qualified_name`] and
 //! [`parse_qualified_name`].
 
+use std::time::SystemTime;
+
 use async_trait::async_trait;
 use domain::conversation::ToolResultContent;
 use serde::{Deserialize, Serialize};
+
+use super::events::NoticeLevel;
 
 /// Prefix of every MCP tool name as seen by the model.
 pub const QUALIFIED_PREFIX: &str = "mcp__";
@@ -32,6 +36,42 @@ pub fn parse_qualified_name(name: &str) -> Option<(&str, &str)> {
     let rest = name.strip_prefix(QUALIFIED_PREFIX)?;
     let (server, tool) = rest.split_once(SEPARATOR)?;
     (!server.is_empty() && !tool.is_empty()).then_some((server, tool))
+}
+
+/// Why `name` cannot name a server, if it cannot: tools are offered as
+/// `mcp__<server>__<tool>`, so `__` would make the name ambiguous. One rule
+/// for the Lua config, `mcp.json` and the manager.
+#[must_use]
+pub fn invalid_server_name(name: &str) -> Option<String> {
+    let valid_chars = name
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
+    (name.is_empty() || !valid_chars || name.contains("__")).then(|| {
+        format!("invalid MCP server name `{name}` (use letters, digits, `-` and single `_`)")
+    })
+}
+
+/// One line of a server's log: what happened to it and when.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct McpLogEntry {
+    /// When it happened.
+    pub at: SystemTime,
+    /// How bad it was.
+    pub level: NoticeLevel,
+    /// What happened (`connected · 8 tools`, `restarted`, the error).
+    pub text: String,
+}
+
+impl McpLogEntry {
+    /// An entry dated now.
+    #[must_use]
+    pub fn now(level: NoticeLevel, text: impl Into<String>) -> Self {
+        Self {
+            at: SystemTime::now(),
+            level,
+            text: text.into(),
+        }
+    }
 }
 
 /// A tool advertised by an MCP server.

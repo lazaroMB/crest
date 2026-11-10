@@ -115,6 +115,7 @@ When a widget has nothing left for `Esc` to clear, `Esc` gives the keys back to 
 | `Ctrl+G p` | `permission.cycle` | Cycles `ask` → `auto-edit` → `plan`. |
 | `Ctrl+G P` | `mode.pick` | Puts `/mode ` in the prompt, whose palette lists the permission modes. |
 | `Ctrl+G A` | `permissions.open` | Opens the [permission rules](#permission-rules-permissions) (the same as `/permissions`). |
+| `Ctrl+G S` | `mcp.open` | Opens the [MCP servers manager](#mcp-servers-mcp) (the same as `/mcp`). |
 | `Ctrl+G T` | `theme.pick` | Puts `/theme ` in the prompt, which opens the theme popup. |
 | `Ctrl+G W` | `project.switch` | Goes back to the project picker (the same as `/project`). |
 | `Ctrl+G s` | `panel.chats` | Cycles the chats sidebar: full, strip, hidden, and full again. The window opens hidden. |
@@ -154,9 +155,9 @@ You can redefine, add or remove mappings with `app.keymap.set` and `app.keymap.d
 | `/logout [anthropic\|opencode]` | Deletes the API key of that account (of every account without an argument) from the system keyring and restarts the agent. |
 | `/!<command> [args]`, `/! <command>` | Runs a [shell command](#shell-commands-) in the workspace. |
 | `/open @<path>` | Shows a workspace file in a modal ([Opening files](#opening-files-open-path)). |
-| `/mcp [list]` | A table of the MCP servers with their state, transport and what to do next. See [configuration.md](configuration.md#mcp). |
-| `/mcp tools\|restart\|enable\|disable\|login\|logout <name>` | A server's tools; reconnect it; turn it on or off for the session; OAuth login or logout. |
-| `/mcp trust <name>` | Approves a workspace MCP server and starts it. |
+| `/mcp` | Opens the [MCP servers manager](#mcp-servers-mcp): every server with its state, tools and log; add, edit, test, restart, log in, turn on or off or remove one, all live. In a terminal (`-p`) it prints the table instead. See [configuration.md](configuration.md#mcp-servers). |
+| `/mcp add`, `/mcp <name>`, `/mcp tools <name>` | The manager on its add form, on that server, or on that server's Tools tab. |
+| `/mcp test\|restart\|enable\|disable\|login\|logout\|trust\|remove <name>` | The manager does that to the server: connects once more and reports; reconnects it; turns it on or off (remembered for `mcp.json` servers); OAuth login or logout; approves a workspace server and starts it; asks before removing it from its `mcp.json`. |
 | `/plugin list` | Lists the plugins that declare capabilities, with their file, their capabilities and whether they are `approved` or `pending`. |
 | `/plugin trust <name>` | Approves the capabilities of plugin `<name>` and activates them immediately (see [Plugin capabilities and trust](#plugin-capabilities-and-trust)). |
 | `/implement <spec>`, `/implement resume` | Starts or resumes the implementation workflow for a Spec ([workflows.md](workflows.md#implementation-workflow)). |
@@ -167,7 +168,7 @@ You can redefine, add or remove mappings with `app.keymap.set` and `app.keymap.d
 | `/<name> <args>` | A command registered with `app.commands.register`. |
 | `/<dotted.action>` | Runs a builtin action, for example `/picker.files` or `/panel.tree`. |
 
-An unknown command shows `unknown command /x (use /help, /model, /theme, /mode, /permissions, /clear, /project, /login, /logout, /picker.files, /picker.grep, /modal, /q; /help lists every command)`.
+An unknown command shows `unknown command /x (use /help, /model, /theme, /mode, /permissions, /clear, /project, /login, /logout, /picker.files, /picker.grep, /modal, /q; /help lists every command)`. `/mcp` is a controller command, so it is not in that list.
 
 ### Shell commands (`/!`)
 
@@ -185,7 +186,7 @@ A **Shell** block shows the command, its exit status (`exit 0` in green, otherwi
 | 2 | Keys | The effective keymap: the defaults plus your `app.keymap.set` and `keymap.toml` mappings (minus the removed ones), with the leader resolved, the action, its description, its source (`default`, `global`, `workspace`, `global keymap.toml`, `workspace keymap.toml` or `plugin <name>`) and `overrides default` where a mapping replaced a builtin one; then the fixed keys of each panel, tagged with the panel and `fixed`. |
 | 3 | Tools | Every tool the agent has, grouped Built-in / Plugin / MCP, with its description, its effect (`read`, `write`, `execute`, `network`; `depends on input` for `run_command`) and its input schema (`Enter` expands it). |
 | 4 | Plugins | Each loaded plugin or config file: its file, layer (`global` or `workspace`), what it adds (tools, commands, keymaps, hooks), its capabilities and trust state (`approved`, `pending` with the `/plugin trust` command, or `no capabilities`) and its load problems. |
-| 5 | MCP servers | Name, transport, origin and state: `ready (N tools)`, `failed: …`, `starting`, `needs login` (with `/mcp login`), `disabled` (with `/mcp enable`), or held back because the workspace config is not trusted (with the `/mcp trust` command). |
+| 5 | MCP servers | Name, transport, origin and state: `ready (N tools)`, `failed: …`, `starting`, `needs login` (with `/mcp login`), `disabled` (with `/mcp enable`), or held back because the workspace config is not trusted (with the `/mcp trust` command). The [manager](#mcp-servers-mcp) shows the same, live. |
 | 6 | Models | Each role and the model it resolves to, the aliases, the `--model` override, the model of the next turn, the permission mode and the keys of `/permissions`. |
 | 7 | CLI | The flags of `crest`, generated from the command-line parser. |
 | 8 | Files & config | The workspace, the config files, the plugins directory, the session database, the trust stores and the startup problems. |
@@ -219,7 +220,7 @@ It follows the file tools' rules: a path outside the workspace (`..`, an absolut
 
 ### Prompt mode (the `+` button)
 
-A round `+` button at the start of the prompt opens a menu above it with the **mode** of the prompt (Chat, Research, Deep research, each with what it does) and two **inserts**: `@` (a workspace file) and `/` (a command), which type that character and open its completion. In the menu `Up`/`Down` choose, `Enter` picks and `Esc` closes it; any other key closes it and is typed.
+A round `+` button at the start of the prompt opens a menu above it with the **mode** of the prompt (Chat, Research, Deep research, each with what it does), two **inserts**: `@` (a workspace file) and `/` (a command), which type that character and open its completion, and under **Manage** the [MCP servers](#mcp-servers-mcp) manager, the same as `/mcp`. In the menu `Up`/`Down` choose, `Enter` picks and `Esc` closes it; any other key closes it and is typed.
 
 While the mode is not Chat a chip with its name and a `×` sits next to the button, and the empty prompt asks for a problem (`Describe the problem to research…`). Enter then sends `/research <text>` in Research and `/research --deep <text>` in Deep research, the same lines you can type; a line that starts with `/` or `!` is sent as typed, never wrapped. The history keeps what you typed. The mode stays until you change it back: the chip's `×`, `Backspace` in an empty prompt, or Chat in the menu return to Chat, and `Ctrl+G M` (`prompt.mode`) cycles Chat, Research, Deep research without the mouse. The button and the chip together are at most 160 px wide.
 
@@ -377,6 +378,23 @@ If crest cannot save a project rule (the file is not writable, or it has entries
 With no rules it says so (`No rules yet — answer s or p in an approval to add one`). If the project file has entries crest cannot read, the modal lists them and explains that crest will not rewrite the file until they are fixed: removing or promoting a project rule then fails with that reason, and the rules it could read still apply.
 
 The same dialog appears when the session reaches its spending cap (`app.opt.max_session_cost`). See [configuration.md](configuration.md#cost-and-spending-cap).
+
+#### MCP servers (`/mcp`)
+
+`/mcp`, `Ctrl+G S`, the **MCP servers** row of the prompt's `+` menu or the dock at the bottom of the full chats sidebar open the manager: on the left the servers under **Global** (`~/.config/crest`) and **This workspace** (`<workspace>/.crest`), each with a dot for its state and its tool count; on the right the chosen one with its state (`ready · 8 tools`, `starting`, `needs login`, `untrusted`, `failed`, `disabled`), its transport and layer, an **Enabled** switch, a banner when it needs you (a **Log in** button, **Trust and start** with the command it would run, the error and the last lines of stderr with **Retry**), the actions **Test**, **Restart**, **Log in again** / **Log out**, **Edit** and **Delete**, and three tabs: **Overview** (command and environment or URL and headers, secrets masked with a `show` link; effect, timeouts, the `mcp__<name>__<tool>` prefix and the file it is saved in), **Tools** (each one unfolds its arguments) and **Log** (what happened to it: connected, restarted, logged in, failed...). Everything applies live: nothing needs a restart.
+
+Servers declared in `init.lua` are listed read-only (an `init.lua` chip): edit them there. **Add server** (or `a`) and **Edit** open a form with the same fields `app.mcp.add` takes: name, local command (with arguments, environment and working directory) or remote URL (with headers and an optional OAuth client), where to save it (**Every project** writes `~/.config/crest/mcp.json`, **This workspace** writes `<workspace>/.crest/mcp.json` and approves it at once), the effect of its tools and its timeouts. **Test connection** connects it without saving; **Add and start** / **Save and restart** write the file and start it. A workspace `mcp.json` server that was not saved from the manager waits for `/mcp trust` like one from `.crest/init.lua`. See [configuration.md](configuration.md#mcpjson).
+
+| Key | Effect |
+| --- | --- |
+| `↑` / `↓`, `k` / `j`, `PageUp` / `PageDown`, `Home` / `End`, click | Chooses a server. |
+| `Tab` / `Shift+Tab` | Overview, Tools, Log. |
+| `a`, `e`, `d` | Adds a server; edits or deletes the chosen one (`d` asks first: `Enter` deletes, `Esc` keeps it). |
+| `t`, `r`, `l` | Tests the chosen server, restarts it, logs in (http with OAuth). |
+| `Space` | Turns the chosen server on or off (remembered in its `mcp.json`; for an `init.lua` server, until crest closes). |
+| `/`, `f`, `o` | Goes to the server filter; to the tools filter; unfolds a tool. `Enter` or `Esc` go back to the list. |
+| `Tab`, `Ctrl+Enter`, `Esc` (in the form) | Next field (`Shift+Tab` the previous); save and start; leave the form (the manager stays). |
+| `Esc` | Closes the manager. |
 
 ### Blocks
 
@@ -710,10 +728,10 @@ All paths are relative to the workspace. A path that leaves it, even through a s
 
 ## MCP servers and trust
 
-Servers are declared in Lua ([plugins.md](plugins.md#appmcp-mcp-servers)). Their tools appear as `mcp__<server>__<tool>` and go through the same approvals as everything else, according to the server's `effect`.
+Servers are declared in Lua ([plugins.md](plugins.md#appmcp-mcp-servers)) or saved by the [manager](#mcp-servers-mcp) in `mcp.json` next to each `init.lua` ([configuration.md](configuration.md#mcpjson)). Their tools appear as `mcp__<server>__<tool>` and go through the same approvals as everything else, according to the server's `effect`.
 
 - **Global config and plugins**: they start when crest opens.
-- **Workspace config** (`.crest/init.lua`): they **do not start** until you trust them, because running them means running a program or contacting a URL chosen by whoever wrote the repository. Until then you see the notice:
+- **Workspace config** (`.crest/init.lua`, or a `.crest/mcp.json` you did not write from the manager): they **do not start** until you trust them, because running them means running a program or contacting a URL chosen by whoever wrote the repository. Until then you see the notice:
 
   ```text
   workspace MCP server `tickets` not started: it would connect to https://tickets.example.com/mcp. If you trust it, start crest with `crest --trust-mcp tickets` (remembered for this workspace)
@@ -721,7 +739,7 @@ Servers are declared in Lua ([plugins.md](plugins.md#appmcp-mcp-servers)). Their
 
   To trust one:
   - `crest --trust-mcp tickets` approves it and starts it in this same run;
-  - `/mcp trust tickets`, from the window, approves it and starts it right away.
+  - `/mcp trust tickets`, or **Trust and start** in the manager, approves it and starts it right away.
 
   The approval is stored in `~/.local/share/crest/mcp-trust.json`, per workspace and with the exact transport (command, arguments, environment, URL, headers). If the repository changes the declaration, it becomes pending again. To revoke it, delete the entry from the file.
 - On startup, crest waits up to 5 s for the servers to be ready. One that fails or is slow is reported as a notice, and crest carries on without it.

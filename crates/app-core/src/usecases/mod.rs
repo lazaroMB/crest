@@ -10,6 +10,7 @@ pub mod compute;
 pub mod evidence;
 pub mod git_status;
 pub mod login;
+pub mod mcp_servers;
 pub mod model3d;
 pub mod open_file;
 pub mod organize;

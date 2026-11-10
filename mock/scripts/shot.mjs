@@ -4,14 +4,16 @@
 //   node scripts/shot.mjs approval "?chat=new&prompt=rename add to sum" 4000
 //   node scripts/shot.mjs palette "?chat=new" 1500 "/re"
 //   node scripts/shot.mjs tree "" 1500 "js:[...document.querySelectorAll('.mockbar__button')].find(b => b.textContent === 'tree').click()"
+//   node scripts/shot.mjs mcp "?mcp=github&tab=tools" 1500
 //
 // The last argument is typed into the prompt, or run in the page when it starts with "js:".
 // Writes shots/<name>.png and prints the page's console errors. Needs `npm run dev`.
+// CHROME=/usr/bin/chromium picks another browser (the default is macOS Chrome).
 
 import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 
-const CHROME = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const CHROME = process.env.CHROME ?? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const PORT = 9333;
 const [name = "shot", query = "", wait = "2000", keys = ""] = process.argv.slice(2);
 

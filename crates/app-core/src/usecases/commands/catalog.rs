@@ -382,10 +382,10 @@ pub const CATALOG: &[CommandInfo] = &[
     CommandInfo {
         name: "mcp",
         aliases: &[],
-        usage: "/mcp [tools|restart|enable|disable|login|logout|trust <name>]",
-        description: "List the MCP servers with their state, or show a server's tools, \
-                      restart, turn on or off, log in or out (OAuth) or approve one of the \
-                      workspace config",
+        usage: "/mcp [add | <name> | tools|test|restart|enable|disable|login|logout|trust|remove <name>]",
+        description: "Open the MCP servers manager: add, edit, test, restart, turn on or off, log \
+                      in or out (OAuth), approve or remove a server, all live; in a terminal, list \
+                      the servers with their state or show a server's tools",
         handler: Handler::Controller,
         group: CommandGroup::Workspace,
     },

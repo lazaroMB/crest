@@ -274,6 +274,8 @@ pub struct App {
     pub mcp_specs: Vec<McpServerSpec>,
     /// Store of approved workspace MCP servers, if there is one.
     pub mcp_trust_path: Option<PathBuf>,
+    /// The `mcp.json` files the MCP servers manager writes.
+    pub mcp_config: crate::mcp_config::McpConfigPaths,
     /// Capability declarations of the config and plugins.
     pub plugin_capabilities: Vec<PluginCapabilities>,
     /// The declarations granted now (`/plugin trust` adds to them).
@@ -520,6 +522,22 @@ pub async fn build_app(
     let config_sources = sources.clone();
     let (mut loaded, config_warnings) = startup::load_config(host, sources).await;
     warnings.extend(config_warnings);
+    // The servers the MCP servers manager saved, merged with `app.mcp`.
+    let mcp_config = crate::mcp_config::McpConfigPaths::from_sources(&config_sources);
+    let (json_global, json_workspace, json_warnings) = {
+        let paths = mcp_config.clone();
+        tokio::task::spawn_blocking(move || paths.load_all())
+            .await
+            .unwrap_or_default()
+    };
+    warnings.extend(json_warnings);
+    let (mcp_servers, merge_warnings) = application::usecases::mcp_servers::merge_layers(
+        std::mem::take(&mut loaded.mcp_servers),
+        json_global,
+        json_workspace,
+    );
+    loaded.mcp_servers = mcp_servers;
+    warnings.extend(merge_warnings);
     let (keymaps, keymap_warnings) =
         crate::keys::with_keymap_files(std::mem::take(&mut loaded.keymaps), &config_sources);
     loaded.keymaps = keymaps;
@@ -863,6 +881,7 @@ pub async fn build_app(
         themes,
         mcp_specs: loaded.mcp_servers,
         mcp_trust_path,
+        mcp_config,
         plugin_capabilities: loaded.plugin_capabilities,
         plugin_grants: Arc::new(Mutex::new(granted)),
         plugin_trust_path: plugin_trust.store,

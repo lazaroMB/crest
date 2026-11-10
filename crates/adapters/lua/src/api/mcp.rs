@@ -34,6 +34,7 @@ use std::collections::BTreeMap;
 
 use std::sync::Arc;
 
+use application::ports::mcp::invalid_server_name;
 use application::ports::plugin::{McpOAuthClient, McpServerSpec, McpTransport};
 use domain::permission::ToolEffect;
 use mlua::{Function, Lua, Table};
@@ -156,17 +157,6 @@ fn oauth(value: &Value, what: &str, problems: &mut Vec<String>) -> Option<McpOAu
     })
 }
 
-/// Why `name` cannot name a server, if it cannot. Tools are offered as
-/// `mcp__<server>__<tool>`, so `__` would make the name ambiguous.
-fn invalid_name(name: &str) -> Option<String> {
-    let valid_chars = name
-        .bytes()
-        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
-    (name.is_empty() || !valid_chars || name.contains("__")).then(|| {
-        format!("invalid MCP server name `{name}` (use letters, digits, `-` and single `_`)")
-    })
-}
-
 /// A non-empty string field; `Ok(None)` when absent.
 fn text<'a>(def: &'a Value, key: &str, what: &str) -> Result<Option<&'a str>, String> {
     match def.get(key) {
@@ -208,7 +198,7 @@ fn timeout_ms(value: &Value, what: &str, field: &str) -> Result<u64, String> {
 /// dropped with its problem.
 pub(crate) fn server(name: &str, def: &Value, problems: &mut Vec<String>) -> Option<McpServerSpec> {
     let what = format!("app.mcp.{name}");
-    if let Some(problem) = invalid_name(name) {
+    if let Some(problem) = invalid_server_name(name) {
         problems.push(problem);
         return None;
     }

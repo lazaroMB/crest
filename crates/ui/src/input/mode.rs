@@ -2,8 +2,9 @@
 //! or deep research) and the model of the menu of its button. What it looks
 //! like is in [`super::mode_view`].
 //!
-//! The button opens a menu above the prompt with the modes and two inserts
-//! (`@` a workspace file, `/` a command). In the menu `Up`/`Down` choose,
+//! The button opens a menu above the prompt with the modes, two inserts
+//! (`@` a workspace file, `/` a command) and the MCP servers manager. In
+//! the menu `Up`/`Down` choose,
 //! `Enter` picks and `Esc` closes it; any other key closes it and is typed.
 //! `prompt.mode` ([`PROMPT_MODE_ACTION`]) cycles the modes from the
 //! keyboard, and typing `@` or `/` does what the inserts do.
@@ -14,7 +15,7 @@
 use application_core::keymap::{Key, KeyCode, Modifiers};
 use gpui::{Context, Window};
 
-use super::{InputView, placeholder_with};
+use super::{InputEvent, InputView, placeholder_with};
 
 /// Action of `<leader>M`: cycles the prompt mode.
 pub const PROMPT_MODE_ACTION: &str = "prompt.mode";
@@ -117,15 +118,18 @@ pub enum MenuEntry {
     Mode(ChatMode),
     /// Type this character in the prompt, which opens its completion.
     Insert(char),
+    /// Open the MCP servers manager (`/mcp`).
+    Mcp,
 }
 
-/// The rows of the menu: the modes, then the inserts.
-pub const MENU: [MenuEntry; 5] = [
+/// The rows of the menu: the modes, the inserts, then the manager.
+pub const MENU: [MenuEntry; 6] = [
     MenuEntry::Mode(ChatMode::Chat),
     MenuEntry::Mode(ChatMode::Research),
     MenuEntry::Mode(ChatMode::Deep),
     MenuEntry::Insert('@'),
     MenuEntry::Insert('/'),
+    MenuEntry::Mcp,
 ];
 
 impl MenuEntry {
@@ -137,6 +141,7 @@ impl MenuEntry {
             Self::Mode(mode) => (mode.label(), mode.hint()),
             Self::Insert('@') => ("File from the workspace", "@"),
             Self::Insert(_) => ("Command", "/"),
+            Self::Mcp => ("MCP servers", "/mcp"),
         }
     }
 }
@@ -231,6 +236,7 @@ impl InputView {
         match entry {
             MenuEntry::Mode(mode) => self.set_chat_mode(mode, window, cx),
             MenuEntry::Insert(c) => self.insert_text(&c.to_string(), window, cx),
+            MenuEntry::Mcp => cx.emit(InputEvent::Command("mcp".into())),
         }
     }
 }
@@ -260,7 +266,7 @@ mod tests {
     }
 
     #[test]
-    fn the_modes_cycle_and_the_menu_lists_three_modes_and_two_inserts() {
+    fn the_modes_cycle_and_the_menu_lists_the_modes_the_inserts_and_the_manager() {
         let cycle = ChatMode::ALL.map(ChatMode::next);
         assert_eq!(cycle, [ChatMode::Research, ChatMode::Deep, ChatMode::Chat]);
         assert_eq!(ChatMode::default(), ChatMode::Chat);
@@ -271,7 +277,11 @@ mod tests {
         );
         assert_eq!(
             rows[3..],
-            [("File from the workspace", "@"), ("Command", "/")]
+            [
+                ("File from the workspace", "@"),
+                ("Command", "/"),
+                ("MCP servers", "/mcp")
+            ]
         );
     }
 
@@ -282,7 +292,7 @@ mod tests {
         assert_eq!(control.press(&key(KeyCode::Down)), Press::Pass, "closed");
         control.toggle();
         assert_eq!(control.press(&key(KeyCode::Up)), Press::Taken);
-        assert_eq!(control.menu, Some(4), "wraps around");
+        assert_eq!(control.menu, Some(5), "wraps around");
         for _ in 0..3 {
             control.press(&key(KeyCode::Down));
         }

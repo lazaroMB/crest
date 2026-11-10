@@ -120,6 +120,8 @@ pub enum ChatsEvent {
     /// The menu was cancelled (`Esc`, **Cancel**): the prompt takes the
     /// focus back from the rename field.
     Dismissed,
+    /// The dock at the bottom: open the MCP servers manager.
+    Mcp,
 }
 
 /// What a key asks the window to do with the chats (the keymap's `chat.*`
@@ -253,6 +255,8 @@ pub struct ChatsPanel {
     current_id: Option<String>,
     /// Chats with a turn running, by id: whether they wait on the user.
     activity: HashMap<String, bool>,
+    /// The MCP servers in a few words, for the dock at the bottom.
+    mcp: crate::mcp::McpSummary,
     action: Option<Menu>,
     /// The Archived section is unfolded.
     archived_open: bool,
@@ -308,6 +312,7 @@ impl ChatsPanel {
             current_project: None,
             current_id,
             activity: HashMap::new(),
+            mcp: crate::mcp::McpSummary::default(),
             action: None,
             archived_open: false,
             rename_input: None,
@@ -593,6 +598,19 @@ impl ChatsPanel {
 
     /// Shows on the row of the chat `id` that a turn runs (`busy`) and
     /// whether it waits on the user (`waiting`: an approval or a form).
+    /// Shows `summary` in the dock at the bottom of the full sidebar.
+    pub fn set_mcp(&mut self, summary: crate::mcp::McpSummary, cx: &mut Context<Self>) {
+        if self.mcp != summary {
+            self.mcp = summary;
+            cx.notify();
+        }
+    }
+
+    /// The MCP summary shown.
+    pub fn mcp(&self) -> crate::mcp::McpSummary {
+        self.mcp
+    }
+
     pub fn set_activity(&mut self, id: &str, busy: bool, waiting: bool, cx: &mut Context<Self>) {
         if busy {
             self.activity.insert(id.to_owned(), waiting);

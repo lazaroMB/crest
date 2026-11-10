@@ -719,6 +719,11 @@ const DEFAULTS: &[(&str, &str, &str)] = &[
         "List the permission rules of this session and project (remove, promote)",
     ),
     (
+        "<leader>S",
+        "mcp.open",
+        "Manage the MCP servers (add, edit, test, log in, turn on or off)",
+    ),
+    (
         "<leader>W",
         "project.switch",
         "Close this project and choose another one",

@@ -550,6 +550,13 @@ impl Workbench {
                 }
             }
             SessionEvent::Tour => cx.notify(),
+            SessionEvent::Mcp(summary) => {
+                // The dock follows the shown project's servers.
+                if self.session() == Some(session) {
+                    self.chats
+                        .update(cx, |chats, cx| chats.set_mcp(*summary, cx));
+                }
+            }
         }
     }
 
@@ -590,6 +597,13 @@ impl Workbench {
                 self.organize(Organize::Project { id, op }, window, cx);
             }
             ChatsEvent::Pick(pick) => self.pick_directory(pick, window, cx),
+            ChatsEvent::Mcp => {
+                if let Some(session) = self.session().cloned() {
+                    session.update(cx, |session, cx| {
+                        session.open_mcp(crate::mcp::McpOpen::default(), window, cx);
+                    });
+                }
+            }
             ChatsEvent::Dismissed => {
                 if let Some(session) = self.session().cloned() {
                     session.update(cx, |session, cx| session.focus_input(window, cx));
@@ -1506,6 +1520,44 @@ mod tests {
         view.read_with(cx, |view, _| view.chats.clone())
             .update(cx, |chats, cx| chats.set_width(SidebarWidth::Full, cx));
         cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn the_mcp_dock_shows_the_summary_and_opens_the_manager(cx: &mut TestAppContext) {
+        use crate::mcp::McpSummary;
+        let (view, cx) = workbench(cx);
+        open_full(&view, "/home/u/proj", cx);
+        draw(&view, cx);
+        cx.run_until_parked();
+        assert!(
+            cx.debug_bounds("mcp-dock").is_some(),
+            "the dock sits under the list"
+        );
+        let chats = view.read_with(cx, |view, _| view.chats.clone());
+        assert_eq!(chats.read_with(cx, |c, _| c.mcp()), McpSummary::default());
+        chats.update(cx, |chats, cx| {
+            chats.set_mcp(
+                McpSummary {
+                    total: 3,
+                    ready: 2,
+                    failed: 1,
+                    ..McpSummary::default()
+                },
+                cx,
+            );
+        });
+        draw(&view, cx);
+        cx.run_until_parked();
+        let button = cx
+            .debug_bounds("mcp-dock-button")
+            .expect("the dock's button");
+        cx.simulate_click(button.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        let session = shown(&view, cx);
+        assert!(
+            session.read_with(cx, |s, cx| s.mcp_view(cx).is_some()),
+            "a click opens the manager"
+        );
     }
 
     #[gpui::test]

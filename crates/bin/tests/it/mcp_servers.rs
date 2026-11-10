@@ -84,9 +84,38 @@ struct Fixture {
 /// Builds the app with `global` and `workspace` as the two `init.lua`
 /// files, `answers` on the simulated stdin and `trust_mcp` on the command
 /// line.
+/// The config files of a fixture: the two `init.lua` and, when given, the
+/// `mcp.json` next to each.
+#[derive(Default)]
+struct Files<'a> {
+    global: &'a str,
+    workspace: &'a str,
+    global_json: Option<&'a str>,
+    workspace_json: Option<&'a str>,
+}
+
 async fn fixture(
     global: &str,
     workspace: &str,
+    answers: &str,
+    trust_mcp: &[&str],
+    script: Vec<ScriptedResponse>,
+) -> Fixture {
+    fixture_files(
+        Files {
+            global,
+            workspace,
+            ..Files::default()
+        },
+        answers,
+        trust_mcp,
+        script,
+    )
+    .await
+}
+
+async fn fixture_files(
+    files: Files<'_>,
     answers: &str,
     trust_mcp: &[&str],
     script: Vec<ScriptedResponse>,
@@ -98,8 +127,14 @@ async fn fixture(
     std::fs::create_dir_all(&config_dir).unwrap();
     let global_init = config_dir.join("init.lua");
     let ws_init = ws.join(".crest").join("init.lua");
-    std::fs::write(&global_init, global).unwrap();
-    std::fs::write(&ws_init, workspace).unwrap();
+    std::fs::write(&global_init, files.global).unwrap();
+    std::fs::write(&ws_init, files.workspace).unwrap();
+    if let Some(json) = files.global_json {
+        std::fs::write(config_dir.join("mcp.json"), json).unwrap();
+    }
+    if let Some(json) = files.workspace_json {
+        std::fs::write(ws.join(".crest").join("mcp.json"), json).unwrap();
+    }
     let trust_file = dir.path().join("data").join("mcp-trust.json");
 
     let output = Buffer::default();
@@ -304,4 +339,112 @@ async fn a_slow_server_offers_its_tools_once_ready() {
         notices.0.lock().unwrap()
     );
     servers.unwrap().manager.shutdown().await;
+}
+
+/// `mcp.json` text declaring the echo server as each of `names`.
+fn echo_json(names: &[&str]) -> String {
+    let servers: serde_json::Map<String, serde_json::Value> = names
+        .iter()
+        .map(|name| {
+            (
+                (*name).to_owned(),
+                json!({ "command": echo_server_path().display().to_string() }),
+            )
+        })
+        .collect();
+    json!({ "servers": servers }).to_string()
+}
+
+#[tokio::test]
+async fn servers_from_mcp_json_are_loaded_and_merged() {
+    use application::ports::plugin::{ConfigOrigin, McpSource};
+    // `shadow` is in the global mcp.json and in the global init.lua: Lua
+    // wins and says so; `echo` only in mcp.json.
+    let lua = format!(
+        "app.mcp.add(\"shadow\", {{ command = {}, effect = \"read\" }})\n",
+        lua_string(&echo_server_path())
+    );
+    let fx = fixture_files(
+        Files {
+            global: &lua,
+            global_json: Some(&echo_json(&["echo", "shadow"])),
+            ..Files::default()
+        },
+        "",
+        &[],
+        Vec::new(),
+    )
+    .await;
+    let specs = &fx.app.mcp_specs;
+    let names: Vec<_> = specs.iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, ["echo", "shadow"], "{specs:?}");
+    assert_eq!(specs[0].source, McpSource::Json);
+    assert_eq!(specs[0].origin, ConfigOrigin::Global);
+    assert_eq!(
+        specs[1].source,
+        McpSource::Lua,
+        "init.lua wins over mcp.json"
+    );
+    assert_eq!(specs[1].effect, domain::permission::ToolEffect::Read);
+    assert!(
+        fx.app
+            .warnings
+            .iter()
+            .any(|w| w.contains("`shadow`") && w.contains("shadowed")),
+        "{:?}",
+        fx.app.warnings
+    );
+    let names = tool_names(&fx.app);
+    assert!(names.iter().any(|n| n == "mcp__echo__add"), "{names:?}");
+    assert!(names.iter().any(|n| n == "mcp__shadow__add"), "{names:?}");
+    assert_eq!(
+        fx.app.mcp_config.global.as_deref(),
+        Some(fx._dir.path().join("config").join("mcp.json").as_path())
+    );
+}
+
+#[tokio::test]
+async fn a_json_workspace_server_waits_for_trust_too() {
+    let fx = fixture_files(
+        Files {
+            workspace_json: Some(&echo_json(&["echo"])),
+            ..Files::default()
+        },
+        "",
+        &[],
+        Vec::new(),
+    )
+    .await;
+    let mcp = fx.app.mcp.as_ref().unwrap();
+    assert_eq!(mcp.statuses[0].state, McpServerState::Untrusted);
+    assert!(
+        fx.app.warnings[0].contains("crest --trust-mcp echo"),
+        "{:?}",
+        fx.app.warnings
+    );
+    assert!(!tool_names(&fx.app).iter().any(|n| n.starts_with("mcp__")));
+}
+
+#[tokio::test]
+async fn a_corrupt_mcp_json_is_a_warning_not_a_failure() {
+    let fx = fixture_files(
+        Files {
+            global_json: Some("{ not json"),
+            ..Files::default()
+        },
+        "",
+        &[],
+        Vec::new(),
+    )
+    .await;
+    assert!(
+        fx.app
+            .warnings
+            .iter()
+            .any(|w| w.contains("cannot read the MCP servers")),
+        "{:?}",
+        fx.app.warnings
+    );
+    assert!(fx.app.mcp.is_some(), "a manager runs even with no server");
+    assert!(fx.app.mcp.as_ref().unwrap().statuses.is_empty());
 }

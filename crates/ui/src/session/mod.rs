@@ -80,6 +80,7 @@ use application_core::ports::fs::FileSystemPort;
 use application_core::ports::search::{ContentSearchPort, FileSearchPort};
 use application_core::usecases::cancel::CancelToken;
 use application_core::usecases::commands::Command;
+use application_core::usecases::mcp_servers::{McpAction, McpDraft, McpListing};
 use application_core::usecases::permissions::RuleListing;
 use domain::block::Block;
 use domain::conversation::{ImageAttachment, StopReason};
@@ -89,6 +90,7 @@ use domain::permission::{PermissionMode, PermissionRule};
 use domain::workspace::WorkspacePath;
 use futures::channel::mpsc::UnboundedReceiver;
 use futures::future::BoxFuture;
+use futures::stream::BoxStream;
 use futures::{FutureExt as _, StreamExt as _};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, InteractiveElement as _,
@@ -138,6 +140,8 @@ pub const THEME_ACTION: &str = "theme.pick";
 pub const MODE_ACTION: &str = "mode.pick";
 /// Action of `<leader>A` and `/permissions`.
 pub const PERMISSIONS_ACTION: &str = "permissions.open";
+/// Action of `<leader>S` and `/mcp`.
+pub const MCP_ACTION: &str = "mcp.open";
 /// Action of `<leader>W`.
 pub const PROJECT_ACTION: &str = "project.switch";
 /// Action of `<leader>O`.
@@ -388,6 +392,53 @@ pub trait SessionController: Send + Sync {
     fn help(&self) -> BoxFuture<'static, HelpSnapshot> {
         futures::future::ready(HelpSnapshot::default()).boxed()
     }
+
+    /// Every MCP server with its state, config, tools and log, for the
+    /// MCP servers manager. The default has none and cannot edit.
+    fn mcp_servers(&self) -> BoxFuture<'static, McpListing> {
+        futures::future::ready(McpListing::default()).boxed()
+    }
+
+    /// Does `action` to MCP server `name`; `Ok` is what to show (such as
+    /// `connected in 240 ms · 8 tools`).
+    fn mcp_act(
+        &self,
+        name: String,
+        action: McpAction,
+    ) -> BoxFuture<'static, Result<String, String>> {
+        let _ = (name, action);
+        futures::future::ready(Err("this session cannot manage MCP servers".to_owned())).boxed()
+    }
+
+    /// Saves `draft` to its `mcp.json` (replacing `previous` when editing)
+    /// and starts it.
+    fn mcp_save(
+        &self,
+        previous: Option<String>,
+        draft: McpDraft,
+    ) -> BoxFuture<'static, Result<String, String>> {
+        let _ = (previous, draft);
+        futures::future::ready(Err("this session cannot manage MCP servers".to_owned())).boxed()
+    }
+
+    /// Removes MCP server `name` from its `mcp.json` and stops it.
+    fn mcp_remove(&self, name: String) -> BoxFuture<'static, Result<String, String>> {
+        let _ = name;
+        futures::future::ready(Err("this session cannot manage MCP servers".to_owned())).boxed()
+    }
+
+    /// Connects `draft` once without saving it ("Test connection").
+    fn mcp_test(&self, draft: McpDraft) -> BoxFuture<'static, Result<String, String>> {
+        let _ = draft;
+        futures::future::ready(Err("this session cannot manage MCP servers".to_owned())).boxed()
+    }
+
+    /// Yields once per state or tool change of an MCP server; the open
+    /// manager reloads [`mcp_servers`](Self::mcp_servers) on each. The
+    /// default never yields.
+    fn mcp_changes(&self) -> BoxStream<'static, ()> {
+        futures::stream::pending().boxed()
+    }
 }
 
 /// The block that shows a prompt sent by the user in the timeline.
@@ -515,6 +566,8 @@ pub enum SessionEvent {
     },
     /// The welcome tour opened, moved or closed. The window draws it.
     Tour,
+    /// The MCP servers changed: the sidebar's dock shows this summary.
+    Mcp(crate::mcp::McpSummary),
 }
 
 /// The session: owns the views of the main window and the turn in flight.
@@ -562,6 +615,8 @@ pub struct Session {
     quit_asked_at: Option<Instant>,
     /// `m` of the `/permissions` modal (replaced when it opens again).
     permissions_events: Option<Subscription>,
+    /// The changes of the `/mcp` modal (replaced when it opens again).
+    mcp_events: Option<Subscription>,
     /// The welcome tour step on screen, if it is open.
     tour: Option<crate::tour::Step>,
     /// Prompt text put aside while the commands step shows `/`.
@@ -571,6 +626,8 @@ pub struct Session {
     _git_timer: Task<()>,
     _events: Task<()>,
     _forms: Option<Task<()>>,
+    /// Follows the controller's MCP changes for the dock and the manager.
+    _mcp_changes: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -788,14 +845,17 @@ impl Session {
             sidebar: crate::chats::SidebarWidth::default(),
             quit_asked_at: None,
             permissions_events: None,
+            mcp_events: None,
             tour: None,
             tour_saved_prompt: None,
             tutorial_seen,
             _git_timer: Self::git_timer(cx),
             _events: Self::consume(events, cx),
             _forms: forms.map(|forms| Self::listen_forms(forms, window, cx)),
+            _mcp_changes: None,
             _subscriptions: subscriptions,
         };
+        this._mcp_changes = Some(this.watch_mcp(cx));
         this.load_commands(window, cx);
         this.refresh_git(cx);
         if resume_pending {

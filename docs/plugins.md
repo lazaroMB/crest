@@ -486,11 +486,12 @@ app.mcp.add("git", { command = "mcp-git", effect = "read", timeout = 30 })
 - The name can only contain letters, digits, and single `-` and `_` (not `__`), because the tools are exposed as `mcp__<server>__<tool>`.
 - Tool names are adapted for every model provider: characters other than letters, digits, `-` and `_` become `_`, and long names are shortened with a hash so `mcp__<server>__<tool>` fits in 64 characters. Input schemas are adapted too (a top-level `anyOf`/`oneOf`/`allOf` is merged into one object and local `$ref`s are inlined). `/mcp tools <name>` shows the names the model sees.
 - If one file uses both forms with the same name, `app.mcp.add` wins.
+- The same fields, in JSON, are what the MCP servers manager of the window writes to `mcp.json` next to each `init.lua` ([configuration.md](configuration.md#mcpjson)); a server declared in `init.lua` is read-only there, and `init.lua` wins over the `mcp.json` beside it.
 
 **Security**:
 
 - Servers from the global config and from plugins start when crest opens.
-- Workspace servers do not start until the user approves them with `crest --trust-mcp <name>` or `/mcp trust <name>` (see [usage.md](usage.md#mcp-servers-and-trust)). The approval is required again if the declaration changes.
+- Workspace servers (from `.crest/init.lua` or a `.crest/mcp.json` that came with the repository) do not start until the user approves them with `crest --trust-mcp <name>`, `/mcp trust <name>` or **Trust and start** in the manager, which start them right away (see [usage.md](usage.md#mcp-servers-and-trust)). The approval is required again if the declaration changes; a workspace server saved from the manager is approved as it is saved.
 
 ## Capabilities
 

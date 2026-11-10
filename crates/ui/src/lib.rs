@@ -15,6 +15,7 @@ pub mod input;
 pub mod keyscroll;
 pub mod kit;
 pub mod login;
+pub mod mcp;
 pub mod modal;
 pub mod permissions;
 pub mod picker;
