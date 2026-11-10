@@ -65,11 +65,7 @@ impl InputView {
             })
             .hover(move |style| style.text_color(foreground).border_color(accent))
             .child("+")
-            .on_click(cx.listener(|this, _, window, cx| {
-                this.mode_control.toggle();
-                this.focus(window, cx);
-                cx.notify();
-            }))
+            .on_click(cx.listener(|this, _, window, cx| this.toggle_mode_menu(window, cx)))
             .into_any_element()
     }
 

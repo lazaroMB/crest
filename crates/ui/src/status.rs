@@ -319,6 +319,11 @@ impl StatusView {
         &mut self.state
     }
 
+    /// The information mark this bar hosts, once set.
+    pub fn info(&self) -> Option<&Entity<InfoView>> {
+        self.info.as_ref()
+    }
+
     /// Sets the information mark this bar hosts.
     pub fn set_info(&mut self, info: Entity<InfoView>, cx: &mut Context<Self>) {
         self.info = Some(info);
@@ -667,7 +672,10 @@ mod tests {
             gpui::size(gpui::px(1000.), gpui::px(24.)),
             |_, _| div().size_full().child(view.clone()),
         );
-        view.read_with(cx, |view, _| assert!(view.state.notice.is_some()));
+        view.read_with(cx, |view, _| {
+            assert!(view.state.notice.is_some());
+            assert!(view.info().is_none(), "no mark until the session sets one");
+        });
         cx.executor().advance_clock(NOTICE_TTL);
         cx.run_until_parked();
         view.read_with(cx, |view, _| {

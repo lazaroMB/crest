@@ -214,6 +214,14 @@ impl InputView {
         cx.notify();
     }
 
+    /// Opens the menu of the `+` button, or closes it: what a click on the
+    /// button does. The prompt keeps the focus.
+    pub fn toggle_mode_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.mode_control.toggle();
+        self.focus(window, cx);
+        cx.notify();
+    }
+
     /// `prompt.mode`: the next mode.
     pub(super) fn cycle_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.set_chat_mode(self.mode_control.mode.next(), window, cx);

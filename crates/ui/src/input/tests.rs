@@ -979,6 +979,15 @@ fn the_x_backspace_and_chat_in_the_menu_go_back_to_chat(cx: &mut TestAppContext)
 }
 
 #[gpui::test]
+fn toggle_mode_menu_opens_and_closes_the_menu_like_the_button(cx: &mut TestAppContext) {
+    let (view, cx, _events) = input(cx);
+    view.update_in(cx, |view, window, cx| view.toggle_mode_menu(window, cx));
+    assert!(view.read_with(cx, |view, _| view.mode_menu_open()));
+    view.update_in(cx, |view, window, cx| view.toggle_mode_menu(window, cx));
+    assert!(view.read_with(cx, |view, _| !view.mode_menu_open()));
+}
+
+#[gpui::test]
 fn the_button_opens_a_keyboard_menu_of_modes_and_inserts(cx: &mut TestAppContext) {
     let (view, cx, _events) = input(cx);
     draw(&view, 1280., cx);
