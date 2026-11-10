@@ -520,6 +520,15 @@ impl McpManager {
         Ok(self.server(name)?.stderr.lines())
     }
 
+    /// Adds `text` to the log of server `name` (what the window did to
+    /// it, such as a test).
+    pub fn note(&self, name: &str, level: NoticeLevel, text: impl Into<String>) {
+        if let Ok(server) = self.server(name) {
+            server.note(level, text);
+            bump(&self.changes);
+        }
+    }
+
     /// Whether an OAuth token is stored for server `name`.
     ///
     /// # Errors

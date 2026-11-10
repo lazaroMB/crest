@@ -80,6 +80,7 @@ use application_core::ports::fs::FileSystemPort;
 use application_core::ports::search::{ContentSearchPort, FileSearchPort};
 use application_core::usecases::cancel::CancelToken;
 use application_core::usecases::commands::Command;
+use application_core::usecases::mcp_servers::{McpAction, McpDraft, McpListing};
 use application_core::usecases::permissions::RuleListing;
 use domain::block::Block;
 use domain::conversation::{ImageAttachment, StopReason};
@@ -89,6 +90,7 @@ use domain::permission::{PermissionMode, PermissionRule};
 use domain::workspace::WorkspacePath;
 use futures::channel::mpsc::UnboundedReceiver;
 use futures::future::BoxFuture;
+use futures::stream::BoxStream;
 use futures::{FutureExt as _, StreamExt as _};
 use gpui::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, InteractiveElement as _,
@@ -387,6 +389,53 @@ pub trait SessionController: Send + Sync {
     /// paths. Rows it leaves empty are filled in by the session.
     fn help(&self) -> BoxFuture<'static, HelpSnapshot> {
         futures::future::ready(HelpSnapshot::default()).boxed()
+    }
+
+    /// Every MCP server with its state, config, tools and log, for the
+    /// MCP servers manager. The default has none and cannot edit.
+    fn mcp_servers(&self) -> BoxFuture<'static, McpListing> {
+        futures::future::ready(McpListing::default()).boxed()
+    }
+
+    /// Does `action` to MCP server `name`; `Ok` is what to show (such as
+    /// `connected in 240 ms · 8 tools`).
+    fn mcp_act(
+        &self,
+        name: String,
+        action: McpAction,
+    ) -> BoxFuture<'static, Result<String, String>> {
+        let _ = (name, action);
+        futures::future::ready(Err("this session cannot manage MCP servers".to_owned())).boxed()
+    }
+
+    /// Saves `draft` to its `mcp.json` (replacing `previous` when editing)
+    /// and starts it.
+    fn mcp_save(
+        &self,
+        previous: Option<String>,
+        draft: McpDraft,
+    ) -> BoxFuture<'static, Result<String, String>> {
+        let _ = (previous, draft);
+        futures::future::ready(Err("this session cannot manage MCP servers".to_owned())).boxed()
+    }
+
+    /// Removes MCP server `name` from its `mcp.json` and stops it.
+    fn mcp_remove(&self, name: String) -> BoxFuture<'static, Result<String, String>> {
+        let _ = name;
+        futures::future::ready(Err("this session cannot manage MCP servers".to_owned())).boxed()
+    }
+
+    /// Connects `draft` once without saving it ("Test connection").
+    fn mcp_test(&self, draft: McpDraft) -> BoxFuture<'static, Result<String, String>> {
+        let _ = draft;
+        futures::future::ready(Err("this session cannot manage MCP servers".to_owned())).boxed()
+    }
+
+    /// Yields once per state or tool change of an MCP server; the open
+    /// manager reloads [`mcp_servers`](Self::mcp_servers) on each. The
+    /// default never yields.
+    fn mcp_changes(&self) -> BoxStream<'static, ()> {
+        futures::stream::pending().boxed()
     }
 }
 

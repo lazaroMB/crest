@@ -55,6 +55,16 @@ pub struct HelpSource {
 }
 
 impl HelpSource {
+    /// This source with the MCP servers as they are now (the manager adds
+    /// and edits them while crest runs).
+    #[must_use]
+    pub fn with_mcp_specs(&self, mcp_specs: Vec<McpServerSpec>) -> Self {
+        Self {
+            mcp_specs,
+            ..self.clone()
+        }
+    }
+
     /// What the help of `app` shows.
     #[must_use]
     pub fn of(app: &App) -> Self {
