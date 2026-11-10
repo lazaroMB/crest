@@ -11,4 +11,4 @@ mod manager;
 mod oauth;
 
 pub use connect::SCRUBBED_ENV_VARS;
-pub use manager::{McpEntry, McpManager, McpOptions, ShowLoginUrl};
+pub use manager::{McpEntry, McpManager, McpOptions, ProbeReport, ShowLoginUrl, probe};

@@ -144,3 +144,53 @@ async fn a_missing_variable_fails_before_connecting() {
         "{message}"
     );
 }
+
+#[tokio::test]
+async fn logged_in_is_reported_and_a_waiting_login_can_be_cancelled() {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use application_core::ports::mcp::McpError;
+    use application_core::ports::plugin::McpOAuthClient;
+
+    // A listener that accepts but never answers: discovery hangs, so the
+    // login waits until it is cancelled.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+    let spec = McpServerSpec::new(
+        "stuck",
+        McpTransport::Http {
+            url,
+            headers: BTreeMap::new(),
+            oauth: Some(McpOAuthClient::default()),
+        },
+    );
+    let options = adapter_mcp::McpOptions {
+        connect_timeout: Duration::from_millis(500),
+        ..adapter_mcp::McpOptions::default()
+    };
+    let manager = Arc::new(McpManager::start_with(vec![spec], options));
+    manager.wait_ready().await;
+    assert!(!manager.logged_in("stuck").unwrap());
+
+    let waiting = Arc::clone(&manager);
+    let login = tokio::spawn(async move { waiting.login("stuck").await });
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(manager.cancel_login("stuck"), "a login was waiting");
+    let outcome = login.await.unwrap();
+    match outcome {
+        Err(McpError::Unavailable { message, .. }) => {
+            assert!(message.contains("cancelled"), "{message}");
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+    assert!(!manager.cancel_login("stuck"), "nothing waits any more");
+    let texts: Vec<String> = manager
+        .log("stuck")
+        .unwrap()
+        .into_iter()
+        .map(|e| e.text)
+        .collect();
+    assert!(texts.contains(&"login cancelled".to_owned()), "{texts:?}");
+    drop(listener);
+}

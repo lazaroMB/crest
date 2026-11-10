@@ -70,6 +70,16 @@ impl StderrTail {
             .unwrap_or_else(PoisonError::into_inner)
             .clear();
     }
+
+    /// The kept lines, oldest first.
+    pub(crate) fn lines(&self) -> Vec<String> {
+        self.0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .cloned()
+            .collect()
+    }
 }
 
 /// How crest introduces itself, and where `tools/list_changed` goes.

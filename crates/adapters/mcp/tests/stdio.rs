@@ -232,3 +232,146 @@ async fn untrusted_servers_wait_for_trust() {
         McpServerState::Ready { tool_count: 2 }
     );
 }
+
+#[tokio::test]
+async fn servers_are_added_replaced_and_removed_live() {
+    let manager = McpManager::start(Vec::new());
+    let mut changes = manager.subscribe();
+    assert!(manager.servers().await.is_empty());
+
+    manager
+        .add(McpEntry {
+            spec: echo_spec("echo"),
+            trusted: true,
+        })
+        .unwrap();
+    assert!(
+        changes.has_changed().unwrap(),
+        "an added server is announced"
+    );
+    changes.mark_unchanged();
+    manager.wait_ready().await;
+    assert_eq!(
+        manager.servers().await[0].state,
+        McpServerState::Ready { tool_count: 2 }
+    );
+    assert_eq!(manager.list_tools().await.unwrap().len(), 2);
+    assert!(matches!(
+        manager.add(McpEntry {
+            spec: echo_spec("echo"),
+            trusted: true
+        }),
+        Err(McpError::Unavailable { .. })
+    ));
+    assert!(
+        manager
+            .add(McpEntry {
+                spec: echo_spec("a__b"),
+                trusted: true
+            })
+            .is_err()
+    );
+
+    manager
+        .replace(McpEntry {
+            spec: echo_with("echo", &["--delay-ms", "300"]),
+            trusted: true,
+        })
+        .await
+        .unwrap();
+    assert!(
+        changes.has_changed().unwrap(),
+        "a replaced server is announced"
+    );
+    changes.mark_unchanged();
+    assert_eq!(manager.servers().await[0].state, McpServerState::Starting);
+    assert_eq!(
+        manager.specs()[0].transport,
+        echo_with("echo", &["--delay-ms", "300"]).transport
+    );
+    manager.wait_ready().await;
+    assert_eq!(
+        manager.servers().await[0].state,
+        McpServerState::Ready { tool_count: 2 }
+    );
+    let log = manager.log("echo").unwrap();
+    assert!(log[0].text.starts_with("connected"), "{log:?}");
+    assert_eq!(log[1].text, "config saved · restarting");
+
+    manager.remove("echo").await.unwrap();
+    assert!(
+        changes.has_changed().unwrap(),
+        "a removed server is announced"
+    );
+    assert!(manager.servers().await.is_empty());
+    assert!(manager.list_tools().await.unwrap().is_empty());
+    assert!(manager.spec("echo").is_none());
+    assert!(matches!(
+        manager.remove("echo").await,
+        Err(McpError::UnknownServer(_))
+    ));
+}
+
+#[tokio::test]
+async fn the_log_records_each_change() {
+    let manager = McpManager::start(vec![echo_spec("echo")]);
+    manager.wait_ready().await;
+    manager.restart("echo").await.unwrap();
+    manager.wait_ready().await;
+    manager.set_enabled("echo", false).await.unwrap();
+    manager.set_enabled("echo", true).await.unwrap();
+    manager.wait_ready().await;
+    let texts: Vec<String> = manager
+        .log("echo")
+        .unwrap()
+        .into_iter()
+        .map(|e| e.text)
+        .collect();
+    assert_eq!(
+        texts,
+        [
+            "connected · 2 tools",
+            "restarting",
+            "enabled",
+            "disabled",
+            "connected · 2 tools",
+            "restarting",
+            "connected · 2 tools",
+        ],
+        "newest first"
+    );
+    assert!(
+        !manager.logged_in("echo").unwrap(),
+        "stdio servers never log in"
+    );
+    assert!(manager.stderr("echo").unwrap().is_empty());
+    assert!(manager.log("nope").is_err());
+    assert!(!manager.cancel_login("echo"), "nothing to cancel");
+}
+
+#[tokio::test]
+async fn probe_connects_without_registering() {
+    use adapter_mcp::probe;
+    let options = McpOptions::default();
+    let report = probe(&echo_spec("probe"), &options).await.unwrap();
+    assert_eq!(report.tool_count, 2);
+    assert!(report.elapsed.as_millis() > 0);
+
+    let err = probe(&echo_with("crash", &["--crash"]), &options)
+        .await
+        .unwrap_err();
+    assert!(err.contains("echo_server: missing configuration"), "{err}");
+
+    let mut missing = echo_spec("missing");
+    if let McpTransport::Stdio { command, .. } = &mut missing.transport {
+        *command = "/nonexistent/mcp-server".into();
+    }
+    assert!(probe(&missing, &options).await.is_err());
+    assert!(probe(&echo_spec("a__b"), &options).await.is_err());
+
+    let manager = McpManager::start(Vec::new());
+    assert!(
+        manager.servers().await.is_empty(),
+        "probing registers nothing"
+    );
+}
