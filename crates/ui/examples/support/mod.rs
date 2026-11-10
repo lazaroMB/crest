@@ -25,7 +25,7 @@ pub fn run_sized(
     build: impl FnOnce(&mut Window, &mut App) -> AnyView + 'static,
 ) {
     let title = SharedString::from(title.to_owned());
-    gpui_platform::application().run(move |cx: &mut App| {
+    ui::assets::install(gpui_platform::application()).run(move |cx: &mut App| {
         gpui_component::init(cx);
         apply_theme(cx);
         cx.bind_keys([KeyBinding::new("secondary-q", ui::app::Quit, None)]);

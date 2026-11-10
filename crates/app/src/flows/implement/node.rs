@@ -194,8 +194,8 @@ impl ImplementDeps {
         (self.clock)()
     }
 
-    pub(crate) fn root(&self) -> &WorkspaceRoot {
-        self.fs.root()
+    pub(crate) fn root(&self) -> Option<&WorkspaceRoot> {
+        self.fs.roots().first()
     }
 
     pub(crate) fn emit(&self, kind: BlockKind) -> Result<BlockId, NodeError> {
@@ -375,7 +375,8 @@ impl StepContext {
     /// A fresh conversation for an agent turn in this workspace.
     #[must_use]
     pub fn new_session(&self) -> Session {
-        let root = self.deps.fs.root().as_path().display().to_string();
+        // A session without a directory has an empty root.
+        let root = crate::ports::fs::workspace_root_text(self.deps.fs.as_ref());
         Session::new(root, self.now())
     }
 }

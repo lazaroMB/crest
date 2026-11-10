@@ -80,12 +80,12 @@ fn tool(name: &str, description: &str, source: ToolSource, effect: &str) -> Tool
 
 fn snapshot() -> HelpSnapshot {
     HelpSnapshot {
-        commands: vec![CommandRow {
-            name: "issue".into(),
-            usage: "/issue [args]".into(),
-            description: "Show a Jira issue".into(),
-            source: "jira".into(),
-        }],
+        commands: vec![CommandRow::of_plugin(
+            "jira",
+            "issue",
+            "/issue [args]",
+            "Show a Jira issue",
+        )],
         tools: vec![
             tool(
                 "read_file",

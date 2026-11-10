@@ -51,7 +51,10 @@ pub(super) async fn read_image(
     item: &PickerItem,
     cx: &mut gpui::AsyncApp,
 ) -> Preview {
-    let absolute = fs.root().join(&item.path).to_string_lossy().into_owned();
+    let Some(root) = fs.roots().first() else {
+        return Preview::unsupported(item, domain::workspace::NO_DIRECTORY);
+    };
+    let absolute = root.join(&item.path).to_string_lossy().into_owned();
     let (fs, path) = (Arc::clone(fs), item.path.clone());
     let probe = cx
         .background_spawn(async move { fs.read_head(&path, 16).await })

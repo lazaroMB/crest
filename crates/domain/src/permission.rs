@@ -921,6 +921,12 @@ mod tests {
             (p("src"), "src/main.rs", true),
             (p("src"), "srcx/main.rs", false),
             (p("src/"), "src", false),
+            // A project's later roots are named by absolute path: each root is its
+            // own prefix, and `/work/web` is not `/work/webx`.
+            (p("/work/web/"), "/work/web/src/a.rs", true),
+            (p("/work/web"), "/work/web/src/a.rs", true),
+            (p("/work/web"), "/work/webx/a.rs", false),
+            (p("/work/web/"), "src/a.rs", false),
             (p(""), "anything", false),
             (Any, "anything", true),
             (Any, "", true),
@@ -939,8 +945,25 @@ mod tests {
         let rule = |tool: &str| {
             PermissionRule::new(tool, RuleMatcher::Prefix("src/".into()), RuleDecision::Deny)
         };
+        // A project's later roots are named by absolute path: the rule of one
+        // root does not reach another, and each root keeps its folder
+        // boundary.
+        let web = PermissionRule::new(
+            "edit_file",
+            RuleMatcher::Prefix("/work/web/src".into()),
+            RuleDecision::Deny,
+        );
         let cases = [
             (rule("edit_file"), "edit_file", "src/lib.rs", true),
+            (web.clone(), "edit_file", "/work/web/src/lib.rs", true),
+            (web.clone(), "edit_file", "/work/web/srcx/lib.rs", false),
+            (web, "edit_file", "src/lib.rs", false),
+            (
+                rule("edit_file"),
+                "edit_file",
+                "/work/web/src/lib.rs",
+                false,
+            ),
             (rule("edit_file"), "write_file", "src/lib.rs", false),
             (rule("edit_file"), "edit_file", "docs/a.md", false),
             (rule(ANY_TOOL), "write_file", "src/lib.rs", true),

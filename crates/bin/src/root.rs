@@ -11,10 +11,9 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::research::Research;
+use adapter_fs::guard::canonical_root;
 use adapter_fs::{LocalFs, WorkspaceGuard};
 use adapter_lua::{HostOptions, LuaHost, default_sources};
-use adapter_search::RipgrepSearch;
-use adapter_shell::LocalShell;
 use adapter_store::{SqliteDiscoveryStore, SqliteFlowStorage};
 use adapter_telemetry::TracingTelemetry;
 use anyhow::{Context as _, anyhow};
@@ -52,7 +51,7 @@ use application::usecases::simulate::Simulator;
 use domain::block::Block;
 use domain::conversation::Session;
 use domain::model::{ModelPolicy, ModelRole, ProviderId};
-use domain::permission::{PermissionMode, PermissionPolicy};
+use domain::permission::PermissionMode;
 use domain::workspace::WorkspaceRoot;
 use ui::timeline::TimelineState;
 
@@ -65,12 +64,15 @@ use crate::preferences::{self, Preferences};
 use crate::research;
 use crate::startup::{self};
 
+pub(crate) mod chat_home;
 mod llm_ports;
+mod session_roots;
 mod stores;
 mod tool_registry;
 
 use llm_ports::{Models, resolve_models};
-use stores::{Checkpoint, Resumed, open_flow_storage, open_store, resume_session};
+use session_roots::open_session;
+use stores::{Checkpoint, Resumed, open_flow_storage, open_store};
 use tool_registry::{ToolInputs, Tools, register_tools};
 
 /// What the command line decided.
@@ -93,6 +95,9 @@ pub struct Config {
     /// A stored session to open instead of the latest one. `None` follows
     /// [`Self::resume`].
     pub session_id: Option<String>,
+    /// The project a new chat joins (its id). The workspace is then the
+    /// project's first directory.
+    pub project: Option<String>,
 }
 
 impl Config {
@@ -126,7 +131,22 @@ impl Config {
                 !args.new
             },
             session_id: None,
+            project: None,
         }
+    }
+
+    /// The config of a chat without a directory: an empty workspace.
+    #[must_use]
+    pub fn standalone(args: &Args) -> Self {
+        let mut config = Self::for_workspace(args, PathBuf::new());
+        config.resume = false;
+        config
+    }
+
+    /// Whether this is a chat without a directory.
+    #[must_use]
+    pub fn is_standalone(&self) -> bool {
+        self.workspace.as_os_str().is_empty()
     }
 }
 
@@ -341,7 +361,10 @@ impl App {
     /// Replaces the session with a new, empty one (`/clear`). The old one
     /// stays in the store.
     pub fn new_session(&mut self) {
-        self.session = Session::new(self.workspace.as_path().display().to_string(), now_ms());
+        // The new chat stays where the old one was: in its project, or in none.
+        let mut fresh = Session::new(self.session.workspace_root.clone(), now_ms());
+        fresh.project_id = self.session.project_id;
+        self.session = fresh;
         *self.timeline.lock().unwrap_or_else(PoisonError::into_inner) = TimelineState::new();
         self.prompt_history
             .lock()
@@ -449,13 +472,13 @@ pub async fn build_app(
     frontend: Frontend,
     overrides: Overrides,
 ) -> anyhow::Result<App> {
-    let guard = WorkspaceGuard::open(&config.workspace).map_err(|err| {
-        anyhow!(
-            "cannot open the workspace {}: {err}",
-            config.workspace.display()
-        )
-    })?;
-    let root = guard.root().clone();
+    let standalone = config.is_standalone();
+    let workspace = chat_home::workspace(config, overrides.db_path.as_deref());
+    let root = canonical_root(&workspace)
+        .map_err(|err| anyhow!("cannot open the workspace {}: {err}", workspace.display()))?;
+    // The session's other directories join once it is known (below); until
+    // then the opened directory is the only root.
+    let guard = WorkspaceGuard::new(chat_home::roots(standalone, &root));
     // Image files named by plugins are checked like the file tools' paths;
     // the configured sensitive-path rules replace the defaults below.
     let image_guard: SharedGuard = Arc::new(RwLock::new(guard.clone()));
@@ -516,7 +539,7 @@ pub async fn build_app(
     let guard = guard.with_sensitive_rules(rules.clone());
     *image_guard.write().unwrap_or_else(PoisonError::into_inner) = guard.clone();
 
-    let search = RipgrepSearch::new(root.clone()).with_sensitive_rules(rules);
+    let search = chat_home::search(standalone, &root).with_sensitive_rules(rules.clone());
 
     // The steps below do not depend on each other: they run together, and
     // their warnings are added in a fixed order afterwards. Files and the
@@ -605,6 +628,23 @@ pub async fn build_app(
         }
     };
 
+    // A project session opens with all the directories its project has now;
+    // a project that gains or loses one later reaches the sessions already
+    // open the next time they open.
+    let opened = open_session(store.as_ref(), config, &root, &timeline).await;
+    warnings.extend(opened.warnings);
+    let permissions = opened.permissions;
+    let Resumed {
+        session,
+        notice: resumed_notice,
+        prompt_history,
+        ..
+    } = opened.resumed;
+    // The searches, the file tree and the `@` list span every directory too.
+    let search = search.with_roots(&opened.roots);
+    let guard = WorkspaceGuard::new(opened.roots).with_sensitive_rules(rules);
+    *image_guard.write().unwrap_or_else(PoisonError::into_inner) = guard.clone();
+
     let search = Arc::new(search);
     let file_search: Arc<dyn FileSearchPort> = search.clone();
     let content_search: Arc<dyn ContentSearchPort> = search.clone();
@@ -620,7 +660,7 @@ pub async fn build_app(
     let (line_shell, shell_warning) = startup::line_shell(&loaded.options);
     warnings.extend(shell_warning);
     let shell: Arc<dyn ShellPort> =
-        Arc::new(LocalShell::new(root.clone()).with_line_shell(line_shell));
+        Arc::new(chat_home::shell(standalone, &root).with_line_shell(line_shell));
     let telemetry: Arc<dyn TelemetryPort> = Arc::new(TracingTelemetry::new());
     warnings.extend(web_warnings);
     let (decider, decider_warnings) = startup::decider(
@@ -667,20 +707,6 @@ pub async fn build_app(
     });
     warnings.extend(mcp_warnings);
 
-    let permissions = Arc::new(Mutex::new(PermissionPolicy::new(config.mode)));
-    let Resumed {
-        session,
-        notice: resumed_notice,
-        prompt_history,
-    } = resume_session(
-        store.as_ref(),
-        config,
-        &root,
-        &timeline,
-        &permissions,
-        &mut warnings,
-    )
-    .await;
     // The project's rules join the restored session ones; "always in
     // project" answers are written back to the same file.
     let (project_rules, project_warnings) =
@@ -699,7 +725,7 @@ pub async fn build_app(
         policy.clone(),
         Arc::clone(&permissions),
     );
-    kit.system_prompt = system_prompt(&root);
+    kit.system_prompt = chat_home::prompt(standalone, &root);
     kit.project_rules = Some(project_rules.clone());
     let implement = ImplementDeps::new(Arc::clone(&events), Arc::clone(&fs), Arc::clone(&shell))
         .with_agent(kit)
@@ -743,7 +769,7 @@ pub async fn build_app(
                     fs: Arc::clone(&fs),
                     search: Arc::clone(&file_search),
                 },
-                system_prompt: system_prompt(&root),
+                system_prompt: chat_home::prompt(standalone, &root),
                 root: root.clone(),
                 storage: Arc::clone(storage),
                 decider: decider.clone(),
@@ -777,7 +803,7 @@ pub async fn build_app(
             }),
         None => None,
     };
-    let mut prompt = system_prompt(&root);
+    let mut prompt = chat_home::prompt(standalone, &root);
     if web.is_some() {
         prompt.push_str("\n\n");
         prompt.push_str(WEB_TOOLS_PROMPT);
@@ -808,27 +834,11 @@ pub async fn build_app(
         Err(err) => warnings.push(format!("cost: {err}; no pricing and no spend cap")),
     }
 
-    for error in &loaded.errors {
-        startup_events.emit(DomainEvent::BlockAdded {
-            block: startup::config_error_block(error),
-        });
-    }
-    for warning in &warnings {
-        startup_events.emit(DomainEvent::Notice {
-            level: NoticeLevel::Warning,
-            message: warning.clone(),
-        });
-    }
-    for message in resumed_notice
+    let notices = resumed_notice
         .into_iter()
         .chain(research_notice)
-        .chain(implement_notice)
-    {
-        startup_events.emit(DomainEvent::Notice {
-            level: NoticeLevel::Info,
-            message,
-        });
-    }
+        .chain(implement_notice);
+    startup::announce(&*startup_events, &loaded.errors, &warnings, notices);
     let mut turn_options = TurnOptions::new(ModelRole::Main);
     if let Some(model) = &config.model {
         turn_options = turn_options.with_override(model.clone());
@@ -885,12 +895,20 @@ pub async fn build_app(
 /// component tools and the statistics tools.
 #[must_use]
 pub fn system_prompt(root: &WorkspaceRoot) -> String {
+    prompt_around(&format!(
+        "Workspace root: {}. Tool paths are relative to it; you cannot leave it.",
+        root.as_path().display()
+    ))
+}
+
+/// The system prompt around `workspace`, the line that says where the chat works.
+fn prompt_around(workspace: &str) -> String {
     format!(
         "You are crest, a coding agent. You help the user with the code in their workspace \
          using the tools below.\n\
          \n\
          # Environment\n\
-         - Workspace root: {root}. Tool paths are relative to it; you cannot leave it.\n\
+         - {workspace}\n\
          - Platform: {os} ({arch}).\n\
          {windows}\
          \n\
@@ -911,7 +929,7 @@ pub fn system_prompt(root: &WorkspaceRoot) -> String {
          {FORM_TOOL_PROMPT}\n\
          \n\
          {COMPUTE_TOOLS_PROMPT}",
-        root = root.as_path().display(),
+        workspace = workspace,
         os = std::env::consts::OS,
         arch = std::env::consts::ARCH,
         windows = if cfg!(windows) { WINDOWS_NOTE } else { "" },

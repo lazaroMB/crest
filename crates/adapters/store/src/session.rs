@@ -10,16 +10,21 @@ use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use application_core::ports::projects::RecentWorkspace;
-use application_core::ports::store::{SessionStorePort, SessionSummary, StoreError, StoredSession};
+use application_core::ports::store::{
+    OrganizeStorePort, ProjectStorePort, SessionStorePort, SessionSummary, StoreError,
+    StoredSession,
+};
 use async_trait::async_trait;
 use domain::block::Block;
-use domain::conversation::{Session, SessionId};
+use domain::conversation::{ProjectId, Session, SessionId};
 use domain::permission::{PermissionRule, RuleScope};
+use domain::project::Project;
 use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
 use serde::de::DeserializeOwned;
 
 use crate::db::{self, sql_error};
 use crate::path::default_db_path;
+use crate::{chats, projects};
 
 /// [`SessionStorePort`] over one SQLite database.
 ///
@@ -113,6 +118,10 @@ impl SessionStorePort for SqliteSessionStore {
         self.run(move |conn| list(conn, &root)).await
     }
 
+    async fn list_all(&self) -> Result<Vec<SessionSummary>, StoreError> {
+        self.run(|conn| summaries(conn, "", [])).await
+    }
+
     async fn delete(&self, id: SessionId) -> Result<(), StoreError> {
         self.run(move |conn| delete(conn, id)).await
     }
@@ -122,21 +131,125 @@ impl SessionStorePort for SqliteSessionStore {
     }
 }
 
+#[async_trait]
+impl OrganizeStorePort for SqliteSessionStore {
+    async fn rename_session(&self, id: SessionId, title: &str) -> Result<(), StoreError> {
+        let title = title.to_owned();
+        self.run(move |conn| chats::rename(conn, id, &title)).await
+    }
+
+    async fn pin_session(&self, id: SessionId, pinned: bool) -> Result<(), StoreError> {
+        self.run(move |conn| chats::set_flag(conn, id, "pinned", pinned))
+            .await
+    }
+
+    async fn set_session_archived(&self, id: SessionId, archived: bool) -> Result<(), StoreError> {
+        self.run(move |conn| chats::set_flag(conn, id, "archived", archived))
+            .await
+    }
+
+    async fn branch_session(&self, id: SessionId) -> Result<SessionId, StoreError> {
+        self.run(move |conn| chats::branch(conn, id)).await
+    }
+
+    async fn set_project_archived(
+        &self,
+        id: ProjectId,
+        archived: bool,
+    ) -> Result<Project, StoreError> {
+        self.run(move |conn| {
+            projects::edit(conn, id, |p| {
+                p.archived = archived;
+                Ok(())
+            })
+        })
+        .await
+    }
+
+    async fn delete_project(&self, id: ProjectId) -> Result<usize, StoreError> {
+        self.run(move |conn| projects::delete(conn, id)).await
+    }
+}
+
+#[async_trait]
+impl ProjectStorePort for SqliteSessionStore {
+    async fn projects(&self) -> Result<Vec<Project>, StoreError> {
+        self.run(|conn| projects::list(conn)).await
+    }
+
+    async fn create_project(&self, name: &str, roots: &[String]) -> Result<Project, StoreError> {
+        let (name, roots) = (name.to_owned(), roots.to_vec());
+        self.run(move |conn| projects::create(conn, &name, &roots))
+            .await
+    }
+
+    async fn add_root(&self, id: ProjectId, root: &str) -> Result<Project, StoreError> {
+        let root = root.to_owned();
+        self.run(move |conn| projects::edit(conn, id, |p| p.add_root(&root).map(drop)))
+            .await
+    }
+
+    async fn remove_root(&self, id: ProjectId, root: &str) -> Result<Project, StoreError> {
+        let root = root.to_owned();
+        self.run(move |conn| projects::edit(conn, id, |p| p.remove_root(&root).map(drop)))
+            .await
+    }
+
+    async fn rename_project(&self, id: ProjectId, name: &str) -> Result<Project, StoreError> {
+        let name = name.to_owned();
+        self.run(move |conn| projects::edit(conn, id, |p| p.rename(&name)))
+            .await
+    }
+
+    async fn pin_project(&self, id: ProjectId, pinned: bool) -> Result<Project, StoreError> {
+        self.run(move |conn| {
+            projects::edit(conn, id, |p| {
+                p.pinned = pinned;
+                Ok(())
+            })
+        })
+        .await
+    }
+
+    async fn move_session(
+        &self,
+        id: SessionId,
+        project: Option<ProjectId>,
+    ) -> Result<(), StoreError> {
+        self.run(move |conn| projects::move_session(conn, id, project))
+            .await
+    }
+}
+
 /// Inserts or replaces `stored`, its timeline and its rules, atomically.
+///
+/// A session that exists keeps its `project_id` and `workspace_root` columns:
+/// only `move_session` (and a project losing its first directory) changes
+/// them, so saving a copy loaded before a move cannot undo the move. A
+/// new session gets its project when that project exists, else none.
 pub(crate) fn save(conn: &mut Connection, stored: &StoredSession) -> Result<(), StoreError> {
-    let session = &stored.session;
-    let id = session.id.to_string();
-    let data_json = to_json(session)?;
     let tx = conn
         .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(sql_error)?;
+    save_in(&tx, stored)?;
+    tx.commit().map_err(sql_error)
+}
+
+/// [`save`] inside the caller's transaction. `pinned`, `archived` and the
+/// branch link are written only for a new session; only their own calls
+/// change them afterwards.
+pub(crate) fn save_in(tx: &Transaction<'_>, stored: &StoredSession) -> Result<(), StoreError> {
+    let session = &stored.session;
+    let id = session.id.to_string();
+    let data_json = to_json(session)?;
     tx.execute(
         "INSERT INTO sessions
              (id, workspace_root, title, created_at, updated_at, turn_count, data_json,
-              prompt_history_json)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+              prompt_history_json, project_id, pinned, archived, branched_from, branched_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8,
+                 (SELECT id FROM projects WHERE id = ?9), ?10, ?11,
+                 (SELECT id FROM sessions WHERE id = ?12), ?13)
          ON CONFLICT (id) DO UPDATE SET
-             workspace_root = excluded.workspace_root,
              title = excluded.title,
              created_at = excluded.created_at,
              updated_at = excluded.updated_at,
@@ -152,12 +265,20 @@ pub(crate) fn save(conn: &mut Connection, stored: &StoredSession) -> Result<(), 
             to_i64(session.turns.len(), "turn_count")?,
             data_json,
             to_json(&stored.prompt_history)?,
+            session.project_id.map(|p| p.to_string()),
+            session.pinned,
+            session.archived,
+            session.branched_from.map(|s| s.to_string()),
+            session
+                .branched_at
+                .map(|n| to_i64(n, "branched_at"))
+                .transpose()?,
         ],
     )
     .map_err(sql_error)?;
-    upsert_blocks(&tx, &id, &stored.timeline)?;
-    replace_rules(&tx, &id, &stored.permission_rules)?;
-    tx.commit().map_err(sql_error)
+    upsert_blocks(tx, &id, &stored.timeline)?;
+    replace_rules(tx, &id, &stored.permission_rules)?;
+    Ok(())
 }
 
 /// Writes `blocks` as the timeline of session `id`, by position (`seq`).
@@ -237,18 +358,104 @@ fn replace_rules(
 pub(crate) fn load(conn: &mut Connection, id: SessionId) -> Result<StoredSession, StoreError> {
     // A read transaction so the three reads see the same save.
     let tx = conn.transaction().map_err(sql_error)?;
+    let stored = load_in(&tx, id)?;
+    tx.commit().map_err(sql_error)?;
+    Ok(stored)
+}
+
+/// The columns of a session row that are the truth over its JSON.
+/// Where a session row says the session is and how it is marked, as stored;
+/// these columns overrule the JSON.
+struct Placement {
+    workspace_root: String,
+    project: Option<String>,
+    pinned: bool,
+    archived: bool,
+    branched_from: Option<String>,
+    branched_at: Option<i64>,
+}
+
+impl Placement {
+    /// The columns `workspace_root, project_id, pinned, archived,
+    /// branched_from, branched_at`, starting at `first`.
+    const COLUMNS: &'static str =
+        "workspace_root, project_id, pinned, archived, branched_from, branched_at";
+
+    fn read(row: &rusqlite::Row<'_>, first: usize) -> rusqlite::Result<Self> {
+        Ok(Self {
+            workspace_root: row.get(first)?,
+            project: row.get(first + 1)?,
+            pinned: row.get(first + 2)?,
+            archived: row.get(first + 3)?,
+            branched_from: row.get(first + 4)?,
+            branched_at: row.get(first + 5)?,
+        })
+    }
+
+    fn project_id(&self) -> Result<Option<ProjectId>, StoreError> {
+        let id = self.project.as_deref();
+        id.map(projects::parse_project_id).transpose()
+    }
+
+    fn branch(&self) -> Result<(Option<SessionId>, Option<usize>), StoreError> {
+        let from = self.branched_from.as_deref().map(parse_id).transpose()?;
+        let at = self.branched_at.map(|n| from_i64(n, "branched_at"));
+        Ok((from, at.transpose()?))
+    }
+
+    /// Sets them on `session`: the JSON of one saved before projects existed
+    /// has no project, and one saved before a move has the old project and
+    /// directory.
+    fn apply(&self, session: &mut Session) -> Result<(), StoreError> {
+        session.project_id = self.project_id()?;
+        session.workspace_root.clone_from(&self.workspace_root);
+        (session.pinned, session.archived) = (self.pinned, self.archived);
+        (session.branched_from, session.branched_at) = self.branch()?;
+        Ok(())
+    }
+}
+
+/// One session row, before it is decoded.
+struct Columns {
+    data_json: String,
+    history_json: String,
+    placement: Placement,
+}
+
+impl Columns {
+    /// Reads the row of session `id`.
+    fn read(tx: &Transaction<'_>, id: SessionId) -> Result<Self, StoreError> {
+        let sql = format!(
+            "SELECT data_json, prompt_history_json, {} FROM sessions WHERE id = ?1",
+            Placement::COLUMNS
+        );
+        let columns = tx
+            .query_row(&sql, [id.to_string()], |row| {
+                Ok(Self {
+                    data_json: row.get(0)?,
+                    history_json: row.get(1)?,
+                    placement: Placement::read(row, 2)?,
+                })
+            })
+            .optional()
+            .map_err(sql_error)?;
+        columns.ok_or(StoreError::NotFound(id))
+    }
+
+    /// The session in the JSON, with the columns over it.
+    fn session(&self) -> Result<Session, StoreError> {
+        let mut session: Session = from_json(&self.data_json, "session")?;
+        self.placement.apply(&mut session)?;
+        Ok(session)
+    }
+}
+
+/// [`load`] inside the caller's transaction.
+pub(crate) fn load_in(tx: &Transaction<'_>, id: SessionId) -> Result<StoredSession, StoreError> {
     let key = id.to_string();
-    let row: Option<(String, String)> = tx
-        .query_row(
-            "SELECT data_json, prompt_history_json FROM sessions WHERE id = ?1",
-            [&key],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()
-        .map_err(sql_error)?;
-    let (data_json, history_json) = row.ok_or(StoreError::NotFound(id))?;
-    let session: Session = from_json(&data_json, "session")?;
-    let prompt_history = from_json(&history_json, "prompt history")?;
+    let columns = Columns::read(tx, id)?;
+    let session = columns.session()?;
+    let prompt_history = from_json(&columns.history_json, "prompt history")?;
     if session.id != id {
         return Err(StoreError::Corrupt(format!(
             "row {id} holds session {}",
@@ -256,18 +463,17 @@ pub(crate) fn load(conn: &mut Connection, id: SessionId) -> Result<StoredSession
         )));
     }
     let timeline = load_column(
-        &tx,
+        tx,
         "SELECT data_json FROM timeline_blocks WHERE session_id = ?1 ORDER BY seq",
         &key,
         "timeline block",
     )?;
     let permission_rules = load_column(
-        &tx,
+        tx,
         "SELECT rule_json FROM permission_rules WHERE session_id = ?1 ORDER BY seq",
         &key,
         "permission rule",
     )?;
-    tx.commit().map_err(sql_error)?;
     Ok(StoredSession {
         session,
         timeline,
@@ -302,7 +508,9 @@ pub(crate) fn latest_for_workspace(
     conn: &mut Connection,
     root: &str,
 ) -> Result<Option<StoredSession>, StoreError> {
-    let sql = format!("SELECT id FROM sessions WHERE workspace_root = ?1 {NEWEST_FIRST} LIMIT 1");
+    let sql = format!(
+        "SELECT id FROM sessions WHERE workspace_root = ?1 AND archived = 0 {NEWEST_FIRST} LIMIT 1"
+    );
     let id: Option<String> = conn
         .query_row(&sql, [root], |row| row.get(0))
         .optional()
@@ -312,28 +520,40 @@ pub(crate) fn latest_for_workspace(
 
 /// Lists the sessions of `root`, newest first, without decoding them.
 pub(crate) fn list(conn: &Connection, root: &str) -> Result<Vec<SessionSummary>, StoreError> {
+    summaries(conn, "WHERE workspace_root = ?1 AND archived = 0", [root])
+}
+
+/// The sessions `filter` keeps (a `WHERE` clause or nothing), newest first,
+/// without decoding them.
+fn summaries<P: rusqlite::Params>(
+    conn: &Connection,
+    filter: &str,
+    params: P,
+) -> Result<Vec<SessionSummary>, StoreError> {
     let sql = format!(
-        "SELECT id, title, workspace_root, updated_at, turn_count
-         FROM sessions WHERE workspace_root = ?1 {NEWEST_FIRST}"
+        "SELECT id, title, updated_at, turn_count, {} FROM sessions {filter} {NEWEST_FIRST}",
+        Placement::COLUMNS
     );
     let mut stmt = conn.prepare(&sql).map_err(sql_error)?;
     let rows = stmt
-        .query_map([root], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, Option<String>>(1)?,
-                row.get::<_, String>(2)?,
-                row.get::<_, i64>(3)?,
-                row.get::<_, i64>(4)?,
-            ))
+        .query_map(params, |row| {
+            let head: (String, Option<String>, i64, i64) =
+                (row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?);
+            Ok((head, Placement::read(row, 4)?))
         })
         .map_err(sql_error)?;
     rows.map(|row| {
-        let (id, title, workspace_root, updated_at, turns) = row.map_err(sql_error)?;
+        let ((id, title, updated_at, turns), at) = row.map_err(sql_error)?;
+        let (branched_from, branched_at) = at.branch()?;
         Ok(SessionSummary {
             id: parse_id(&id)?,
             title,
-            workspace_root,
+            project_id: at.project_id()?,
+            workspace_root: at.workspace_root,
+            pinned: at.pinned,
+            archived: at.archived,
+            branched_from,
+            branched_at,
             updated_at: from_i64(updated_at, "updated_at")?,
             turns: from_i64(turns, "turn_count")?,
         })
@@ -382,20 +602,20 @@ pub(crate) fn delete(conn: &Connection, id: SessionId) -> Result<(), StoreError>
 
 /// Parses an id column back into a [`SessionId`] (serde, since the id is
 /// a transparent UUID).
-fn parse_id(id: &str) -> Result<SessionId, StoreError> {
+pub(crate) fn parse_id(id: &str) -> Result<SessionId, StoreError> {
     serde_json::from_value(serde_json::Value::String(id.to_owned()))
         .map_err(|err| StoreError::Corrupt(format!("session id {id:?}: {err}")))
 }
 
-fn from_i64<T: TryFrom<i64>>(value: i64, field: &str) -> Result<T, StoreError> {
+pub(crate) fn from_i64<T: TryFrom<i64>>(value: i64, field: &str) -> Result<T, StoreError> {
     T::try_from(value).map_err(|_| StoreError::Corrupt(format!("{field} out of range: {value}")))
 }
 
-fn to_json<T: serde::Serialize>(value: &T) -> Result<String, StoreError> {
+pub(crate) fn to_json<T: serde::Serialize>(value: &T) -> Result<String, StoreError> {
     serde_json::to_string(value).map_err(encode_error)
 }
 
-fn from_json<T: DeserializeOwned>(json: &str, what: &str) -> Result<T, StoreError> {
+pub(crate) fn from_json<T: DeserializeOwned>(json: &str, what: &str) -> Result<T, StoreError> {
     serde_json::from_str(json).map_err(|err| StoreError::Corrupt(format!("{what}: {err}")))
 }
 
@@ -404,11 +624,14 @@ fn encode_error(err: serde_json::Error) -> StoreError {
 }
 
 /// SQLite integers are signed; values past `i64::MAX` cannot be stored.
-fn to_i64<T: TryInto<i64>>(value: T, field: &str) -> Result<i64, StoreError> {
+pub(crate) fn to_i64<T: TryInto<i64>>(value: T, field: &str) -> Result<i64, StoreError> {
     value
         .try_into()
         .map_err(|_| StoreError::Backend(format!("{field} does not fit in SQLite")))
 }
+
+#[cfg(test)]
+mod listing_tests;
 
 #[cfg(test)]
 pub(crate) mod tests {
@@ -697,7 +920,7 @@ pub(crate) mod tests {
 
     use application_testing::system::InMemorySessionStore;
 
-    fn port(store: SqliteSessionStore) -> Arc<dyn SessionStorePort> {
+    pub(super) fn port(store: SqliteSessionStore) -> Arc<dyn SessionStorePort> {
         Arc::new(store)
     }
 

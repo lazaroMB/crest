@@ -93,12 +93,20 @@ tools (`crates/app/src/tools/files.rs:46`) and `open_file` (`crates/app-core/src
 take the list. A standalone session has no root: a tool that needs one returns a message asking the
 person for a directory (S01 criterion 4) instead of resolving against the process's current directory.
 
+Status: the file tools, `open_file`, the sandbox, and now the search tools (`list_files`, `find_file`,
+`grep`, `tree`, plus the file tree panel and the `@` list, which read the same port) take the list.
+The searches run in every root with the same ignore and sensitive-path rules, name the paths of the
+first root relative and of the others absolute (`RootedPath::address`), share the limit between the
+roots, and note a root that cannot be read while the others answer. `run_command` keeps running in the
+first root (it has no directory argument). Not done: the tree panel watches only the first root for
+changes.
+
 ### 3. The sidebar model and three widths (spike S05, risks: pathways 1, 3, 6, 7)
 
 `crates/ui/src/chats.rs` replaces its per-directory catalog with the mock's `sidebarModel`:
 
 - Projects come first, pinned and then by newest chat, each with its chats newest first and a directory count.
-- The standalone chats follow under "Chats".
+- The standalone chats follow under "Wild Chats".
 - A search query filters chats by title.
 
 A `SidebarWidth { Full, Strip, Hidden }` replaces the boolean behind `panel.chats`. The window opens
@@ -108,8 +116,7 @@ mark, new chat, search, projects, and one initial per project.
 `Hidden` holds only the Crest mark, in the top left, and the rail ends where the prompt starts
 (`mock/src/app.js` lays the prompt under the whole window). While it is closed the session uses the
 full width and starts below the mark, so there is no empty column and the mark never paints over a
-block. Pointer hover or keyboard focus on the mark reveals the strip's rows and shifts the session
-aside; the rows stay inside the body's height and never cross the prompt. Leaving hides them again
+block. Pointer hover or keyboard focus on the mark reveals the strip's rows as a bar that floats over the session (the session does not move); the rows stay inside the body's height and never cross the prompt. Leaving hides them again
 without changing the state. Clicking the mark sets `Full`. The mark in the full sidebar sets
 `Hidden`, not `Strip`. A project initial shows the project's name beside it while the pointer is on it.
 `<C-g>s` still cycles `Full`, `Strip`, `Hidden`, and back to `Full` (`nextSidebar`); the existing keymap
@@ -157,7 +164,7 @@ The same migration adds `sessions.archived INTEGER NOT NULL DEFAULT 0` and
 `projects.archived INTEGER NOT NULL DEFAULT 0`. The store port gains `set_session_archived(id, bool)`
 and `set_project_archived(id, bool)`; neither touches `timeline_blocks`. The sidebar model leaves out
 archived projects, their chats, and archived chats, and an `archived()` query feeds a folded
-"Archived (N)" section after "Chats" with one restore button per row (`sidebarModel` and
+"Archived (N)" section after "Wild Chats" with one restore button per row (`sidebarModel` and
 `archivedModel` in `mock/src/organization.js`). `delete` keeps its meaning and its cascade.
 
 ### 7. Branch a chat (R02 FR-20, FR-21)
@@ -206,8 +213,8 @@ Screenshots of each state are in `mock/spikes/evidence/` (`S05-full-1280.png`, `
   `remove_root` on the last root is an error (S02 criteria 2 and 3). A path under any root resolves,
   and a path under none fails with "outside the workspace".
 - The window opens hidden. The hidden mark sits in the top left and the session uses the full width,
-  starting below the mark. Hovering the mark shows new chat, search, and projects and shifts the
-  session aside; the rows end at the prompt, and leaving hides them. The
+  starting below the mark. Hovering the mark shows new chat, search, and projects as a bar that floats
+  over the session, which does not move; the rows end at the prompt, and leaving hides them. The
   Crest mark opens the full sidebar, and the mark in the full sidebar returns to hidden. `<C-g>s` still
   cycles full, strip, and hidden. The strip is at most 56 px, and at 1024 px the session keeps at least
   90 percent of the window (S05, refined in the mock after that spike).

@@ -4,10 +4,11 @@
 use application_core::keymap::{Action, Feed, Key, KeyCode, Modifiers};
 use gpui::{App, ClipboardItem, Context, KeystrokeEvent, Window};
 
+use super::mode::Press;
 use super::paste::PasteStep;
 use super::{
-    CANCEL_ACTION, FOCUS_INPUT_ACTION, IMAGE_MODE_ACTION, InputEvent, InputView, Line,
-    QUEUE_EDIT_ACTION, classify_line,
+    CANCEL_ACTION, ChatMode, FOCUS_INPUT_ACTION, IMAGE_MODE_ACTION, InputEvent, InputView, Line,
+    PROMPT_MODE_ACTION, QUEUE_EDIT_ACTION, classify_line,
 };
 use crate::session::INTERRUPT_ACTION;
 
@@ -106,7 +107,11 @@ impl InputView {
         };
         let now = cx.background_executor().now();
         self.blink.keyed(now);
-        if self.palette_key(&key, window, cx) {
+        let press = self.mode_control.press(&key);
+        if let Press::Pick(entry) = press {
+            self.pick_entry(entry, window, cx);
+        }
+        if press != Press::Pass || self.palette_key(&key, window, cx) {
             cx.stop_propagation();
             cx.notify();
             return;
@@ -187,6 +192,13 @@ impl InputView {
             self.remove_image(self.tray.images().len() - 1, cx);
             return true;
         }
+        if *key == Key::plain(KeyCode::Backspace)
+            && self.chat_mode() != ChatMode::Chat
+            && self.text(cx).is_empty()
+        {
+            self.set_chat_mode(ChatMode::Chat, window, cx);
+            return true;
+        }
         // The editor takes it.
         false
     }
@@ -238,6 +250,7 @@ impl InputView {
                 .update(cx, |editor, cx| editor.insert("\n", window, cx)),
             FOCUS_INPUT_ACTION if self.owns_focus(window, cx) => self.palette_hidden = true,
             IMAGE_MODE_ACTION => self.toggle_image_mode(cx),
+            PROMPT_MODE_ACTION => self.cycle_mode(window, cx),
             CANCEL_ACTION => self.cancel(window, cx),
             _ => cx.emit(InputEvent::Action(action)),
         }
@@ -276,7 +289,7 @@ impl InputView {
     }
 
     pub(super) fn submit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let line = classify_line(&self.text(cx));
+        let line = classify_line(&self.mode_control.mode.command_for(&self.text(cx)));
         // A command leaves the images in the tray for the next prompt.
         let text = match line {
             Some(Line::Command(command)) => {

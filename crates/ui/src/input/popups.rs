@@ -107,10 +107,10 @@ impl InputView {
     }
 
     /// Entries of the popup the input shows, the same one `render` picks.
-    fn popup_len(&self, cx: &App) -> usize {
+    pub(super) fn popup_len(&self, cx: &App) -> usize {
         match self.completion(cx) {
             Some(shown) => shown.len(),
-            None => self.palette(cx).len(),
+            None => self.palette_len(cx),
         }
     }
 

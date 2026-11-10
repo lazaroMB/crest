@@ -114,8 +114,18 @@ pub const PANEL_KEYS: &[(&str, &str, &str)] = &[
         "Left / Right",
         "Fold or unfold the project (Left on a chat: its project)",
     ),
-    ("Chats sidebar", "F2, r", "Rename the chat"),
-    ("Chats sidebar", "Delete", "Ask to delete the chat"),
+    ("Chats sidebar", "F2, r", "Rename the chat or the project"),
+    ("Chats sidebar", "m", "Open the menu of the row"),
+    (
+        "Chats sidebar",
+        "Up / Down, Enter, Left, Esc (in a menu)",
+        "Choose a row, go into or back from a submenu, close",
+    ),
+    (
+        "Chats sidebar",
+        "Delete",
+        "Ask to delete the chat, the project or the archived entry",
+    ),
     (
         "Chats sidebar",
         "Enter, y",

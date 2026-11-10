@@ -20,7 +20,7 @@ use futures::future::BoxFuture;
 use crate::ports::events::NoticeLevel;
 use crate::ports::plugin::PluginAction;
 
-pub use catalog::{CATALOG, CommandInfo, Handler, commands_of, unknown_command_hint};
+pub use catalog::{CATALOG, CommandGroup, CommandInfo, Handler, commands_of, unknown_command_hint};
 pub use research::{ResearchCommand, StartMode};
 
 /// Usage of `/!`, shown when it has no command.

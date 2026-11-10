@@ -14,13 +14,19 @@ use domain::git::GitStatus;
 use domain::model::ModelId;
 use domain::permission::PermissionMode;
 use gpui::{
-    App, Context, Hsla, IntoElement, ParentElement as _, Render, SharedString, Styled as _, Task,
-    Window, div,
+    App, Context, Entity, Focusable as _, Hsla, IntoElement, ParentElement as _, Render,
+    SharedString, Styled as _, Task, Window, div,
 };
 use gpui_component::{ActiveTheme as _, h_flex};
 
+use crate::activity::{Entry, Log};
+use crate::info::InfoView;
+
 /// How long a transient notice stays in the status bar.
 pub const NOTICE_TTL: Duration = Duration::from_secs(6);
+/// Most kept notices; past it the oldest goes. A retry storm adds a warning
+/// per attempt, and a list nobody reads would only bury the newest.
+pub const MAX_KEPT: usize = 20;
 
 /// Formats a cost in USD: two decimals from one dollar up, otherwise up to
 /// four (trailing zeros beyond the second dropped), so small sessions
@@ -62,6 +68,27 @@ pub struct Notice {
     pub expires_at: Instant,
 }
 
+/// An error or warning that stays until the person dismisses it, after the
+/// status bar has cleared it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct KeptNotice {
+    /// Grows with every kept notice and is never reused, so a view can tell
+    /// a new one from the last it saw.
+    pub id: u64,
+    /// Severity: only `Error` or `Warning`.
+    pub level: NoticeLevel,
+    /// Text to show.
+    pub message: String,
+    /// When it was added, for a brief preview.
+    pub added_at: Instant,
+}
+
+impl Entry for KeptNotice {
+    fn id(&self) -> u64 {
+        self.id
+    }
+}
+
 /// What the status bar shows.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StatusState {
@@ -76,6 +103,10 @@ pub struct StatusState {
     unpriced: Option<ModelId>,
     busy: bool,
     notice: Option<Notice>,
+    /// The kept notices, oldest first, in the order they were added. They
+    /// outlive [`NOTICE_TTL`] and leave only through [`Log::dismiss`] or the
+    /// [`MAX_KEPT`] cap.
+    pub kept: Log<KeptNotice, MAX_KEPT>,
 }
 
 impl StatusState {
@@ -92,6 +123,7 @@ impl StatusState {
             unpriced: None,
             busy: false,
             notice: None,
+            kept: Log::default(),
         }
     }
 
@@ -211,6 +243,14 @@ impl StatusState {
     }
 
     fn show(&mut self, level: NoticeLevel, message: String, now: Instant) {
+        if level != NoticeLevel::Info {
+            self.kept.push(|id| KeptNotice {
+                id,
+                level,
+                message: message.clone(),
+                added_at: now,
+            });
+        }
         self.notice = Some(Notice {
             level,
             message,
@@ -254,6 +294,8 @@ impl StatusState {
 pub struct StatusView {
     state: StatusState,
     expiry: Option<Task<()>>,
+    /// The information mark, which floats over the corner above this bar.
+    info: Option<Entity<InfoView>>,
 }
 
 impl StatusView {
@@ -262,6 +304,7 @@ impl StatusView {
         Self {
             state: StatusState::new(workspace),
             expiry: None,
+            info: None,
         }
     }
 
@@ -274,6 +317,18 @@ impl StatusView {
     pub fn state_mut(&mut self, cx: &mut Context<Self>) -> &mut StatusState {
         cx.notify();
         &mut self.state
+    }
+
+    /// Sets the information mark this bar hosts.
+    pub fn set_info(&mut self, info: Entity<InfoView>, cx: &mut Context<Self>) {
+        self.info = Some(info);
+        cx.notify();
+    }
+
+    /// Whether the mark's panel has the keyboard.
+    pub fn info_focused(&self, window: &Window, cx: &App) -> bool {
+        let focus = self.info.as_ref().map(|info| info.focus_handle(cx));
+        focus.is_some_and(|focus| focus.contains_focused(window, cx))
     }
 
     /// Shows the git state of the workspace.
@@ -306,7 +361,7 @@ impl StatusView {
     }
 }
 
-fn notice_color(level: NoticeLevel, cx: &App) -> Hsla {
+pub(crate) fn notice_color(level: NoticeLevel, cx: &App) -> Hsla {
     let theme = cx.theme();
     match level {
         NoticeLevel::Info => theme.info,
@@ -344,24 +399,31 @@ impl Render for StatusView {
             );
         }
         if let Some(status) = self.state.git() {
-            let color = if status.conflicted > 0 {
-                theme.danger
-            } else if status.is_clean() {
-                theme.success
-            } else {
-                theme.warning
-            };
+            let color = git_color(status, theme);
             right = right
                 .child(div().text_color(color).child(SharedString::from(git)))
                 .child(sep());
         }
         right = right.child(div().text_color(muted).child(SharedString::from(workspace)));
         h_flex()
+            .relative()
             .w_full()
             .justify_between()
             .text_sm()
             .child(left)
             .child(right)
+            .children(self.info.clone())
+    }
+}
+
+/// Green when the tree is clean, amber with changes, red with conflicts.
+fn git_color(status: &GitStatus, theme: &gpui_component::Theme) -> Hsla {
+    if status.conflicted > 0 {
+        theme.danger
+    } else if status.is_clean() {
+        theme.success
+    } else {
+        theme.warning
     }
 }
 
@@ -558,6 +620,32 @@ mod tests {
             notice,
             Some((NoticeLevel::Error, "turn failed: overloaded".into()))
         );
+        // Both are kept after the bar clears them, an info one is not, and
+        // dismissing one leaves the other; the list is capped.
+        let later = now + NOTICE_TTL;
+        state.apply(
+            &DomainEvent::Notice {
+                level: NoticeLevel::Info,
+                message: "i".into(),
+            },
+            later,
+        );
+        assert!(state.expire(later + NOTICE_TTL));
+        let kept: Vec<_> = state.kept.items().iter().map(|n| (n.id, n.level)).collect();
+        assert_eq!(kept, [(0, NoticeLevel::Warning), (1, NoticeLevel::Error)]);
+        assert!(state.kept.dismiss(0) && !state.kept.dismiss(0));
+        assert_eq!(state.kept.items().len(), 1);
+        for _ in 0..MAX_KEPT {
+            state.apply(
+                &DomainEvent::Retrying {
+                    attempt: 1,
+                    delay_ms: 0,
+                },
+                later,
+            );
+        }
+        assert_eq!(state.kept.items().len(), MAX_KEPT);
+        assert_eq!(state.kept.items()[0].id, 2, "the oldest went");
     }
 
     #[gpui::test]

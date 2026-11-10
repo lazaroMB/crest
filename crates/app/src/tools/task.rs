@@ -218,7 +218,8 @@ impl TypedTool for TaskTool {
         }
         let subject = input.description.trim().to_owned();
         let service = self.subagent();
-        let root = self.ports.fs.root().as_path().display().to_string();
+        // A chat without a directory has an empty root.
+        let root = crate::ports::fs::workspace_root_text(self.ports.fs.as_ref());
         let budget = self.budget;
         let run = async move {
             let mut session = Session::new(root, 0);

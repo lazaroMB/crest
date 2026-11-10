@@ -93,7 +93,7 @@ usecase-beta
 
 ## Functional requirements
 
-- **FR-1** (UC-01): A new chat can start with no project and no directory, and the sidebar lists it under a "Chats" section, apart from the projects.
+- **FR-1** (UC-01): A new chat can start with no project and no directory, and the sidebar lists it under a "Wild Chats" section, apart from the projects.
 - **FR-2** (UC-01): A standalone chat reports that it has no directory, so a tool that needs files asks the person for a directory instead of failing or guessing.
 - **FR-3** (UC-02): A standalone chat's menu offers "Add to project", and a chat in a project offers "Move to project" and "Remove from project". Moving keeps the chat's id and its whole history.
 - **FR-4** (UC-02, UC-03): The project list in that menu ends with "New project", which asks for a name and a first directory and then moves the chat into the new project.
@@ -103,7 +103,7 @@ usecase-beta
 - **FR-8** (UC-05): The sidebar shows projects, pinned ones first and then by most recent chat, each with its chats newest first and a count of its directories, then the standalone chats. A search field filters chats by title.
 - **FR-9** (UC-05): A project can be renamed and pinned, and a new chat can start inside a given project from that project's row.
 - **FR-10** (UC-06): The sidebar has three states and opens hidden. Full is the list. The strip is a fixed column with the Crest mark, a new chat, search, the projects, and one initial per project; hovering an initial shows that project's name. One keyboard shortcut cycles full, strip, hidden, and full again.
-- **FR-23** (UC-06): Hidden holds only the Crest mark, in the top left, and stops where the prompt starts. While it is closed the conversation uses the full width and starts below the mark, so the mark covers no block and leaves no empty column. Hovering the mark, or moving the keyboard focus onto it, shows the strip's rows and shifts the conversation aside; the rows end at the prompt. Leaving hides the rows and the state stays hidden. Clicking the mark opens the full sidebar, and the mark in the full sidebar returns to hidden.
+- **FR-23** (UC-06): Hidden holds only the Crest mark, in the top left, and stops where the prompt starts. While it is closed the conversation uses the full width and starts below the mark, so the mark covers no block and leaves no empty column. Hovering the mark, or moving the keyboard focus onto it, shows the strip's rows as a bar that floats over the conversation, which does not move; the rows end at the prompt. Leaving hides the rows and the state stays hidden. Clicking the mark opens the full sidebar, and the mark in the full sidebar returns to hidden.
 - **FR-11** (UC-07): One button at the start of the prompt opens a menu with the chat modes (Chat, Research, Deep research) and insertions for a workspace file and a command.
 - **FR-12** (UC-07): The chosen mode shows as a chip in the prompt that reads its name. Sending in research mode runs the same research as `/research <text>`, and deep research the same as `/research --deep <text>`. The chip's ×, Backspace on an empty prompt, or choosing Chat returns to normal chat.
 - **FR-13** (UC-08): Typing `/` alone lists command groups with their command names and counts. Choosing a group shows only its commands, and going back returns to the groups.
@@ -119,7 +119,7 @@ usecase-beta
 
 ## Non-functional requirements
 
-- **NFR-1 (room for the conversation):** At 1280 pixels wide with the full sidebar, the conversation keeps at least 75 percent of the window. With the strip at 1024 pixels, it keeps at least 90 percent. While hidden is closed the conversation keeps the full width. While its rows are showing, the conversation shifts aside so the rows never cover it.
+- **NFR-1 (room for the conversation):** At 1280 pixels wide with the full sidebar, the conversation keeps at least 75 percent of the window. With the strip at 1024 pixels, it keeps at least 90 percent. While hidden is closed the conversation keeps the full width. While its rows are showing they float over the conversation, which does not move or reflow.
 - **NFR-2 (fixed cost in the prompt):** The mode button and the mode chip together take at most 160 pixels at 1280 pixels wide, whatever mode is chosen.
 - **NFR-3 (keyboard complete):** Every action in this document can be done from the keyboard. The sidebar toggle shortcut, the chat shortcuts, focus movement, and typed commands keep working; every new button or menu is an extra path, not the only one.
 - **NFR-4 (no data loss):** Moving to the new grouping loses no saved chat, title, or history, and it can run on a store that already holds chats. Archiving, restoring, and branching never remove a block from any chat.

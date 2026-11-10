@@ -6,6 +6,7 @@
 
 pub mod args;
 pub mod aside;
+mod catalog;
 pub mod credentials;
 pub mod discovery;
 pub mod gui;
@@ -15,6 +16,7 @@ pub mod images;
 pub mod keys;
 pub mod mcp;
 pub mod opencode;
+mod organize;
 pub mod permissions;
 pub mod plugin_trust;
 pub mod preferences;

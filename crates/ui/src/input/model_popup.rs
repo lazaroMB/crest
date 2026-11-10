@@ -14,10 +14,10 @@
 //! as typed (`/model opus`: the model of the next turn only).
 
 use domain::model::ModelId;
-use gpui::{AnyElement, App, ParentElement as _, SharedString, Styled as _, div};
-use gpui_component::{ActiveTheme as _, h_flex};
+use gpui::{AnyElement, ParentElement as _, SharedString, Styled as _, div};
+use gpui_component::h_flex;
 
-use super::completion::{self, Look, Nav, Popup, PopupKey, nav_key};
+use super::completion::{self, Look, Nav, Paint, Popup, PopupKey, nav_key};
 use crate::session::ModelChoice;
 
 /// What the popup shows for the current line: the matching models, best
@@ -153,14 +153,8 @@ pub fn model_key(
 
 /// Draws `popup` from entry `top` on, with entry `selected` highlighted;
 /// `current` is the model the next turn uses, marked in the list.
-pub fn render(
-    popup: ModelPopup,
-    selected: usize,
-    top: usize,
-    current: Option<&ModelId>,
-    cx: &App,
-) -> AnyElement {
-    let theme = cx.theme();
+pub(super) fn render(popup: ModelPopup, paint: &Paint, current: Option<&ModelId>) -> AnyElement {
+    let theme = paint.theme;
     completion::render(
         &Look {
             id: "model-palette",
@@ -168,9 +162,7 @@ pub fn render(
             keys: "↑↓ choose · Enter save as your model · Tab complete · Esc hide (Enter: next turn only)",
         },
         popup,
-        selected,
-        top,
-        cx,
+        paint,
         |choice| {
             let marker = if current == Some(&choice.model) {
                 "●"

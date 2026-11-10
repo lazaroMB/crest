@@ -24,7 +24,7 @@ use application_core::keymap::{
     Action, Key, KeyCode, Keymap, KeymapEntry, Platform, action_description, default_keymap_with,
     parse_keys,
 };
-use application_core::usecases::commands::{Handler, commands_of};
+use application_core::usecases::commands::{CommandInfo, Handler, commands_of};
 use domain::modal::ModalId;
 use domain::permission::PermissionMode;
 
@@ -58,6 +58,28 @@ pub struct CommandRow {
     pub description: String,
     /// `crest`, or the plugin that registered it.
     pub source: String,
+    /// The palette group: a built-in group name, or `Plugin · <source>`.
+    pub group: String,
+}
+
+impl CommandRow {
+    /// A built-in command, listed under its catalog group.
+    pub fn builtin(info: &CommandInfo) -> Self {
+        let mut row = Self::of_plugin(BUILTIN_SOURCE, info.name, info.usage, info.description);
+        row.group = info.group.label().into();
+        row
+    }
+
+    /// A command a plugin registered: it is listed under `Plugin · <plugin>`.
+    pub fn of_plugin(plugin: &str, name: &str, usage: &str, description: &str) -> Self {
+        Self {
+            name: name.into(),
+            usage: usage.into(),
+            description: description.into(),
+            source: plugin.into(),
+            group: format!("Plugin · {plugin}"),
+        }
+    }
 }
 
 /// One mapping of the effective keymap.
@@ -306,14 +328,7 @@ impl HelpSnapshot {
 
 /// The builtin `/` commands as rows.
 pub fn builtin_command_rows() -> Vec<CommandRow> {
-    commands_of(Handler::Ui)
-        .map(|info| CommandRow {
-            name: info.name.into(),
-            usage: info.usage.into(),
-            description: info.description.into(),
-            source: BUILTIN_SOURCE.into(),
-        })
-        .collect()
+    commands_of(Handler::Ui).map(CommandRow::builtin).collect()
 }
 
 /// The keys that run the builtin action `name` in `keymap`, for a hint

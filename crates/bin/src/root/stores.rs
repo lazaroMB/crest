@@ -77,6 +77,8 @@ pub(super) fn open_flow_storage(path: Option<&Path>) -> Result<SqliteFlowStorage
 /// The session [`resume_session`] settled on.
 pub(super) struct Resumed {
     pub(super) session: Session,
+    /// A saved session was opened, not a new one made.
+    pub(super) resumed: bool,
     /// Says that the latest session was resumed, and how to start anew.
     pub(super) notice: Option<String>,
     pub(super) prompt_history: Vec<String>,
@@ -94,52 +96,81 @@ pub(super) async fn resume_session(
     permissions: &SharedPermissions,
     warnings: &mut Vec<String>,
 ) -> Resumed {
-    let mut session = Session::new(root.as_path().display().to_string(), now_ms());
-    let mut resumed_notice = None;
-    let mut prompt_history = Vec::new();
-    if let Some(store) = store {
-        let chosen = config.session_id.as_deref().and_then(SessionId::parse);
-        let loaded = if let Some(id) = chosen {
-            match resume_by_id(store.as_ref(), id, &session.workspace_root).await {
-                Ok(stored) => Ok(Some(stored)),
-                Err(err) => {
-                    warnings.push(format!("could not open the chosen session: {err}"));
-                    Ok(None)
-                }
+    let directory = if config.is_standalone() {
+        String::new()
+    } else {
+        root.as_path().display().to_string()
+    };
+    let mut opened = Resumed {
+        session: Session::new(directory, now_ms()),
+        resumed: false,
+        notice: None,
+        prompt_history: Vec::new(),
+    };
+    let Some(store) = store else {
+        return opened;
+    };
+    let workspace = opened.session.workspace_root.clone();
+    match find(store.as_ref(), config, &workspace).await {
+        Ok(Some(mut stored)) => {
+            bring_back(&mut stored, timeline, permissions, warnings);
+            if chosen(config).is_none() {
+                opened.notice = Some(format!(
+                    "previous session resumed ({} turns); `crest --new` starts a new one",
+                    stored.session.turns.len()
+                ));
             }
-        } else if config.resume {
-            resume_latest(store.as_ref(), &session.workspace_root).await
-        } else {
-            Ok(None)
-        };
-        match loaded {
-            Ok(Some(mut stored)) => {
-                // Forms of calls that are over close; one whose call still
-                // waits is asked again once the session opens.
-                if settle_orphan_forms(&mut stored) > 0 {
-                    warnings.push("a form left unanswered by an earlier run was closed".into());
-                }
-                restore_permission_rules(permissions, &stored.permission_rules);
-                let mut state = timeline.lock().unwrap_or_else(PoisonError::into_inner);
-                for block in stored.timeline {
-                    state.apply(&DomainEvent::BlockAdded { block });
-                }
-                if chosen.is_none() {
-                    resumed_notice = Some(format!(
-                        "previous session resumed ({} turns); `crest --new` starts a new one",
-                        stored.session.turns.len()
-                    ));
-                }
-                session = stored.session;
-                prompt_history = stored.prompt_history;
-            }
-            Ok(None) => {}
-            Err(err) => warnings.push(format!("could not resume the last session: {err}")),
+            opened.resumed = true;
+            opened.session = stored.session;
+            opened.prompt_history = stored.prompt_history;
         }
+        Ok(None) => {}
+        Err(warning) => warnings.push(warning),
     }
-    Resumed {
-        session,
-        notice: resumed_notice,
-        prompt_history,
+    opened
+}
+
+/// The id `--session` names, if it is one.
+fn chosen(config: &Config) -> Option<SessionId> {
+    config.session_id.as_deref().and_then(SessionId::parse)
+}
+
+/// The session to continue, if any: the chosen one, else the latest of the
+/// workspace when resuming.
+async fn find(
+    store: &dyn SessionStorePort,
+    config: &Config,
+    workspace: &str,
+) -> Result<Option<StoredSession>, String> {
+    if let Some(id) = chosen(config) {
+        // A session that cannot be opened is a warning: a new one opens.
+        let chosen = resume_by_id(store, id, workspace).await;
+        return chosen
+            .map(Some)
+            .map_err(|err| format!("could not open the chosen session: {err}"));
+    }
+    if config.resume {
+        let latest = resume_latest(store, workspace).await;
+        return latest.map_err(|err| format!("could not resume the last session: {err}"));
+    }
+    Ok(None)
+}
+
+/// Puts a resumed session back: forms of calls that are over close (one
+/// whose call still waits is asked again once the session opens), its rules
+/// return and its blocks fill `timeline`.
+fn bring_back(
+    stored: &mut StoredSession,
+    timeline: &Mutex<TimelineState>,
+    permissions: &SharedPermissions,
+    warnings: &mut Vec<String>,
+) {
+    if settle_orphan_forms(stored) > 0 {
+        warnings.push("a form left unanswered by an earlier run was closed".into());
+    }
+    restore_permission_rules(permissions, &stored.permission_rules);
+    let mut state = timeline.lock().unwrap_or_else(PoisonError::into_inner);
+    for block in std::mem::take(&mut stored.timeline) {
+        state.apply(&DomainEvent::BlockAdded { block });
     }
 }

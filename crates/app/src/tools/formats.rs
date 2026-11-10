@@ -313,7 +313,12 @@ impl TypedTool for ShowTestReportTool {
                 Some(Err(err)) => return Ok(ToolOutput::error(err.to_string())),
                 None => return Ok(ToolOutput::error("the report parser did not run")),
             };
-            let root = ports.fs.root().as_path().to_path_buf();
+            let root = ports
+                .fs
+                .roots()
+                .first()
+                .map(|root| root.as_path().to_path_buf())
+                .unwrap_or_default();
             for case in spec.suites.iter_mut().flat_map(|s| &mut s.cases) {
                 relativize_ref(&root, &mut case.location);
             }
@@ -451,7 +456,12 @@ impl TypedTool for ShowFindingsTool {
                 Some(Err(err)) => return Ok(ToolOutput::error(err.to_string())),
                 None => return Ok(ToolOutput::error("the SARIF parser did not run")),
             };
-            let root = ports.fs.root().as_path().to_path_buf();
+            let root = ports
+                .fs
+                .roots()
+                .first()
+                .map(|root| root.as_path().to_path_buf())
+                .unwrap_or_default();
             for finding in &mut spec.findings {
                 relativize_ref(&root, &mut finding.location);
                 for edit in finding.fixes.iter_mut().flat_map(|f| &mut f.edits) {

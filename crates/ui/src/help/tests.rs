@@ -6,12 +6,12 @@ use super::*;
 
 fn snapshot() -> HelpSnapshot {
     HelpSnapshot {
-        commands: vec![CommandRow {
-            name: "review".into(),
-            usage: "/review [args]".into(),
-            description: "Review the changes".into(),
-            source: "jira".into(),
-        }],
+        commands: vec![CommandRow::of_plugin(
+            "jira",
+            "review",
+            "/review [args]",
+            "Review the changes",
+        )],
         tools: vec![
             ToolRow {
                 name: "read_file".into(),

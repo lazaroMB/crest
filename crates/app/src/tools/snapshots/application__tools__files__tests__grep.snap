@@ -4,7 +4,7 @@ expression: def
 ---
 {
   "name": "grep",
-  "description": "Searches file contents with ripgrep. Each match is printed as `path:line: text`, surrounded by its context lines as `path-line- text`; groups of lines are separated by `--`.\n- `pattern` is a regular expression in ripgrep (Rust regex) syntax; set `fixed` to true to search for a literal string, `ignore_case` for a case-insensitive search and `word` to match whole words only.\n- Narrow the search with `path` (a file or directory) and `glob` (e.g. `*.rs`).\n- Files ignored by .gitignore are skipped. Paths are relative to the workspace root.\n- Returns at most `limit` matches (default 100) with `context` lines around each (default 2; use 0 for just the matching lines). Refine the pattern when the result is cut.",
+  "description": "Searches file contents with ripgrep. Each match is printed as `path:line: text`, surrounded by its context lines as `path-line- text`; groups of lines are separated by `--`.\n- `pattern` is a regular expression in ripgrep (Rust regex) syntax; set `fixed` to true to search for a literal string, `ignore_case` for a case-insensitive search and `word` to match whole words only.\n- Narrow the search with `path` (a file or directory) and `glob` (e.g. `*.rs`).\n- Files ignored by .gitignore are skipped. Paths are relative to the workspace root; in a project with several directories all are searched (`path` can be absolute to pick one) and those of the others are absolute.\n- Returns at most `limit` matches (default 100) with `context` lines around each (default 2; use 0 for just the matching lines). Refine the pattern when the result is cut.",
   "input_schema": {
     "type": "object",
     "properties": {
@@ -17,7 +17,7 @@ expression: def
           "string",
           "null"
         ],
-        "description": "File or directory to search in; the whole workspace when omitted.",
+        "description": "File or directory to search in; the whole workspace (every directory\nof a project) when omitted. An absolute path names one under any of\nthe directories.",
         "default": null
       },
       "glob": {

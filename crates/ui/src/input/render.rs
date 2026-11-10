@@ -8,7 +8,7 @@ use gpui_component::input::Textarea;
 use gpui_component::v_flex;
 use gpui_component::{ActiveTheme as _, h_flex};
 
-use super::completion::palette_top;
+use super::completion::{Paint, palette_top};
 use super::cursor::{CursorShape, HiddenCaret, paint_cursor};
 use super::popups::Completion;
 use super::tray::paste_handler;
@@ -23,35 +23,12 @@ impl Render for InputView {
             })
             .clone();
         let tray = self.tray.render(mode_keys.as_deref(), cx);
-        let which_key = self.render_which_key(cx);
-        let completion = self.completion(cx).map(|shown| {
-            // The list may have arrived or shrunk since the last key.
-            let len = shown.len();
-            if len > 0 {
-                let selected = self.palette_selected.min(len - 1);
-                self.palette_top = palette_top(selected, self.palette_top, len);
-            }
-            let (selected, top) = (self.palette_selected, self.palette_top);
-            match shown {
-                Completion::Path(popup) => path_popup::render(popup, selected, top, cx),
-                Completion::Model(popup) => {
-                    model_popup::render(popup, selected, top, self.current_model.as_ref(), cx)
-                }
-                Completion::Theme(popup) => {
-                    theme_popup::render(popup, selected, top, &self.current_theme, cx)
-                }
-            }
-        });
-        let palette = if completion.is_none() {
-            let total = self.palette(cx).len();
-            if total > 0 {
-                let selected = self.palette_selected.min(total - 1);
-                self.palette_top = palette_top(selected, self.palette_top, total);
-            }
-            self.render_palette(cx)
-        } else {
-            None
-        };
+        let mode_control = self.render_mode_control(cx);
+        let popups = self.render_popups(cx);
+        let wide = !self.mode_menu_open();
+        let float = self
+            .float
+            .layer(popups, wide, window.viewport_size().height);
         let focused = self.owns_focus(window, cx);
         let theme = cx.theme();
         let (block, inverted, muted) = (theme.foreground, theme.background, theme.muted_foreground);
@@ -74,6 +51,7 @@ impl Render for InputView {
         .size_full();
         let prompt = h_flex()
             .items_start()
+            .child(mode_control)
             .child(
                 div()
                     .pt_2()
@@ -104,23 +82,19 @@ impl Render for InputView {
         });
         v_flex()
             .id("crest-input")
+            .debug_selector(|| "crest-input".to_owned())
             .key_context("CrestInput")
             .track_focus(&self.focus_handle)
             // A click anywhere else closes the popups.
-            .on_mouse_down_out(cx.listener(|this, _: &gpui::MouseDownEvent, _, cx| {
-                this.hide_popups(cx);
+            .on_mouse_down_out(cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
+                if !this.float.holds(event.position) {
+                    this.hide_popups(cx);
+                }
             }))
             .font_family(theme.mono_font_family.clone())
-            .child(
-                // The wheel over a popup moves its window of rows.
-                v_flex()
-                    .id("input-popups")
-                    .debug_selector(|| "input-popups".to_owned())
-                    .on_scroll_wheel(cx.listener(Self::popup_wheel))
-                    .children(completion)
-                    .children(palette)
-                    .children(which_key),
-            )
+            .relative()
+            // The popups float above the input; the wheel over them moves their rows.
+            .children(float.map(|float| float.on_scroll_wheel(cx.listener(Self::popup_wheel))))
             .children(tray)
             .child(prompt)
             .children(status)
@@ -128,6 +102,58 @@ impl Render for InputView {
 }
 
 impl InputView {
+    /// The popups to show, bottom-up as they stack above the prompt: the mode
+    /// menu, the completion list or the palette, the which-key hint.
+    fn render_popups(&mut self, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
+        let view = cx.entity().downgrade();
+        let menu = self.render_mode_menu(cx);
+        let completion = self.render_completion(cx, &view);
+        let palette = if completion.is_none() {
+            let total = self.palette_len(cx);
+            if total > 0 {
+                let selected = self.palette_selected.min(total - 1);
+                self.palette_top = palette_top(selected, self.palette_top, total);
+            }
+            self.render_palette(cx, &view)
+        } else {
+            None
+        };
+        let which_key = self.render_which_key(cx);
+        [menu, completion, palette, which_key]
+            .into_iter()
+            .flatten()
+            .collect()
+    }
+
+    /// The completion popup (`@`, `/model `, `/theme `), if one shows,
+    /// after fitting its window of rows to the list.
+    fn render_completion(
+        &mut self,
+        cx: &App,
+        view: &gpui::WeakEntity<Self>,
+    ) -> Option<gpui::AnyElement> {
+        let shown = self.completion(cx)?;
+        // The list may have arrived or shrunk since the last key.
+        let len = shown.len();
+        if len > 0 {
+            let selected = self.palette_selected.min(len - 1);
+            self.palette_top = palette_top(selected, self.palette_top, len);
+        }
+        let paint = Paint {
+            selected: self.palette_selected,
+            top: self.palette_top,
+            theme: cx.theme(),
+            view,
+        };
+        Some(match shown {
+            Completion::Path(popup) => path_popup::render(popup, &paint),
+            Completion::Model(popup) => {
+                model_popup::render(popup, &paint, self.current_model.as_ref())
+            }
+            Completion::Theme(popup) => theme_popup::render(popup, &paint, &self.current_theme),
+        })
+    }
+
     /// The keys that can follow the pending prefix (the leader), for the
     /// which-key popup. Empty when nothing is pending.
     pub fn which_key(&self) -> Vec<crate::help::NextKey> {
