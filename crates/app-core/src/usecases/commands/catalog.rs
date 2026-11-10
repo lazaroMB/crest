@@ -84,13 +84,6 @@ pub const CATALOG: &[CommandInfo] = &[
         group: CommandGroup::App,
     },
     CommandInfo {
-        name: "tour",
-        aliases: &[],
-        usage: "/tour",
-        description: "Replay the welcome tour",
-        handler: Handler::Ui,
-    },
-    CommandInfo {
         name: "model",
         aliases: &[],
         usage: "/model [alias|set <id>|clear]",
@@ -106,6 +99,14 @@ pub const CATALOG: &[CommandInfo] = &[
         usage: "/theme [set] [name]",
         description: "Pick a color theme from the popup: moving previews it, Enter saves it, Esc goes back; \
                       `/theme <name>` saves one directly",
+        handler: Handler::Ui,
+        group: CommandGroup::App,
+    },
+    CommandInfo {
+        name: "tour",
+        aliases: &[],
+        usage: "/tour",
+        description: "Replay the welcome tour",
         handler: Handler::Ui,
         group: CommandGroup::App,
     },

@@ -749,6 +749,9 @@ impl Render for Workbench {
             Content::Session(live) => live.session.read(cx).tour_step(),
             Content::Picker(_) | Content::Opening(_) => None,
         };
+        let tour = step.map(|step| {
+            crate::tour::layer(step, &crate::tour::frames(cx), window.viewport_size(), cx)
+        });
         div()
             .id("workbench")
             .track_focus(&self.focus_handle)
@@ -757,14 +760,7 @@ impl Render for Workbench {
             .bg(cx.theme().background)
             .on_action(cx.listener(Self::switch_project))
             .child(body)
-            .when_some(step, |this, step| {
-                this.child(crate::tour::layer(
-                    step,
-                    &crate::tour::frames(cx),
-                    window.viewport_size(),
-                    cx,
-                ))
-            })
+            .children(tour)
     }
 }
 

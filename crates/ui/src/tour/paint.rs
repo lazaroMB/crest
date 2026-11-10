@@ -26,6 +26,8 @@ struct Ink {
     muted: Hsla,
     button: Hsla,
     border: Hsla,
+    warning: Hsla,
+    success: Hsla,
 }
 
 const CARD_W: f32 = 400.0;
@@ -63,6 +65,8 @@ pub fn layer<T: Host>(
         muted: token(cx, "muted.fg"),
         button: token(cx, "button.bg"),
         border: token(cx, "border"),
+        warning: token(cx, "warning.fg"),
+        success: token(cx, "success.fg"),
     };
     let dim = token(cx, "background").opacity(0.72);
     let copy = step.copy();
@@ -259,6 +263,7 @@ fn card_glow(accent: Hsla) -> Vec<BoxShadow> {
         BoxShadow::new(px(0.), px(0.), accent.opacity(0.45))
             .blur_radius(px(18.))
             .spread_radius(px(1.)),
+        // design: fixed color (a drop shadow is dark in every theme)
         BoxShadow::new(px(0.), px(18.), hsla(0.0, 0.0, 0.0, 0.45)).blur_radius(px(28.)),
     ]
 }
@@ -380,8 +385,8 @@ fn mark(step: Step, ink: &Ink) -> AnyElement {
             h_flex()
                 .gap_1()
                 .child(dot(ink.accent))
-                .child(dot(hsla(0.13, 0.85, 0.58, 1.)))
-                .child(dot(hsla(0.35, 0.55, 0.48, 1.))),
+                .child(dot(ink.warning))
+                .child(dot(ink.success)),
         );
     }
     div()
