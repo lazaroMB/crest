@@ -190,7 +190,7 @@ desc = "Search the text"    # optional: shown in the help's Keys section
 keys = "<leader>x"          # removes a mapping, builtin ones included
 ```
 
-- `keys` and `action` follow the rules of [`app.keymap.set`](plugins.md#appkeymapsetkeys-action) (an `action` can only be a builtin action; Lua functions need `init.lua`), and `[[unbind]]` those of [`app.keymap.del`](plugins.md#appkeymapdelkeys). A file's `[[unbind]]` entries apply before its `[[bind]]` ones, so it can free a builtin key and bind something else to it.
+- `keys` and `action` follow the rules of [`app.keymap.set`](plugins.md#appkeymapsetkeys-action-opts) (an `action` can only be a builtin action; Lua functions need `init.lua`), and `[[unbind]]` those of [`app.keymap.del`](plugins.md#appkeymapdelkeys). A file's `[[unbind]]` entries apply before its `[[bind]]` ones, so it can free a builtin key and bind something else to it.
 - Precedence follows the layers: the workspace wins over the global config and, **within one layer, `init.lua` wins over `keymap.toml`** (Lua is applied after the file next to it). The order is: plugins, global `keymap.toml`, global `init.lua`, workspace `keymap.toml`, workspace `init.lua`.
 - The leader and `timeoutlen` are set in `init.lua` only (`app.opt.leader`, `app.opt.timeoutlen`); `<leader>` in `keymap.toml` uses that leader.
 - Problems never stop crest: a file that does not parse is ignored with a startup warning (the file and line), and an entry without `keys` or `action`, with a value that is not a string, or with unknown fields is reported (and skipped when it cannot apply). The checks of the keymap itself (unknown action, keys mapped twice, a mapping that starts a longer one) apply to these mappings too.
