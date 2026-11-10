@@ -262,6 +262,35 @@ pub const PANEL_KEYS: &[(&str, &str, &str)] = &[
         "Filter the rules (Enter goes back to the list)",
     ),
     ("Permissions (/permissions)", "Esc", "Close"),
+    // The MCP servers manager.
+    ("MCP servers (/mcp)", "Up / Down, k / j", "Choose a server"),
+    (
+        "MCP servers (/mcp)",
+        "Tab / Shift+Tab",
+        "Overview, Tools, Log",
+    ),
+    (
+        "MCP servers (/mcp)",
+        "a, e, d",
+        "Add a server, edit or delete the chosen one (init.lua servers are read-only; d asks: Enter deletes, Esc keeps)",
+    ),
+    (
+        "MCP servers (/mcp)",
+        "t, r, l",
+        "Test the chosen server, restart it, log in (http with OAuth)",
+    ),
+    ("MCP servers (/mcp)", "Space", "Turn the server on or off"),
+    (
+        "MCP servers (/mcp)",
+        "/, f, o",
+        "Filter the servers, filter the tools, unfold a tool",
+    ),
+    (
+        "MCP servers (/mcp)",
+        "Tab, Ctrl+Enter, Esc (in the form)",
+        "Next field, save and start, leave the form",
+    ),
+    ("MCP servers (/mcp)", "Esc", "Close"),
     ("/login", "Enter", "Check the key"),
     ("/login", "Esc", "Close (also while the key is checked)"),
 ];

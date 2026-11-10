@@ -140,6 +140,8 @@ pub const THEME_ACTION: &str = "theme.pick";
 pub const MODE_ACTION: &str = "mode.pick";
 /// Action of `<leader>A` and `/permissions`.
 pub const PERMISSIONS_ACTION: &str = "permissions.open";
+/// Action of `<leader>S` and `/mcp`.
+pub const MCP_ACTION: &str = "mcp.open";
 /// Action of `<leader>W`.
 pub const PROJECT_ACTION: &str = "project.switch";
 /// Action of `<leader>O`.
@@ -564,6 +566,8 @@ pub enum SessionEvent {
     },
     /// The welcome tour opened, moved or closed. The window draws it.
     Tour,
+    /// The MCP servers changed: the sidebar's dock shows this summary.
+    Mcp(crate::mcp::McpSummary),
 }
 
 /// The session: owns the views of the main window and the turn in flight.
@@ -611,6 +615,8 @@ pub struct Session {
     quit_asked_at: Option<Instant>,
     /// `m` of the `/permissions` modal (replaced when it opens again).
     permissions_events: Option<Subscription>,
+    /// The changes of the `/mcp` modal (replaced when it opens again).
+    mcp_events: Option<Subscription>,
     /// The welcome tour step on screen, if it is open.
     tour: Option<crate::tour::Step>,
     /// Prompt text put aside while the commands step shows `/`.
@@ -620,6 +626,8 @@ pub struct Session {
     _git_timer: Task<()>,
     _events: Task<()>,
     _forms: Option<Task<()>>,
+    /// Follows the controller's MCP changes for the dock and the manager.
+    _mcp_changes: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -837,14 +845,17 @@ impl Session {
             sidebar: crate::chats::SidebarWidth::default(),
             quit_asked_at: None,
             permissions_events: None,
+            mcp_events: None,
             tour: None,
             tour_saved_prompt: None,
             tutorial_seen,
             _git_timer: Self::git_timer(cx),
             _events: Self::consume(events, cx),
             _forms: forms.map(|forms| Self::listen_forms(forms, window, cx)),
+            _mcp_changes: None,
             _subscriptions: subscriptions,
         };
+        this._mcp_changes = Some(this.watch_mcp(cx));
         this.load_commands(window, cx);
         this.refresh_git(cx);
         if resume_pending {

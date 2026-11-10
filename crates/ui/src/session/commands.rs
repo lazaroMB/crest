@@ -4,8 +4,10 @@ use application_core::keymap::Action;
 use application_core::ports::events::{DomainEvent, NoticeLevel};
 use application_core::ports::plugin::PluginAction;
 use application_core::usecases::commands::{
-    Command, ModelCommand, ThemeCommand, parse, unknown_command_hint,
+    Command, MCP_USAGE, McpCommand, McpVerb, ModelCommand, ThemeCommand, parse,
+    unknown_command_hint,
 };
+use application_core::usecases::mcp_servers::McpAction;
 use domain::block::{BlockId, CustomNode, ImageData, ImageFit};
 use domain::conversation::ImageAttachment;
 use domain::modal::{ModalId, ModalPosition, ModalSpec, Percent};
@@ -68,6 +70,7 @@ impl Session {
             Command::Help(search) => self.open_help(&search, window, cx),
             Command::Tour => self.open_tour(cx),
             Command::Permissions => self.open_permissions(window, cx),
+            Command::Mcp(mcp) => self.mcp_command(mcp, window, cx),
             Command::ModalClose => {
                 let closed = self
                     .modal
@@ -312,5 +315,54 @@ impl Session {
     ) {
         self.input
             .update(cx, |input, cx| input.insert_text(text, window, cx));
+    }
+}
+
+impl Session {
+    /// `/mcp <args>`: the manager opens on what was asked.
+    fn mcp_command(&mut self, command: McpCommand, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::mcp::{McpOpen, McpTab, McpThen};
+        let target = match command {
+            McpCommand::List => McpOpen::default(),
+            McpCommand::Add => McpOpen {
+                add: true,
+                ..McpOpen::default()
+            },
+            McpCommand::Open(name) => McpOpen {
+                server: Some(name),
+                ..McpOpen::default()
+            },
+            McpCommand::Tools(name) => McpOpen {
+                server: Some(name),
+                tab: Some(McpTab::Tools),
+                ..McpOpen::default()
+            },
+            McpCommand::Trust(name) => McpOpen {
+                server: Some(name),
+                then: Some(McpThen::Act(McpAction::Trust)),
+                ..McpOpen::default()
+            },
+            McpCommand::Manage { verb, name } => {
+                let then = match verb {
+                    McpVerb::Remove => McpThen::ConfirmDelete,
+                    McpVerb::Restart => McpThen::Act(McpAction::Restart),
+                    McpVerb::Enable => McpThen::Act(McpAction::Enable),
+                    McpVerb::Disable => McpThen::Act(McpAction::Disable),
+                    McpVerb::Login => McpThen::Act(McpAction::Login),
+                    McpVerb::Logout => McpThen::Act(McpAction::Logout),
+                    McpVerb::Test => McpThen::Act(McpAction::Test),
+                };
+                McpOpen {
+                    server: Some(name),
+                    then: Some(then),
+                    ..McpOpen::default()
+                }
+            }
+            McpCommand::Invalid => {
+                self.notice(NoticeLevel::Warning, MCP_USAGE, cx);
+                return;
+            }
+        };
+        self.open_mcp(target, window, cx);
     }
 }

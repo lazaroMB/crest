@@ -31,6 +31,8 @@ const _: () = assert!(BUTTON_PX + GAP_PX + CHIP_MAX_PX <= CONTROL_MAX_PX && CLOS
 
 /// The row of the menu where the inserts start.
 const INSERTS_AT: usize = 3;
+/// The row of the menu where the manager is.
+const MANAGE_AT: usize = 5;
 
 impl InputView {
     /// The round button and, outside chat, the chip. Together they never
@@ -91,6 +93,10 @@ impl InputView {
             if ix == INSERTS_AT {
                 rows.push(div().h_px().my_1().bg(border).into_any_element());
                 rows.push(section("Add"));
+            }
+            if ix == MANAGE_AT {
+                rows.push(div().h_px().my_1().bg(border).into_any_element());
+                rows.push(section("Manage"));
             }
             let on = entry == MenuEntry::Mode(self.mode_control.mode);
             let row = menu_row(ix, entry, on, cx);

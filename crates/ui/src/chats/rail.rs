@@ -356,7 +356,65 @@ pub(super) fn full(
                 .map(|input| div().px_2().pb_1().child(Input::new(input))),
         )
         .child(crate::keyscroll::list("chats-list", &panel.scroll, rows).flex_1())
+        .child(mcp_dock(panel, cx))
         .child(crate::tour::probe(crate::tour::Anchor::Chats))
+        .into_any_element()
+}
+
+/// The dock at the bottom of the full sidebar: the MCP servers in a few
+/// words, and a click opens their manager.
+fn mcp_dock(panel: &ChatsPanel, cx: &mut Context<ChatsPanel>) -> AnyElement {
+    let summary = panel.mcp();
+    let theme = cx.theme();
+    let (border, active) = (theme.border, theme.list_active);
+    let dot = crate::mcp::tone_color(summary.tone(), cx);
+    let parts = summary.parts();
+    let status: Vec<AnyElement> = if parts.is_empty() {
+        vec![crate::kit::caption(summary.text(), cx).into_any_element()]
+    } else {
+        let mut status = Vec::new();
+        for (ix, (text, tone)) in parts.into_iter().enumerate() {
+            if ix > 0 {
+                status.push(crate::kit::caption(" · ", cx).into_any_element());
+            }
+            status.push(
+                crate::kit::caption(text, cx)
+                    .text_color(crate::mcp::tone_color(tone, cx))
+                    .into_any_element(),
+            );
+        }
+        status
+    };
+    v_flex()
+        .debug_selector(|| "mcp-dock".to_owned())
+        .flex_none()
+        .border_t_1()
+        .border_color(border)
+        .px_1()
+        .py_1()
+        .child(
+            div()
+                .id("mcp-dock-button")
+                .debug_selector(|| "mcp-dock-button".to_owned())
+                .flex()
+                .items_center()
+                .gap_2()
+                .px_2()
+                .py_1()
+                .cursor_pointer()
+                .hover(move |style| style.bg(active).rounded_sm())
+                .on_click(cx.listener(|_, _, _, cx| cx.emit(ChatsEvent::Mcp)))
+                .child(div().flex_none().text_color(dot).child("●"))
+                .child(label("MCP servers"))
+                .child(crate::kit::readout(summary.total.to_string(), cx)),
+        )
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .px_2()
+                .child(div().flex().flex_wrap().children(status)),
+        )
         .into_any_element()
 }
 
@@ -403,7 +461,33 @@ pub(super) fn strip(panel: &ChatsPanel, cx: &mut Context<ChatsPanel>) -> AnyElem
         .pt_1()
         .child(mark_button("Show the full sidebar", SidebarWidth::Full, cx))
         .children(rows)
+        .children(strip_mcp(panel, cx))
         .into_any_element()
+}
+
+/// The strip's dot of the MCP servers, at the bottom, when there are any.
+fn strip_mcp(panel: &ChatsPanel, cx: &mut Context<ChatsPanel>) -> Option<AnyElement> {
+    let summary = panel.mcp();
+    if summary.total == 0 {
+        return None;
+    }
+    let dot = crate::mcp::tone_color(summary.tone(), cx);
+    Some(
+        div()
+            .id("sidebar-mcp")
+            .debug_selector(|| "sidebar-mcp".to_owned())
+            .mt_auto()
+            .mb_1()
+            .size(px(28.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .cursor_pointer()
+            .text_color(dot)
+            .on_click(cx.listener(|_, _, _, cx| cx.emit(ChatsEvent::Mcp)))
+            .child("●")
+            .into_any_element(),
+    )
 }
 
 /// Hidden: only the mark, top left. Pointer hover or keyboard focus on it

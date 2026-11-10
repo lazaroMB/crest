@@ -5,9 +5,9 @@ use application_core::ports::events::NoticeLevel;
 use gpui::{App, Context, Entity, Focusable as _, KeystrokeEvent, Subscription, Window};
 
 use super::{
-    FOCUS_NEXT_ACTION, FOCUS_WIDGET_ACTION, FULLSCREEN_ACTION, INTERRUPT_ACTION, MODE_ACTION,
-    MODEL_ACTION, OUTLINE_ACTION, PERMISSION_ACTION, PERMISSIONS_ACTION, PROJECT_ACTION,
-    QUIT_ACTION, Session, SessionEvent, THEME_ACTION,
+    FOCUS_NEXT_ACTION, FOCUS_WIDGET_ACTION, FULLSCREEN_ACTION, INTERRUPT_ACTION, MCP_ACTION,
+    MODE_ACTION, MODEL_ACTION, OUTLINE_ACTION, PERMISSION_ACTION, PERMISSIONS_ACTION,
+    PROJECT_ACTION, QUIT_ACTION, Session, SessionEvent, THEME_ACTION,
 };
 use crate::help::HELP_ACTION;
 use crate::input::attachments::ImageMode;
@@ -385,6 +385,7 @@ impl Session {
             MODEL_ACTION => self.open_model_popup(window, cx),
             HELP_ACTION => self.open_help("", window, cx),
             PERMISSIONS_ACTION => self.open_permissions(window, cx),
+            MCP_ACTION => self.open_mcp(crate::mcp::McpOpen::default(), window, cx),
             QUIT_ACTION => self.quit(window, cx),
             FULLSCREEN_ACTION => window.toggle_fullscreen(),
             THEME_ACTION => self.open_theme_popup(window, cx),
