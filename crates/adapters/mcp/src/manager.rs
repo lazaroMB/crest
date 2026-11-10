@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::Duration;
 
 use application_core::ports::mcp::{
-    McpError, McpPort, McpServerState, McpServerStatus, McpTool, McpToolResult,
+    McpError, McpPort, McpServerState, McpServerStatus, McpTool, McpToolResult, invalid_server_name,
 };
 use application_core::ports::plugin::{McpServerSpec, McpTransport};
 use async_trait::async_trait;
@@ -212,15 +212,6 @@ impl fmt::Debug for McpManager {
     }
 }
 
-/// Why `name` cannot be used to qualify tool names, if it cannot.
-fn invalid_name(name: &str) -> Option<String> {
-    let valid_chars = name
-        .bytes()
-        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-');
-    (name.is_empty() || !valid_chars || name.contains("__"))
-        .then(|| format!("invalid server name `{name}` (use letters, digits, `-` and single `_`)"))
-}
-
 /// How `spec` is reached, for lists.
 fn describe(spec: &McpServerSpec) -> String {
     match &spec.transport {
@@ -278,7 +269,7 @@ impl McpManager {
         let mut seen = HashSet::new();
         let mut servers = Vec::with_capacity(entries.len());
         for McpEntry { spec, trusted } in entries {
-            let problem = invalid_name(&spec.name).or_else(|| {
+            let problem = invalid_server_name(&spec.name).or_else(|| {
                 (!seen.insert(spec.name.clone()))
                     .then(|| format!("duplicate MCP server `{}`", spec.name))
             });
@@ -625,7 +616,7 @@ impl McpPort for McpManager {
                 message: "not trusted: /mcp trust it first".into(),
             });
         }
-        if let Some(problem) = invalid_name(name) {
+        if let Some(problem) = invalid_server_name(name) {
             return Err(McpError::Unavailable {
                 server: name.to_owned(),
                 message: problem,
@@ -713,11 +704,11 @@ mod tests {
 
     #[test]
     fn server_names_must_qualify_tool_names() {
-        assert_eq!(invalid_name("github"), None);
-        assert_eq!(invalid_name("my-server_2"), None);
-        assert!(invalid_name("").is_some());
-        assert!(invalid_name("a__b").is_some());
-        assert!(invalid_name("con espacio").is_some());
+        assert_eq!(invalid_server_name("github"), None);
+        assert_eq!(invalid_server_name("my-server_2"), None);
+        assert!(invalid_server_name("").is_some());
+        assert!(invalid_server_name("a__b").is_some());
+        assert!(invalid_server_name("con espacio").is_some());
     }
 
     #[test]

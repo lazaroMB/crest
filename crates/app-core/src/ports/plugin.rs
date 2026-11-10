@@ -204,6 +204,18 @@ pub enum ConfigOrigin {
     Workspace,
 }
 
+/// Where an MCP server is declared, which decides who may edit it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpSource {
+    /// `app.mcp` in an `init.lua` (global, plugin or workspace): edited there.
+    #[default]
+    Lua,
+    /// `mcp.json` next to that `init.lua`: what the MCP servers manager
+    /// writes.
+    Json,
+}
+
 /// An MCP server declared in the config.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct McpServerSpec {
@@ -228,6 +240,9 @@ pub struct McpServerSpec {
     /// Layer that declared it (the last one, when several did).
     #[serde(default)]
     pub origin: ConfigOrigin,
+    /// File kind that declared it: `init.lua` or `mcp.json`.
+    #[serde(default)]
+    pub source: McpSource,
 }
 
 impl McpServerSpec {
@@ -242,6 +257,7 @@ impl McpServerSpec {
             startup_timeout_ms: None,
             disabled: false,
             origin: ConfigOrigin::Global,
+            source: McpSource::Lua,
         }
     }
 }
