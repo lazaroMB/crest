@@ -42,6 +42,10 @@ pub struct Preferences {
     /// Theme picked with `/theme`; `app.opt.theme` wins over it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub theme: Option<String>,
+    /// Welcome tour version the user finished or skipped. Missing means
+    /// the current tour has not been seen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tutorial_version: Option<u32>,
 }
 
 impl Preferences {
@@ -156,6 +160,18 @@ mod tests {
             Preferences::load(&path).unwrap().provider,
             Some(ProviderId::Anthropic)
         );
+    }
+
+    #[test]
+    fn the_tutorial_version_round_trips_and_old_files_omit_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE);
+        update(Some(&path), |p| p.tutorial_version = Some(1)).unwrap();
+        assert_eq!(Preferences::load(&path).unwrap().tutorial_version, Some(1));
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("\"tutorial_version\": 1"), "{text}");
+        std::fs::write(&path, "{}\n").unwrap();
+        assert_eq!(Preferences::load(&path).unwrap().tutorial_version, None);
     }
 
     #[test]

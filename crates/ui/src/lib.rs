@@ -25,6 +25,7 @@ pub mod status;
 pub mod sysboard;
 pub mod theme;
 pub mod timeline;
+pub mod tour;
 pub mod tree;
 pub mod widgets;
 pub mod workbench;

@@ -549,6 +549,7 @@ impl Workbench {
                     _ => self.reload_chats(cx),
                 }
             }
+            SessionEvent::Tour => cx.notify(),
         }
     }
 
@@ -709,8 +710,23 @@ impl Focusable for Workbench {
     }
 }
 
+impl crate::tour::Host for Workbench {
+    fn tour_act(
+        &mut self,
+        action: crate::tour::Action,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Content::Session(live) = &self.content else {
+            return;
+        };
+        live.session
+            .update(cx, |session, cx| session.tour_act(action, window, cx));
+    }
+}
+
 impl Render for Workbench {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body: AnyElement = match &self.content {
             Content::Picker(picker) => picker.clone().into_any_element(),
             // The sidebar is drawn by the root, so the prompt and the
@@ -729,13 +745,22 @@ impl Render for Workbench {
                 .child(SharedString::from(format!("Opening {}…", dir.display())))
                 .into_any_element(),
         };
+        let step = match &self.content {
+            Content::Session(live) => live.session.read(cx).tour_step(),
+            Content::Picker(_) | Content::Opening(_) => None,
+        };
+        let tour = step.map(|step| {
+            crate::tour::layer(step, &crate::tour::frames(cx), window.viewport_size(), cx)
+        });
         div()
             .id("workbench")
             .track_focus(&self.focus_handle)
+            .relative()
             .size_full()
             .bg(cx.theme().background)
             .on_action(cx.listener(Self::switch_project))
             .child(body)
+            .children(tour)
     }
 }
 

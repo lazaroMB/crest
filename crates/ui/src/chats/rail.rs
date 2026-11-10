@@ -342,7 +342,12 @@ pub(super) fn full(
                 .child(mark_button("Hide the sidebar", SidebarWidth::Hidden, cx))
                 .child(div().font_weight(gpui::FontWeight::SEMIBOLD).child("Crest")),
         )
-        .child(nav_row("chats-new", NEW_CHAT, new_chat(), cx))
+        .child(
+            div()
+                .relative()
+                .child(nav_row("chats-new", NEW_CHAT, new_chat(), cx))
+                .child(crate::tour::probe(crate::tour::Anchor::NewChat)),
+        )
         .child(nav_row("chats-search", SEARCH, toggle, cx))
         .children(
             panel
@@ -351,6 +356,7 @@ pub(super) fn full(
                 .map(|input| div().px_2().pb_1().child(Input::new(input))),
         )
         .child(crate::keyscroll::list("chats-list", &panel.scroll, rows).flex_1())
+        .child(crate::tour::probe(crate::tour::Anchor::Chats))
         .into_any_element()
 }
 

@@ -103,6 +103,14 @@ pub const CATALOG: &[CommandInfo] = &[
         group: CommandGroup::App,
     },
     CommandInfo {
+        name: "tour",
+        aliases: &[],
+        usage: "/tour",
+        description: "Replay the welcome tour",
+        handler: Handler::Ui,
+        group: CommandGroup::App,
+    },
+    CommandInfo {
         name: "mode",
         aliases: &[],
         usage: "/mode <ask|auto-edit|plan>",

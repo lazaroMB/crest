@@ -80,6 +80,15 @@ impl Session {
             cx.stop_propagation();
             return;
         }
+        // The tour covers the window. Escape closes it; nothing else reaches
+        // the prompt, so a key cannot send a message while it is open.
+        if self.tour.is_some() {
+            if event.keystroke.key == "escape" {
+                self.tour_act(crate::tour::Action::Exit, window, cx);
+            }
+            cx.stop_propagation();
+            return;
+        }
         if self.input.read(cx).owns_focus(window, cx) {
             return;
         }

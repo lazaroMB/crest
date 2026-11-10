@@ -454,12 +454,21 @@ fn conversation(root: &RootView, cx: &App) -> impl IntoElement {
         .flex_1()
         .min_w_0()
         .h_full()
-        .child(div().id("timeline").flex_1().min_h_0().p_2().child(slot(
-            &root.timeline,
-            Some(StyleRefinement::default().size_full()),
-            "timeline",
-            cx,
-        )))
+        .child(
+            div()
+                .id("timeline")
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .p_2()
+                .child(slot(
+                    &root.timeline,
+                    Some(StyleRefinement::default().size_full()),
+                    "timeline",
+                    cx,
+                ))
+                .child(crate::tour::probe(crate::tour::Anchor::Timeline)),
+        )
         .children(root.activity.clone())
 }
 
@@ -470,11 +479,13 @@ fn footer(root: &RootView, cx: &App) -> (impl IntoElement, impl IntoElement) {
     let (border, status_bg) = (theme.border, theme.title_bar);
     let prompt = div()
         .debug_selector(|| "prompt-row".to_owned())
+        .relative()
         .px_2()
         .pb_1()
         .border_t_1()
         .border_color(border)
-        .child(slot(&root.input, None, "input", cx));
+        .child(slot(&root.input, None, "input", cx))
+        .child(crate::tour::probe(crate::tour::Anchor::Prompt));
     let status = div()
         .debug_selector(|| "status-row".to_owned())
         .px_2()

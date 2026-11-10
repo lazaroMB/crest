@@ -1555,6 +1555,19 @@ impl SessionController for UiController {
             .boxed()
     }
 
+    fn save_tutorial(&self, version: u32) -> BoxFuture<'static, Result<(), String>> {
+        let Some(path) = self.preferences_path.clone() else {
+            return futures::future::ready(Ok(())).boxed();
+        };
+        let task = self.handle.spawn_blocking(move || {
+            crate::preferences::update(Some(&path), |preferences| {
+                preferences.tutorial_version = Some(version);
+            })
+        });
+        task.map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
+            .boxed()
+    }
+
     fn themes(&self) -> BoxFuture<'static, Result<Vec<ui::session::ThemeChoice>, String>> {
         let (catalog, options) = (self.themes.clone(), self.theme_options.clone());
         let task = self
@@ -1783,6 +1796,16 @@ impl SessionController for UnavailableController {
         futures::future::ready(()).boxed()
     }
 
+    fn save_tutorial(&self, version: u32) -> BoxFuture<'static, Result<(), String>> {
+        let Some(path) = self.preferences_path.clone() else {
+            return futures::future::ready(Ok(())).boxed();
+        };
+        futures::future::ready(crate::preferences::update(Some(&path), |preferences| {
+            preferences.tutorial_version = Some(version);
+        }))
+        .boxed()
+    }
+
     fn login(&self, account: Account, key: String) -> BoxFuture<'static, Result<String, String>> {
         match &self.login {
             Some((handle, keys)) => login_on(
@@ -1851,6 +1874,12 @@ pub fn session_parts(
             .flatten()
     });
     let db_path = overrides.db_path.clone();
+    let tutorial_seen = match preferences_path.as_deref() {
+        Some(path) => Preferences::load(path)
+            .ok()
+            .and_then(|preferences| preferences.tutorial_version),
+        None => Some(ui::tour::VERSION),
+    };
     let built = handle.block_on(build_app(config, frontend, overrides));
     let (mut parts, workspace) = match built {
         Ok(app) => {
@@ -1946,6 +1975,7 @@ pub fn session_parts(
     };
     parts.forms = Some(forms);
     name_workspace(&mut parts, config, workspace);
+    parts.tutorial_seen = tutorial_seen;
     Ok(parts)
 }
 

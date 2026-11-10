@@ -115,6 +115,7 @@ mod model;
 mod overlays;
 mod queue;
 mod theme;
+mod tour;
 
 use model::mode_rows;
 use queue::Queued;
@@ -278,6 +279,13 @@ pub trait SessionController: Send + Sync {
     fn save_theme(&self, name: String) -> BoxFuture<'static, Result<SavedTheme, String>> {
         let _ = name;
         futures::future::ready(Err("this session cannot save a theme".to_owned())).boxed()
+    }
+
+    /// Remembers that welcome tour `version` was finished or skipped.
+    /// The default keeps it for this window only.
+    fn save_tutorial(&self, version: u32) -> BoxFuture<'static, Result<(), String>> {
+        let _ = version;
+        futures::future::ready(Ok(())).boxed()
     }
 
     /// Adds a line sent from the prompt to the session's history, saved
@@ -445,6 +453,10 @@ pub struct SessionParts {
     /// process ended while the form waited): the session asks it again as
     /// soon as it opens ([`SessionController::resume_pending`]).
     pub resume_pending: bool,
+    /// Welcome tour version already finished or skipped. `None` shows it
+    /// once this session is clear of login, model picking and other modals.
+    /// Tests and examples set [`crate::tour::VERSION`] so it stays closed.
+    pub tutorial_seen: Option<u32>,
 }
 
 impl SessionParts {
@@ -477,6 +489,7 @@ impl SessionParts {
             session_id: None,
             project_id: None,
             resume_pending: false,
+            tutorial_seen: Some(crate::tour::VERSION),
         }
     }
 }
@@ -500,6 +513,8 @@ pub enum SessionEvent {
         /// The turn waits for an approval or a form.
         waiting: bool,
     },
+    /// The welcome tour opened, moved or closed. The window draws it.
+    Tour,
 }
 
 /// The session: owns the views of the main window and the turn in flight.
@@ -547,6 +562,12 @@ pub struct Session {
     quit_asked_at: Option<Instant>,
     /// `m` of the `/permissions` modal (replaced when it opens again).
     permissions_events: Option<Subscription>,
+    /// The welcome tour step on screen, if it is open.
+    tour: Option<crate::tour::Step>,
+    /// Prompt text put aside while the commands step shows `/`.
+    tour_saved_prompt: Option<String>,
+    /// Version already stored, so a later close does not write again.
+    tutorial_seen: Option<u32>,
     _git_timer: Task<()>,
     _events: Task<()>,
     _forms: Option<Task<()>>,
@@ -621,6 +642,7 @@ impl Session {
             needs_login,
             needs_model,
             resume_pending,
+            tutorial_seen,
             ..
         } = parts;
         let timeline = cx.new(|cx| {
@@ -766,6 +788,9 @@ impl Session {
             sidebar: crate::chats::SidebarWidth::default(),
             quit_asked_at: None,
             permissions_events: None,
+            tour: None,
+            tour_saved_prompt: None,
+            tutorial_seen,
             _git_timer: Self::git_timer(cx),
             _events: Self::consume(events, cx),
             _forms: forms.map(|forms| Self::listen_forms(forms, window, cx)),
@@ -786,6 +811,16 @@ impl Session {
                 cx,
             );
             this.open_model_popup(window, cx);
+        }
+        let blocked = needs_login
+            || needs_model
+            || resume_pending
+            || this.login.read(cx).is_open()
+            || this.approval.read(cx).is_open()
+            || this.modal.read(cx).is_open()
+            || this.picker.read(cx).is_open();
+        if crate::tour::should_auto_open(tutorial_seen, blocked) {
+            this.tour = Some(crate::tour::Step::Welcome);
         }
         this
     }
