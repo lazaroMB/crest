@@ -81,7 +81,7 @@ flowchart TB
 | --- | --- | --- | --- | --- |
 | `LlmPort` | `ports/llm.rs` | `stream(LlmRequest)`, `count_tokens` | `adapter_anthropic::AnthropicLlm`. In the research workflow it is wrapped by `WebToolsLlm` (bin). | `llm::ScriptedLlm` |
 | `ModelCatalogPort` | `ports/llm.rs` | `list_models()` | `adapter_anthropic::AnthropicCatalog` | `llm::FakeModelCatalog` |
-| `McpPort` | `ports/mcp.rs` | `list_tools`, `call_tool`, `servers` | `adapter_mcp::McpManager` (with the bin's `TimedMcp`, for per-server timeouts) | `llm::FakeMcp` |
+| `McpPort` | `ports/mcp.rs` | `list_tools`, `call_tool`, `servers`, `restart`, `set_enabled`, `login`, `logout` | `adapter_mcp::McpManager` (per-server timeouts, live add/replace/remove, a log per server, `probe`) | `llm::FakeMcp` |
 | `FileSystemPort` | `ports/fs.rs` | `root`, `read_file`, `read_bytes`, `read_head`, `exists`, `prepare_edit`, `prepare_write`, `apply` | `adapter_fs::LocalFs` | `fs::InMemoryFs` |
 | `FileSearchPort` | `ports/search.rs` | `list_files`, `find_file`, `tree` | `adapter_search::RipgrepSearch` | `fs::InMemoryFs` |
 | `ContentSearchPort` | `ports/search.rs` | `grep` | `adapter_search::RipgrepSearch` | `fs::InMemoryFs` |
@@ -103,7 +103,7 @@ flowchart TB
 
 Themes are split the same way: `domain::theme` holds the colors, the tokens and how missing ones are derived; `application_core::theme` parses theme tables, resolves `extends` and keeps the catalog (built-in TwoCrest, files, `app.theme.define`); `ui::theme` is the only place that maps a resolved theme onto gpui-component (and keeps it as a global for crest's own views).
 
-The UI also defines its own inbound port, `ui::session::SessionController`, with the methods `run_turn`, `permission_mode`, `models`, `new_session`, `run_callback`, `run_command`, `recompute` (re-runs a computed card's envelope) and `permission_rules` / `remove_permission_rule` / `promote_permission_rule` (for `/permissions`, over `usecases::permissions`), among others. The binary implements it (`UiController`) on top of the real `AgentService`.
+The UI also defines its own inbound port, `ui::session::SessionController`, with the methods `run_turn`, `permission_mode`, `models`, `new_session`, `run_callback`, `run_command`, `recompute` (re-runs a computed card's envelope), `permission_rules` / `remove_permission_rule` / `promote_permission_rule` (for `/permissions`, over `usecases::permissions`) and `mcp_servers` / `mcp_act` / `mcp_save` / `mcp_remove` / `mcp_test` / `mcp_changes` (for the MCP servers manager, over `usecases::mcp_servers`, which also holds the `mcp.json` codec and the merge of its layers with `app.mcp`; the binary's `mcp_control` does the I/O), among others. The binary implements it (`UiController`) on top of the real `AgentService`.
 
 `/` commands are read in `application_core::usecases::commands`: `parse` splits a line in name and argument, `Command::from_line` resolves the aliases (`/h`, `/aparte`, `/volver`...) and the typed arguments (`ResearchCommand`, `ImplementCommand`, `McpCommand`...), and `CATALOG` lists every built-in with its usage and whether the session or the controller runs it (the help and the unknown-command hint read it). The session runs its own commands (`/model`, `/clear`, `/q`...) and passes the rest to `SessionController::run_command(Command)`; `UiController` hands them to `dispatch`, the one `match` from a `Command` to a `CommandHandler` method, which it implements over its flows, MCP servers, plugins and Lua callbacks. The headless research loop reads `/aside` and `/flow` with the same parse. The UI depends only on `application-core` and `domain` (its session and picker tests also use `application`'s file tools, as a dev-dependency).
 
@@ -260,7 +260,7 @@ The database is a single SQLite file: `$XDG_DATA_HOME/crest/sessions.db` (by def
 
 - The session is saved after every turn, as `StoredSession { session, timeline, permission_rules }`.
 - On startup, `resume_latest` takes the workspace's most recent session (by canonical path), restores its rules and re-emits its timeline.
-- Outside SQLite live `mcp-trust.json` (approved MCP servers), the project permission rules (`<workspace>/.crest/permissions.local.toml`) and the Specs (`<workspace>/.crest/specs/`).
+- Outside SQLite live `mcp-trust.json` (approved MCP servers), the two `mcp.json` (servers saved by the manager, next to each `init.lua`), the project permission rules (`<workspace>/.crest/permissions.local.toml`) and the Specs (`<workspace>/.crest/specs/`).
 
 ## Composition root
 

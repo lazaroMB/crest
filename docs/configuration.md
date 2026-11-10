@@ -449,7 +449,7 @@ app.opt.rtk = { enabled = true, path = "rtk" }   -- or app.opt.rtk = true
 
 ## MCP servers
 
-They are declared in `app.mcp`, either as a table keyed by name or with `app.mcp.add`. All fields are described in [plugins.md](plugins.md#appmcp-mcp-servers).
+Two ways to declare them: the **MCP servers manager** of the window (`/mcp`, `Ctrl+G S`, the `+` menu of the prompt or the dock of the sidebar; [usage.md](usage.md#mcp-servers-mcp)), which saves to [`mcp.json`](#mcpjson), and `app.mcp` in `init.lua`, either as a table keyed by name or with `app.mcp.add`. All fields are described in [plugins.md](plugins.md#appmcp-mcp-servers).
 
 ```lua
 app.mcp.add("docs", { command = "mcp-docs", args = { "--root", "." }, effect = "read", timeout = 30 })
@@ -469,21 +469,57 @@ app.mcp.add("linear", { url = "https://mcp.linear.app/mcp" })
 - Stdio servers run in the workspace root (or `cwd`). When one fails, the message includes the last lines it wrote on stderr.
 - A server that sends `tools/list_changed` gets its tools listed again; one whose connection drops is reconnected once.
 
+### `mcp.json`
+
+What the manager writes: `~/.config/crest/mcp.json` for every project (**Global**) and `<workspace>/.crest/mcp.json` for one (**This workspace**), next to the `init.lua` of each layer. It holds the servers by name with the same fields `app.mcp.add` takes, in JSON (seconds for the timeouts):
+
+```json
+{
+  "servers": {
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp/",
+      "oauth": { "client_id": "", "scopes": ["repo"] },
+      "effect": "network"
+    },
+    "postgres": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["mcp-server-postgres"],
+      "env": { "PGURL": "${PGURL}" },
+      "effect": "read",
+      "timeout": 30,
+      "disabled": false
+    }
+  }
+}
+```
+
+- The layers merge by name: a workspace server replaces a global one, and within a layer `init.lua` wins over the `mcp.json` beside it, with a startup warning (`MCP server x in … is shadowed by app.mcp in init.lua; edit it there`).
+- Servers from `init.lua` appear in the manager read-only; those from `mcp.json` can be edited and removed there, and **Enabled** / `/mcp disable` is remembered in the file (`disabled`).
+- A workspace server saved from the manager is approved at once (you typed it); one that comes with the repository in `.crest/mcp.json` waits for `/mcp trust` like one from `.crest/init.lua`, and a changed declaration asks again.
+- The file is written readable only by its owner, like `mcp-trust.json`; a file crest cannot read is a startup warning and its servers are skipped.
+
 ### `/mcp`
+
+In the window every form opens the manager on what was asked; in a terminal (`crest -p`) `/mcp` and `/mcp tools` print tables and the rest answer with a notice.
 
 | Command | What it does |
 | --- | --- |
-| `/mcp` | A table of every server: state (starting, ready · N tools, failed, needs login, disabled, not trusted), transport, config layer, and the error or the next command. |
+| `/mcp` | The manager (in a terminal: a table of every server with state, transport, config layer, and the error or the next command). |
+| `/mcp add`, `/mcp <name>` | The manager on its add form, or on that server. |
 | `/mcp tools <name>` | The tools of a ready server, with the names the model sees. |
+| `/mcp test <name>` | Connects the server once more, without touching the running one, and reports (`connected in 240 ms · 8 tools`, or why not). |
 | `/mcp restart <name>` | Closes the session and connects again (after fixing a token, or a server that crashed). |
-| `/mcp disable <name>`, `/mcp enable <name>` | Turns a server off or on for this session. `disabled = true` in `init.lua` keeps it off. |
-| `/mcp login <name>` | OAuth login of an HTTP server: opens the browser, waits for it on a loopback port, stores the tokens in the system keyring (service `crest`, entry `mcp-oauth:<name>`) and reconnects. Later runs reuse and refresh them. |
+| `/mcp disable <name>`, `/mcp enable <name>` | Turns a server off or on. Remembered in `mcp.json` for the servers saved there; for those of `init.lua` it lasts the session (`disabled = true` keeps one off). |
+| `/mcp login <name>` | OAuth login of an HTTP server: opens the browser, waits for it on a loopback port, stores the tokens in the system keyring (service `crest`, entry `mcp-oauth:<name>`) and reconnects. Later runs reuse and refresh them. The manager shows **Cancel** while it waits. |
 | `/mcp logout <name>` | Deletes the stored tokens. |
-| `/mcp trust <name>` | Approves a workspace server and starts it. |
+| `/mcp trust <name>` | Approves a workspace server and starts it right away. |
+| `/mcp remove <name>` | Removes a server of `mcp.json` (the manager asks first) and stops it; its tools are gone from every chat. |
 
 ### OAuth
 
-Most hosted servers (Linear, Notion, Sentry, Atlassian, Supabase, Cloudflare…) ask for a login: their state is "needs login" and `/mcp login <name>` signs in. crest registers itself with the server (dynamic client registration). Servers that do not allow that, such as GitHub's remote server, need a client you register with them, declared in `oauth`:
+Most hosted servers (Linear, Notion, Sentry, Atlassian, Supabase, Cloudflare…) ask for a login: their state is "needs login" and `/mcp login <name>` (or **Log in** in the manager) signs in. crest registers itself with the server (dynamic client registration). Servers that do not allow that, such as GitHub's remote server, need a client you register with them, declared in `oauth`:
 
 ```lua
 app.mcp.add("github", {
