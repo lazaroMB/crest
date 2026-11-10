@@ -50,7 +50,7 @@ use application::ports::fs::{
     ReadFileRequest, WriteFileRequest,
 };
 use application::ports::llm::{ModelCatalogPort, ModelInfo};
-use application::ports::mcp::{McpPort, McpServerState};
+use application::ports::mcp::{McpError, McpPort, McpServerState};
 use application::ports::plugin::{
     CallbackId, ConfigOrigin, McpServerSpec, PluginError, PluginHostPort, PluginOutput,
 };
@@ -63,8 +63,8 @@ use application::ports::store::{SessionStorePort as _, StoreError};
 use application::usecases::approval::lock_permissions;
 use application::usecases::cancel::CancelToken;
 use application::usecases::commands::{
-    Command, CommandHandler, ImplementCommand, MCP_USAGE, McpCommand, PLUGIN_USAGE, PluginCommand,
-    ReplyFuture, ResearchCommand, dispatch,
+    Command, CommandHandler, ImplementCommand, MCP_USAGE, McpCommand, McpVerb, PLUGIN_USAGE,
+    PluginCommand, ReplyFuture, ResearchCommand, dispatch,
 };
 use application::usecases::permissions::{
     ProjectRules, RuleListing, load_rules, promote_rule, remove_rule,
@@ -564,10 +564,14 @@ impl McpCommands {
     /// `/mcp <args>`.
     async fn run(self: Arc<Self>, command: McpCommand) -> Reply {
         match command {
-            McpCommand::List => self.list().await,
+            McpCommand::List | McpCommand::Open(_) => self.list().await,
+            McpCommand::Add => Reply::Notice(
+                NoticeLevel::Info,
+                "servers are added from the window (/mcp) or in mcp.json".into(),
+            ),
             McpCommand::Tools(name) => self.tools(&name).await,
             McpCommand::Trust(name) => self.trust(&name).await,
-            McpCommand::Manage { verb, name } => self.manage(verb.as_str(), &name).await,
+            McpCommand::Manage { verb, name } => self.manage(verb, &name).await,
             McpCommand::Invalid => Reply::Notice(NoticeLevel::Warning, MCP_USAGE.into()),
         }
     }
@@ -674,34 +678,41 @@ impl McpCommands {
     }
 
     /// `restart`, `enable`, `disable`, `login` or `logout` of `name`.
-    async fn manage(&self, verb: &str, name: &str) -> Reply {
+    async fn manage(&self, verb: McpVerb, name: &str) -> Reply {
         let Some(port) = self.port() else {
             return Self::no_servers();
         };
         let done = match verb {
-            "restart" => port
+            McpVerb::Restart => port
                 .restart(name)
                 .await
                 .map(|()| format!("MCP server `{name}` restarting")),
-            "enable" => port
+            McpVerb::Enable => port
                 .set_enabled(name, true)
                 .await
                 .map(|()| format!("MCP server `{name}` enabled")),
-            "disable" => port.set_enabled(name, false).await.map(|()| {
+            McpVerb::Disable => port.set_enabled(name, false).await.map(|()| {
                 format!("MCP server `{name}` disabled for this session (disabled = true in init.lua keeps it off)")
             }),
-            "login" => port.login(name).await,
-            _ => port.logout(name).await.map(|deleted| {
+            McpVerb::Login => port.login(name).await,
+            McpVerb::Logout => port.logout(name).await.map(|deleted| {
                 if deleted {
                     format!("MCP server `{name}`: login tokens deleted")
                 } else {
                     format!("MCP server `{name}` had no stored login")
                 }
             }),
+            McpVerb::Test | McpVerb::Remove => Err(McpError::Unavailable {
+                server: name.to_owned(),
+                message: "available from the window (/mcp)".to_owned(),
+            }),
         };
         match done {
             Ok(message) => Reply::Notice(NoticeLevel::Info, message),
-            Err(err) => Reply::Notice(NoticeLevel::Warning, format!("/mcp {verb}: {err}")),
+            Err(err) => Reply::Notice(
+                NoticeLevel::Warning,
+                format!("/mcp {}: {err}", verb.as_str()),
+            ),
         }
     }
 

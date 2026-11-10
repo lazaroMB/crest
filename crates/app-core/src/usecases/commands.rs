@@ -29,8 +29,8 @@ pub const SHELL_USAGE: &str = "usage: /!<command> [args], e.g. /!git status";
 pub const SIMULATE_USAGE: &str =
     "usage: /simulate <spec> (a folder of .crest/specs/ or its number)";
 /// Usage of `/mcp`.
-pub const MCP_USAGE: &str = "usage: /mcp [list] | /mcp tools <name> | /mcp restart|enable|disable \
-                             <name> | /mcp login|logout <name> | /mcp trust <name>";
+pub const MCP_USAGE: &str = "usage: /mcp | /mcp add | /mcp <name> | /mcp tools <name> | /mcp \
+                             test|restart|enable|disable|login|logout|trust|remove <name>";
 /// Usage of `/plugin`.
 pub const PLUGIN_USAGE: &str = "usage: /plugin list | /plugin trust <name>";
 
@@ -260,6 +260,10 @@ pub enum McpVerb {
     Login,
     /// `logout`: deletes the stored tokens.
     Logout,
+    /// `test`: connects once more and reports, without changing anything.
+    Test,
+    /// `remove`: deletes a server of `mcp.json` (asks first in the window).
+    Remove,
 }
 
 impl McpVerb {
@@ -272,6 +276,23 @@ impl McpVerb {
             Self::Disable => "disable",
             Self::Login => "login",
             Self::Logout => "logout",
+            Self::Test => "test",
+            Self::Remove => "remove",
+        }
+    }
+
+    /// The verb `word` names, if any.
+    #[must_use]
+    pub fn parse(word: &str) -> Option<Self> {
+        match word {
+            "restart" => Some(Self::Restart),
+            "enable" => Some(Self::Enable),
+            "disable" => Some(Self::Disable),
+            "login" => Some(Self::Login),
+            "logout" => Some(Self::Logout),
+            "test" => Some(Self::Test),
+            "remove" | "rm" | "delete" => Some(Self::Remove),
+            _ => None,
         }
     }
 }
@@ -279,13 +300,18 @@ impl McpVerb {
 /// What `/mcp <args>` asks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum McpCommand {
-    /// `/mcp [list]`: every server with its state.
+    /// `/mcp [list]`: every server with its state (the window opens the
+    /// manager).
     List,
+    /// `/mcp add`: the manager on its add form.
+    Add,
+    /// `/mcp <name>`: the manager on that server.
+    Open(String),
     /// `/mcp tools <name>`.
     Tools(String),
     /// `/mcp trust <name>`: approves a server of the workspace config.
     Trust(String),
-    /// `/mcp restart|enable|disable|login|logout <name>`.
+    /// `/mcp test|restart|enable|disable|login|logout|remove <name>`.
     Manage {
         /// What to do.
         verb: McpVerb,
@@ -301,25 +327,23 @@ impl McpCommand {
     #[must_use]
     pub fn parse(arg: &str) -> Self {
         let words: Vec<&str> = arg.split_whitespace().collect();
-        let verb = |word: &str| match word {
-            "restart" => Some(McpVerb::Restart),
-            "enable" => Some(McpVerb::Enable),
-            "disable" => Some(McpVerb::Disable),
-            "login" => Some(McpVerb::Login),
-            "logout" => Some(McpVerb::Logout),
-            _ => None,
-        };
         match words.as_slice() {
             [] | ["list"] => Self::List,
+            ["add"] => Self::Add,
             ["tools", name] => Self::Tools((*name).to_owned()),
             ["trust", name] => Self::Trust((*name).to_owned()),
-            [word, name] => match verb(word) {
+            [word, name] => match McpVerb::parse(word) {
                 Some(verb) => Self::Manage {
                     verb,
                     name: (*name).to_owned(),
                 },
                 None => Self::Invalid,
             },
+            // A verb without its server is a mistake, not a server name.
+            [word] if word == &"tools" || word == &"trust" || McpVerb::parse(word).is_some() => {
+                Self::Invalid
+            }
+            [name] => Self::Open((*name).to_owned()),
             _ => Self::Invalid,
         }
     }

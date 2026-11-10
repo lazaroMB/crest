@@ -112,6 +112,32 @@ fn the_controller_commands_read_their_arguments() {
         Command::parse("mcp frobnicate git"),
         Command::Mcp(McpCommand::Invalid)
     );
+    assert_eq!(Command::parse("mcp add"), Command::Mcp(McpCommand::Add));
+    assert_eq!(
+        Command::parse("mcp git"),
+        Command::Mcp(McpCommand::Open("git".into()))
+    );
+    assert_eq!(
+        Command::parse("mcp test git"),
+        Command::Mcp(McpCommand::Manage {
+            verb: McpVerb::Test,
+            name: "git".into()
+        })
+    );
+    assert_eq!(
+        Command::parse("mcp rm git"),
+        Command::Mcp(McpCommand::Manage {
+            verb: McpVerb::Remove,
+            name: "git".into()
+        })
+    );
+    for alone in ["mcp tools", "mcp trust", "mcp restart", "mcp a b c"] {
+        assert_eq!(
+            Command::parse(alone),
+            Command::Mcp(McpCommand::Invalid),
+            "{alone}"
+        );
+    }
     assert_eq!(
         Command::parse("plugin trust x"),
         Command::Plugin(PluginCommand::Trust("x".into()))
