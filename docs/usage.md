@@ -394,8 +394,8 @@ Servers declared in `init.lua` are listed read-only (an `init.lua` chip): edit t
 | --- | --- |
 | `↑` / `↓`, `k` / `j`, `PageUp` / `PageDown`, `Home` / `End`, click | Chooses a server. |
 | `Tab` / `Shift+Tab` | Overview, Tools, Log. |
-| `a`, `e`, `d` | Adds a server; edits or deletes the chosen one (`d` asks first: `Enter` deletes, `Esc` keeps it). |
-| `t`, `r`, `l` | Tests the chosen server, restarts it, logs in (http with OAuth). |
+| `a`, `e`, `d` | Adds a server; edits or deletes the chosen one (`d` asks first: `Enter` or `y` deletes, any other key keeps it). |
+| `t`, `r`, `l` | Tests the chosen server, restarts it, logs in (any http server: with the client of its `oauth` block, or by registering crest on its own). |
 | `Space` | Turns the chosen server on or off (remembered in its `mcp.json`; for an `init.lua` server, until crest closes). |
 | `/`, `f`, `o` | Goes to the server filter; to the tools filter; unfolds a tool. `Enter` or `Esc` go back to the list. |
 | `Tab`, `Ctrl+Enter`, `Esc` (in the form) | Next field (`Shift+Tab` the previous); save and start; leave the form (the manager stays). |

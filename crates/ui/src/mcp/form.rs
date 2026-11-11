@@ -21,8 +21,12 @@ use crate::kit::{caption, quiet_button, title, toggle_chip, tool_button, toolbar
 
 /// Width of a field's label, in pixels.
 const LABEL_PX: f32 = 140.0;
-/// Width of a text field, in pixels.
+/// Widest a text field grows, in pixels; narrower when the pane is.
 const FIELD_PX: f32 = 280.0;
+/// Widest the URL field grows.
+const URL_PX: f32 = 480.0;
+/// Width of the key of an env or header row.
+const KEY_PX: f32 = 120.0;
 
 /// Whether the form adds a server or edits one.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -401,6 +405,7 @@ impl McpView {
             rows.push(
                 h_flex()
                     .debug_selector(|| "mcp-templates".to_owned())
+                    .flex_wrap()
                     .gap_1()
                     .items_center()
                     .child(caption("Start from", cx))
@@ -465,7 +470,7 @@ impl McpView {
                 cx,
             ));
         } else {
-            rows.push(form_row("URL", None, input(&form.url, FIELD_PX), cx));
+            rows.push(form_row("URL", None, input(&form.url, URL_PX), cx));
             rows.push(form_row(
                 "Headers",
                 Some("e.g. Authorization"),
@@ -563,6 +568,7 @@ impl McpView {
             "Timeouts",
             Some("seconds"),
             h_flex()
+                .flex_wrap()
                 .gap_2()
                 .items_center()
                 .child(input(&form.timeout, 80.0))
@@ -578,9 +584,16 @@ impl McpView {
                 .debug_selector(|| "mcp-form-error".to_owned())
                 .gap_2()
                 .px_3()
+                .items_start()
                 .text_sm()
-                .child(div().text_color(theme.danger).child("✗"))
-                .child(SharedString::from(error))
+                .child(div().flex_none().text_color(theme.danger).child("✗"))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .line_clamp(4)
+                        .child(SharedString::from(error)),
+                )
         });
         let testing = form.testing.then(|| {
             h_flex()
@@ -599,9 +612,16 @@ impl McpView {
                 .debug_selector(|| "mcp-form-test".to_owned())
                 .gap_2()
                 .px_3()
+                .items_start()
                 .text_sm()
-                .child(div().text_color(color).child(mark))
-                .child(SharedString::from(text))
+                .child(div().flex_none().text_color(color).child(mark))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .line_clamp(4)
+                        .child(SharedString::from(text)),
+                )
         });
         let save_label = if form.is_add() {
             "Add and start"
@@ -622,7 +642,7 @@ impl McpView {
                     .border_b_1()
                     .border_color(theme.border)
                     .child(title(heading))
-                    .child(caption("saving starts it at once", cx)),
+                    .child(caption("saving starts it at once", cx).flex_none()),
             )
             .child(
                 crate::keyscroll::list("mcp-form-body", &self.body_scroll, vec![body])
@@ -635,6 +655,8 @@ impl McpView {
             .children(test)
             .child(
                 toolbar(cx)
+                    .flex_wrap()
+                    .gap_y_1()
                     .px_3()
                     .py_2()
                     .border_t_1()
@@ -690,7 +712,7 @@ impl McpView {
                             .gap_1()
                             .items_center()
                             .child(input(arg, FIELD_PX))
-                            .child(remove(ix, cx)),
+                            .child(remove(ix, cx).flex_none()),
                     );
                 }
             }
@@ -706,10 +728,10 @@ impl McpView {
                         h_flex()
                             .gap_1()
                             .items_center()
-                            .child(input(key, 120.0))
-                            .child(caption(sep, cx))
-                            .child(input(value, FIELD_PX - 130.0))
-                            .child(remove(ix, cx)),
+                            .child(div().flex_none().w(px(KEY_PX)).child(Input::new(key)))
+                            .child(caption(sep, cx).flex_none())
+                            .child(input(value, FIELD_PX))
+                            .child(remove(ix, cx).flex_none()),
                     );
                 }
             }
@@ -728,10 +750,19 @@ impl McpView {
     }
 }
 
-/// A text field `width` pixels wide.
+/// A text field up to `width` pixels wide: it takes the room the row
+/// leaves it and shrinks with the pane, down to [`MIN_FIELD_PX`].
 fn input(state: &Entity<InputState>, width: f32) -> gpui::Div {
-    div().w(px(width)).child(Input::new(state))
+    div()
+        .flex_1()
+        .w_full()
+        .min_w(px(MIN_FIELD_PX.min(width)))
+        .max_w(px(width))
+        .child(Input::new(state))
 }
+
+/// Narrowest a text field shrinks, in pixels.
+const MIN_FIELD_PX: f32 = 60.0;
 
 /// A row of the form: the label and its hint on the left, the control on
 /// the right.

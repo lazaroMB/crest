@@ -3006,6 +3006,140 @@ fn d_asks_first_enter_removes_and_esc_keeps(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn the_delete_question_belongs_to_its_server(cx: &mut TestAppContext) {
+    let (h, cx) = harness(Vec::new(), cx);
+    send("/mcp", cx);
+    cx.run_until_parked();
+    let view = mcp_view(&h, cx).expect("the manager");
+    cx.simulate_keystrokes("d");
+    view.read_with(cx, |v, _| assert!(v.confirming()));
+    // github goes away while the question shows: the selection moves on
+    // to another server, and the question must not follow it.
+    h.mcp.lock().unwrap().retain(|s| s.spec.name != "github");
+    h.mcp_tx.unbounded_send(()).unwrap();
+    cx.executor().advance_clock(Duration::from_millis(200));
+    cx.run_until_parked();
+    view.read_with(cx, |v, _| {
+        assert!(!v.confirming(), "the question closes with its server");
+        assert_ne!(
+            v.selected_server().map(|s| s.spec.name.as_str()),
+            Some("github")
+        );
+    });
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    assert!(
+        mcp_calls(&h).iter().all(|c| !c.starts_with("remove")),
+        "{:?}",
+        mcp_calls(&h)
+    );
+}
+
+#[gpui::test]
+fn a_held_d_does_not_answer_and_only_enter_or_y_delete(cx: &mut TestAppContext) {
+    let (h, cx) = harness(Vec::new(), cx);
+    send("/mcp", cx);
+    cx.run_until_parked();
+    let view = mcp_view(&h, cx).expect("the manager");
+    cx.simulate_keystrokes("d");
+    view.read_with(cx, |v, _| assert!(v.confirming()));
+    // The key's repeat while it is held.
+    cx.simulate_event(gpui::KeyDownEvent {
+        keystroke: gpui::Keystroke::parse("d").unwrap(),
+        is_held: true,
+        prefer_character_input: false,
+    });
+    cx.run_until_parked();
+    view.read_with(cx, |v, _| assert!(v.confirming(), "a repeat is no answer"));
+    assert!(mcp_calls(&h).is_empty());
+    // A second, separate `d` is no longer a yes either.
+    cx.simulate_keystrokes("d");
+    cx.run_until_parked();
+    view.read_with(cx, |v, _| {
+        assert!(!v.confirming());
+        assert_eq!(v.status(), Some("kept the server"));
+    });
+    assert!(mcp_calls(&h).is_empty());
+    cx.simulate_keystrokes("d y");
+    cx.run_until_parked();
+    assert_eq!(mcp_calls(&h), ["remove github"]);
+    view.read_with(cx, |v, _| assert!(v.result("github").is_none()));
+}
+
+#[gpui::test]
+fn the_cancel_button_keeps_the_server_like_esc(cx: &mut TestAppContext) {
+    let (h, cx) = harness(Vec::new(), cx);
+    send("/mcp", cx);
+    cx.run_until_parked();
+    let view = mcp_view(&h, cx).expect("the manager");
+    cx.simulate_keystrokes("d");
+    assert!(drawn(cx, "mcp-confirm"));
+    let cancel = cx
+        .debug_bounds("mcp-confirm-cancel")
+        .expect("the Cancel button");
+    cx.simulate_click(cancel.center(), gpui::Modifiers::none());
+    cx.run_until_parked();
+    view.read_with(cx, |v, _| {
+        assert!(!v.confirming());
+        assert_eq!(v.status(), Some("kept the server"));
+    });
+    assert!(mcp_calls(&h).is_empty());
+}
+
+#[gpui::test]
+fn the_delete_question_fits_a_small_window(cx: &mut TestAppContext) {
+    let (h, cx) = harness(Vec::new(), cx);
+    cx.simulate_resize(gpui::size(gpui::px(640.), gpui::px(480.)));
+    // A long `saved_in` is what pushed the buttons out of the card.
+    {
+        let mut servers = h.mcp.lock().unwrap();
+        servers[0].saved_in =
+            "/home/someone/with/a/rather/long/path/to/the/config/of/crest/mcp.json".into();
+    }
+    send("/mcp", cx);
+    cx.run_until_parked();
+    assert!(mcp_view(&h, cx).is_some());
+    let inside = |cx: &mut VisualTestContext, selector: &'static str| {
+        assert!(drawn(cx, selector), "{selector} is drawn");
+        let card = cx.debug_bounds("modal-card").expect("the card");
+        let it = cx.debug_bounds(selector).expect(selector);
+        assert!(
+            it.left() >= card.left() && it.right() <= card.right() && it.bottom() <= card.bottom(),
+            "{selector} {it:?} leaves the card {card:?}"
+        );
+    };
+    inside(cx, "mcp-delete");
+    inside(cx, "mcp-edit");
+    cx.simulate_keystrokes("d");
+    inside(cx, "mcp-confirm-delete");
+    inside(cx, "mcp-confirm-cancel");
+}
+
+#[gpui::test]
+fn an_http_server_without_an_oauth_block_logs_in(cx: &mut TestAppContext) {
+    let (h, cx) = harness(Vec::new(), cx);
+    {
+        let mut servers = h.mcp.lock().unwrap();
+        let linear = servers
+            .iter_mut()
+            .find(|s| s.spec.name == "linear")
+            .expect("linear");
+        if let McpTransport::Http { oauth, .. } = &mut linear.spec.transport {
+            *oauth = None;
+        }
+    }
+    send("/mcp linear", cx);
+    cx.run_until_parked();
+    let view = mcp_view(&h, cx).expect("the manager");
+    cx.simulate_keystrokes("l");
+    cx.run_until_parked();
+    view.read_with(cx, |v, _| {
+        assert_eq!(v.pending().get("linear"), Some(&McpAction::Login));
+    });
+    assert_eq!(mcp_calls(&h), ["act linear login"]);
+}
+
+#[gpui::test]
 fn space_toggles_the_server_and_t_r_l_run_the_actions(cx: &mut TestAppContext) {
     let (h, cx) = harness(Vec::new(), cx);
     send("/mcp", cx);
@@ -3069,7 +3203,8 @@ fn space_toggles_the_server_and_t_r_l_run_the_actions(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("down l");
     view.read_with(cx, |v, _| {
         assert!(
-            v.status().is_some_and(|s| s.contains("OAuth")),
+            v.status()
+                .is_some_and(|s| s.contains("only http servers log in")),
             "{:?}",
             v.status()
         );

@@ -10,7 +10,7 @@ pub mod chip;
 pub mod header;
 pub mod tokens;
 
-pub use button::{quiet_button, tool_button};
+pub use button::{danger_button, quiet_button, tool_button};
 pub use chip::{ChipKind, chip, filter_chip, readout, toggle_chip};
 pub use header::{caption, header, title, toolbar};
 pub use tokens::{Radius, Space, TextRole, TokenStyled};
