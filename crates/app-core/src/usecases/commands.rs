@@ -109,6 +109,8 @@ pub enum Command {
     Plugin(PluginCommand),
     /// `/open @path`: the argument.
     Open(String),
+    /// `/init [focus]`: what was typed after it.
+    Init(String),
     /// Any other name: a command of `init.lua`, or a builtin action
     /// (`/picker.files`).
     Other {
@@ -156,6 +158,7 @@ impl Command {
             "mcp" => Self::Mcp(McpCommand::parse(arg)),
             "plugin" => Self::Plugin(PluginCommand::parse(arg)),
             "open" => Self::Open(arg.to_owned()),
+            "init" => Self::Init(arg.to_owned()),
             _ => Self::Other {
                 name: name.to_owned(),
                 arg: arg.to_owned(),
@@ -446,6 +449,11 @@ pub fn dispatch<H: CommandHandler + ?Sized>(handler: &H, command: Command) -> Op
         Command::Mcp(command) => handler.mcp(command),
         Command::Plugin(command) => handler.plugin(command),
         Command::Open(arg) => handler.open(arg),
+        Command::Init(focus) => futures::future::ready(Reply::Actions(vec![PluginAction::Send {
+            text: init_prompt(&focus),
+            role: None,
+        }]))
+        .boxed(),
         Command::Other { name, arg } => return handler.callback(&name, arg),
         Command::Quit
         | Command::Help(_)
@@ -461,6 +469,37 @@ pub fn dispatch<H: CommandHandler + ?Sized>(handler: &H, command: Command) -> Op
         | Command::ModalClose
         | Command::Modal(_) => return None,
     })
+}
+
+/// What `/init` asks the agent.
+pub const INIT_PROMPT: &str = "\
+Write the AGENTS.md of this workspace: the instructions coding agents (you, and other \
+tools that read AGENTS.md) need to work here. Survey the repository first: the README, \
+the build and package files (Makefile, Cargo.toml, package.json, pyproject.toml...), the \
+CI configuration, the existing CLAUDE.md, .cursorrules, .cursor/rules or \
+.github/copilot-instructions.md, and the layout of the source and the tests.
+
+Then write a concise AGENTS.md at the workspace root with:
+- the commands to build, test (all and a single test), lint and format;
+- the architecture in a few lines: the main directories and how they depend on each other;
+- the conventions that are not obvious from the code (style, naming, error handling, \
+commits), and what to avoid.
+
+Only facts you checked in the repository: no generic advice, no lists of every file. \
+If AGENTS.md already exists, improve it instead of starting over. If a CLAUDE.md holds \
+the instructions, move them into AGENTS.md and leave CLAUDE.md with the single line \
+`@AGENTS.md`, so both kinds of tools read the same file. A directory that needs rules of \
+its own can have its own AGENTS.md.";
+
+/// The prompt of `/init`, with what the user asked to focus on.
+#[must_use]
+pub fn init_prompt(focus: &str) -> String {
+    let focus = focus.trim();
+    if focus.is_empty() {
+        INIT_PROMPT.to_owned()
+    } else {
+        format!("{INIT_PROMPT}\n\nThe user also asks: {focus}")
+    }
 }
 
 #[cfg(test)]

@@ -35,7 +35,7 @@ Each item says what it is, why it matters, and when it counts as done. Versions 
 
 ### v0.7: your project, your sessions
 
-**1. `AGENTS.md` and `CLAUDE.md` compatibility.**
+**1. `AGENTS.md` and `CLAUDE.md` compatibility.** *(Done: see [Project instructions](usage.md#project-instructions-agentsmd-and-claudemd).)*
 crest loads the instructions a project already keeps for agents: `AGENTS.md` and `CLAUDE.md` at the workspace root, the nested ones in the directories the agent works in (they apply to their subtree), `CLAUDE.md`'s `@path` imports, and the user-level files (`~/.config/crest/AGENTS.md`, `~/.claude/CLAUDE.md`). They go into the system prompt (today a fixed text, `crates/bin/src/root.rs`) and are injected again after compaction, so rules are not forgotten mid-session. `/help` lists which files were loaded, and `/init` writes a first `AGENTS.md` for the project.
 *Why:* instructions that agents ignore or lose are one of the most repeated complaints about coding agents, and teams should not maintain one file per tool.
 *Done when:* a project set up for Claude Code (or any `AGENTS.md` tool) behaves the same in crest without changes.

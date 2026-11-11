@@ -24,6 +24,7 @@ crest is a **work in progress**. Every phase of the original plan is implemented
 - At workflow gates, an empty line counts as an approval (`yes` / `continue`). In the implementation workflow that can commit with failing criteria or close the workflow.
 - In the implementation workflow, only `edit_file` and `write_file` are restricted to the task's files: `run_command` can touch others (although the commit only includes the task's files). The folder of an open discovery is locked the same way: `edit_file` and `write_file` refuse it; `run_command`, an `/implement` running at the same time and the spike's own worktree do not go through that port and are not refused.
 - The discovery store is sized for a workspace with tens of discoveries of tens of events each: a listing replays every log, and every rendering of `discovery.md` reads the stored source texts. Neither is cached yet.
+- Project instructions (`AGENTS.md`, `CLAUDE.md`): a file in a subdirectory reaches the model only once a file tool (`read_file`, `edit_file`, `write_file`, `tree`, `grep`) works under it; `run_command`, `find_file` and `list_files` do not attach it. A project file's `@path` imports stay inside the workspace. Each file is cut at 40 KB.
 - crest ships no model prices: until you set `app.opt.pricing`, the cost segment shows the session's tokens (`48.2k tok`) instead. The cost lives in memory, so a resumed session starts again at `$0.00` against the cap.
 
 ## Not available yet
