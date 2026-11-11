@@ -8,8 +8,8 @@
 //! - `↑`/`↓` (or `k`/`j`), `PageUp`/`PageDown`, `Home`/`End` choose a
 //!   server; `Tab`/`Shift+Tab` go through the tabs;
 //! - `a` adds a server, `e` edits the chosen one, `d` deletes it (asks
-//!   first: `Enter` confirms, `Esc` keeps it);
-//! - `t` tests it, `r` restarts it, `l` logs in (http with OAuth),
+//!   first: `Enter` or `y` confirms, any other key keeps it);
+//! - `t` tests it, `r` restarts it, `l` logs in (http),
 //!   `Space` turns it on or off;
 //! - `/` goes to the filter, `f` to the tools filter, `o` unfolds the
 //!   chosen tool;
@@ -96,8 +96,9 @@ pub struct McpView {
     pub(super) pending: HashMap<String, McpAction>,
     /// The last test or login outcome of each server, and when.
     pub(super) results: HashMap<String, (Result<String, String>, SystemTime)>,
-    /// `d` was pressed: `Enter` deletes the chosen server.
-    pub(super) confirm_delete: bool,
+    /// `d` was pressed on this server: `Enter` deletes it. By name, so
+    /// that a listing that moves the selection cannot redirect it.
+    pub(super) confirm_delete: Option<String>,
     /// The add/edit form, while it shows.
     pub(super) form: Option<Draft>,
     /// The footer's message.
@@ -153,7 +154,7 @@ impl McpView {
             revealed: HashSet::new(),
             pending: HashMap::new(),
             results: HashMap::new(),
-            confirm_delete: false,
+            confirm_delete: None,
             form: None,
             status: None,
             select_after: None,
@@ -210,7 +211,7 @@ impl McpView {
 
     /// Whether `d` waits for `Enter`.
     pub fn confirming(&self) -> bool {
-        self.confirm_delete
+        self.confirm_delete.is_some()
     }
 
     /// The footer's message.
@@ -275,6 +276,10 @@ impl McpView {
         if !self.select_name(wanted.as_deref()) {
             self.select_name(chosen.as_deref());
         }
+        // The question stands only while its server is still the chosen one.
+        if self.confirm_delete.is_some() && self.confirm_delete != self.selected_name() {
+            self.confirm_delete = None;
+        }
         self.ensure_tick(cx);
         cx.notify();
     }
@@ -294,7 +299,7 @@ impl McpView {
 
     /// Does what `/mcp <args>` asked once the modal shows.
     pub fn apply_target(&mut self, target: McpOpen, window: &mut Window, cx: &mut Context<Self>) {
-        self.confirm_delete = false;
+        self.confirm_delete = None;
         if let Some(name) = &target.server
             && !self.select_name(Some(name))
         {
@@ -327,7 +332,7 @@ impl McpView {
     fn refilter(&mut self, cx: &mut Context<Self>) {
         self.rows = server_rows(&self.listing, &self.query(cx));
         self.selected = 0;
-        self.confirm_delete = false;
+        self.confirm_delete = None;
         self.list_scroll.scroll_to_item(0);
         cx.notify();
     }
@@ -335,7 +340,7 @@ impl McpView {
     pub(super) fn select(&mut self, ix: usize, cx: &mut Context<Self>) {
         if ix != self.selected {
             self.open_tool = None;
-            self.confirm_delete = false;
+            self.confirm_delete = None;
         }
         self.selected = ix.min(self.rows.len().saturating_sub(1));
         crate::keyscroll::ensure_visible(&self.list_scroll, self.selected);
@@ -381,8 +386,8 @@ impl McpView {
         }
         let server = self.listing.get(name);
         let hint = match action {
-            McpAction::Login if !server.is_some_and(McpServerInfo::has_oauth) => {
-                Some("only http servers with OAuth log in")
+            McpAction::Login if !server.is_some_and(McpServerInfo::is_http) => {
+                Some("only http servers log in; a stdio server takes its token in its environment")
             }
             McpAction::Test | McpAction::Restart
                 if server.is_some_and(|s| {
@@ -454,22 +459,33 @@ impl McpView {
         let Some(server) = self.selected_server() else {
             return;
         };
+        let name = server.spec.name.clone();
         if !server.editable() {
             self.status = Some(format!(
-                "`{}` is declared in {}; remove it there",
-                server.spec.name, server.saved_in
+                "`{name}` is declared in {}; remove it there",
+                server.saved_in
             ));
+        } else if self.pending.contains_key(&name) {
+            self.status = Some(format!("`{name}` is busy; wait for it to finish"));
         } else {
             self.status = None;
-            self.confirm_delete = true;
+            self.confirm_delete = Some(name);
         }
         cx.notify();
     }
 
-    /// `Enter` after `d`: deletes the chosen server.
+    /// `Esc` (or any key but `Enter`/`y`) and **Cancel**: the question
+    /// goes, the server stays.
+    pub fn keep_server(&mut self, cx: &mut Context<Self>) {
+        if self.confirm_delete.take().is_some() {
+            self.status = Some("kept the server".to_owned());
+            cx.notify();
+        }
+    }
+
+    /// `Enter` after `d`: deletes the server the question was about.
     pub fn delete_selected(&mut self, cx: &mut Context<Self>) {
-        self.confirm_delete = false;
-        let Some(name) = self.selected_name() else {
+        let Some(name) = self.confirm_delete.take() else {
             return;
         };
         self.pending.insert(name.clone(), McpAction::Disable);
@@ -478,9 +494,17 @@ impl McpView {
             let result = removing.await;
             this.update(cx, |this, cx| {
                 this.pending.remove(&name);
-                this.status = Some(match result {
-                    Ok(message) | Err(message) => message,
-                });
+                match result {
+                    Ok(message) => {
+                        // Nothing of it should greet a new server of the
+                        // same name.
+                        this.results.remove(&name);
+                        let prefix = format!("{name}/");
+                        this.revealed.retain(|key| !key.starts_with(&prefix));
+                        this.status = Some(message);
+                    }
+                    Err(message) => this.status = Some(message),
+                }
                 cx.emit(McpEvent::Changed);
                 cx.notify();
             })
@@ -519,7 +543,7 @@ impl McpView {
                 FormMode::Edit(server.spec.clone())
             }
         };
-        self.confirm_delete = false;
+        self.confirm_delete = None;
         self.status = None;
         let standalone = self.listing.workspace_file.is_none();
         let draft = Draft::new(mode, standalone, window, cx);
@@ -690,13 +714,16 @@ impl McpView {
             cx.stop_propagation();
             return;
         }
-        if self.confirm_delete {
-            if matches!(key, "enter" | "y" | "d") {
+        if self.confirm_delete.is_some() {
+            // The repeat of the `d` that asked is no answer.
+            if event.is_held {
+                cx.stop_propagation();
+                return;
+            }
+            if matches!(key, "enter" | "y") {
                 self.delete_selected(cx);
             } else {
-                self.confirm_delete = false;
-                self.status = Some("kept the server".to_owned());
-                cx.notify();
+                self.keep_server(cx);
             }
             // Even `Esc` only cancels the question.
             cx.stop_propagation();
@@ -787,8 +814,8 @@ impl McpView {
         let theme = cx.theme();
         let keys = if self.form.is_some() {
             "Tab next field · Ctrl+Enter save · Esc cancel".to_owned()
-        } else if self.confirm_delete {
-            "Enter delete · Esc keep".to_owned()
+        } else if self.confirm_delete.is_some() {
+            "Enter/y delete · Esc keep".to_owned()
         } else {
             let open = self
                 .open_keys

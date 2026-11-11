@@ -381,7 +381,15 @@ impl McpServerInfo {
         self.state != McpServerState::Disabled
     }
 
-    /// Whether it can log in through the browser (http with OAuth).
+    /// Whether it is a remote (http) server: those log in through the
+    /// browser, with the client of their `oauth` block or by dynamic
+    /// registration.
+    #[must_use]
+    pub fn is_http(&self) -> bool {
+        matches!(&self.spec.transport, McpTransport::Http { .. })
+    }
+
+    /// Whether it declares an OAuth client (http with an `oauth` block).
     #[must_use]
     pub fn has_oauth(&self) -> bool {
         matches!(

@@ -581,7 +581,7 @@ Only a plugin whose capabilities were approved can read secrets, and only its ow
 | `XDG_CONFIG_HOME` | Base of the global config and the plugins (`$XDG_CONFIG_HOME/crest/`). Only used if absolute; also honoured on Windows, where the default is `%APPDATA%`. |
 | `XDG_DATA_HOME` | Base of `sessions.db`, `mcp-trust.json` and `plugin-trust.json` (`$XDG_DATA_HOME/crest/`). Only used if absolute; also honoured on Windows, where the default is `%LOCALAPPDATA%`. |
 | `CREST_PLUGIN_<PLUGIN>_<NAME>` | A plugin secret, read by `app.secret("<name>")` when the keyring has no entry (see [Plugin capabilities and secrets](#plugin-capabilities-and-secrets)). Never passed to the programs crest runs. |
-| `CREST_LOG` | Log filter in `tracing`'s `EnvFilter` syntax, for example `info`, `debug` or `warn,lua=info`. Defaults to `warn`. The log goes to stderr. |
+| `CREST_LOG` | Log filter in `tracing`'s `EnvFilter` syntax, for example `info`, `debug` or `warn,lua=info`. Defaults to `warn,rmcp::transport::worker=off` (the MCP transport's connection errors show in `/mcp` instead). The log goes to stderr. |
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` | Enable trace export to Langfuse, **only in a binary built with `--features langfuse`**. Both are needed: if one is missing, crest shows a notice and does not export. |
 | `LANGFUSE_HOST` | Langfuse instance. Defaults to `https://cloud.langfuse.com`. |
 | `ANTHROPIC_LIVE_TEST` | Development only: `make test-live` sets it to `1`. |

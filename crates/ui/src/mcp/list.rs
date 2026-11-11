@@ -3,7 +3,7 @@
 
 use gpui::{
     Context, InteractiveElement as _, IntoElement, ParentElement as _, SharedString,
-    StatefulInteractiveElement as _, Styled as _, div, px,
+    StatefulInteractiveElement as _, Styled as _, div, px, relative,
 };
 use gpui_component::input::Input;
 use gpui_component::{ActiveTheme as _, h_flex, v_flex};
@@ -12,8 +12,12 @@ use super::model::{ServerRow, row_meta};
 use super::view::{McpView, dot, key_hint};
 use crate::kit::{caption, quiet_button};
 
-/// Width of the list pane, in pixels.
-const LIST_PX: f32 = 240.0;
+/// Share of the modal's width the list pane takes, between
+/// [`LIST_MIN_PX`] and [`LIST_MAX_PX`], so a narrow modal leaves the detail
+/// room.
+const LIST_SHARE: f32 = 0.32;
+const LIST_MIN_PX: f32 = 160.0;
+const LIST_MAX_PX: f32 = 240.0;
 
 impl McpView {
     /// The list pane.
@@ -54,7 +58,9 @@ impl McpView {
         });
         v_flex()
             .debug_selector(|| "mcp-list".to_owned())
-            .w(px(LIST_PX))
+            .w(relative(LIST_SHARE))
+            .min_w(px(LIST_MIN_PX))
+            .max_w(px(LIST_MAX_PX))
             .h_full()
             .flex_none()
             .border_r_1()
@@ -108,7 +114,7 @@ impl McpView {
                     .whitespace_nowrap()
                     .child(SharedString::from(server.spec.name.clone())),
             )
-            .child(caption(row_meta(&server.state), cx))
+            .child(caption(row_meta(&server.state), cx).flex_none())
             .on_click(cx.listener(move |this, _, _, cx| this.select(ix, cx)));
         if ix == self.selected {
             line = line.bg(theme.list_active);
