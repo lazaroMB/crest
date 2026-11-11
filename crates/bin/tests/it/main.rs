@@ -9,6 +9,7 @@ mod commands_during_turn;
 mod headless_demo;
 mod help_snapshot;
 mod implement_demo;
+mod instructions;
 mod mcp_servers;
 mod model_selection;
 mod plugin_caps;

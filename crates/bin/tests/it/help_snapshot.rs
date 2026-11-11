@@ -84,6 +84,11 @@ async fn snapshot() -> HelpSnapshot {
         echo_server_path().display().to_string()
     );
     std::fs::write(config_dir.join("init.lua"), global).unwrap();
+    std::fs::write(config_dir.join("AGENTS.md"), "Answer in English.").unwrap();
+    std::fs::write(ws.join("AGENTS.md"), "Run make test. See @docs/style.md").unwrap();
+    std::fs::create_dir_all(ws.join("docs")).unwrap();
+    std::fs::write(ws.join("docs").join("style.md"), "Short functions.").unwrap();
+    std::fs::write(ws.join("CLAUDE.md"), "@AGENTS.md\n").unwrap();
     std::fs::write(
         ws.join(".crest").join("init.lua"),
         "app.mcp.add(\"wsgit\", { command = \"mcp-git-missing\" })\n",
@@ -142,7 +147,23 @@ async fn the_help_lists_plugins_tools_commands_keys_and_servers() {
         (group("research"), group("!"), group("flow")),
         ("Flows", "Chat", "Stages")
     );
-    for name in ["implement", "research", "simulate", "mcp", "plugin"] {
+    let instructions: Vec<_> = help
+        .paths
+        .iter()
+        .filter(|p| p.label.starts_with("instructions"))
+        .map(|p| (p.label.as_str(), p.value.as_str()))
+        .collect();
+    assert_eq!(instructions.len(), 2, "{instructions:?}");
+    assert_eq!(instructions[0].0, "instructions (user)");
+    assert!(instructions[0].1.ends_with("AGENTS.md"), "{instructions:?}");
+    assert_eq!(
+        instructions[1],
+        (
+            "instructions (project)",
+            "AGENTS.md (imports docs/style.md)"
+        )
+    );
+    for name in ["implement", "research", "simulate", "mcp", "plugin", "init"] {
         assert!(help.commands.iter().any(|c| c.name == name), "{name}");
     }
 

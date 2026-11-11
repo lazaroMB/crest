@@ -326,3 +326,31 @@ fn every_group_is_used_and_the_shell_is_in_chat() {
         ]
     );
 }
+
+#[test]
+fn init_sends_the_survey_prompt_with_the_focus() {
+    assert_eq!(Command::parse("init"), Command::Init(String::new()));
+    let fake = Fake::default();
+    let Some(Reply::Actions(actions)) = run(&fake, "init") else {
+        panic!("no actions");
+    };
+    assert_eq!(
+        actions,
+        [PluginAction::Send {
+            text: INIT_PROMPT.to_owned(),
+            role: None
+        }]
+    );
+    let Some(Reply::Actions(actions)) = run(&fake, "init  the frontend only ") else {
+        panic!("no actions");
+    };
+    let [PluginAction::Send { text, .. }] = actions.as_slice() else {
+        panic!("{actions:?}");
+    };
+    assert!(
+        text.ends_with("The user also asks: the frontend only"),
+        "{text}"
+    );
+    assert!(fake.calls.lock().unwrap().is_empty());
+    assert!(CATALOG.iter().any(|info| info.name == "init"));
+}

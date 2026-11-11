@@ -72,7 +72,7 @@ use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use domain::block::{ApprovalState, Block, BlockId, BlockKind, ToolStatus};
 use domain::conversation::{
     ContentPart, ImageAttachment, MAX_IMAGES_PER_MESSAGE, Message, PendingToolUse, Role, Session,
-    SessionId, StopReason, ToolUseId, Turn, TurnId, Usage,
+    SessionId, StopReason, ToolResultContent, ToolUseId, Turn, TurnId, Usage,
 };
 use domain::model::{ModelId, ModelPolicy, ModelRole, ResolveRequest, ResolvedModel, SpecSource};
 use domain::permission::{ActionRequest, Decision, ToolEffect};
@@ -84,6 +84,7 @@ use crate::decide::Decider;
 use crate::ports::approval::{ApprovalPort, ApprovalResponse};
 use crate::ports::checkpoint::TurnCheckpointPort;
 use crate::ports::events::{DomainEvent, EventSink, NoticeLevel};
+use crate::ports::instructions::InstructionsPort;
 use crate::ports::llm::{
     AssembledMessage, LlmError, LlmEvent, LlmPort, LlmRequest, MessageAssembler, RequestMetadata,
     SystemBlock, ToolDefinition,
@@ -101,6 +102,7 @@ use super::compact::{
     compactable_turns, context_tokens, estimate_tokens, replace_turns,
     summarize as summarize_history, summary_request, summary_turn, transcript,
 };
+use super::instructions;
 use super::permissions::ProjectRules;
 use super::routing::{Routing, route, used_tools};
 use super::web_sources::web_sources;
@@ -335,6 +337,9 @@ pub struct AgentService {
     cost: Option<Arc<CostTracker>>,
     decider: Decider,
     system_prompt: String,
+    /// The `AGENTS.md` and `CLAUDE.md` files: the user's and the root's
+    /// join the system prompt, the nested ones the tool results.
+    instructions: Option<Arc<dyn InstructionsPort>>,
     max_iterations: u32,
     clock: fn() -> u64,
     /// The tools sent last, kept while the registry and the routing
@@ -392,6 +397,7 @@ impl AgentService {
             deps,
             checkpoint: None,
             system_prompt: String::new(),
+            instructions: None,
             max_iterations: DEFAULT_MAX_ITERATIONS,
             clock: system_now_ms,
             offered: Mutex::new(None),
@@ -411,6 +417,36 @@ impl AgentService {
     pub fn with_system_prompt(mut self, prompt: impl Into<String>) -> Self {
         self.system_prompt = prompt.into();
         self
+    }
+
+    /// Follows the instructions files of `port`: the user's and the
+    /// root's after the system prompt (read again when they change), a
+    /// subdirectory's attached to the first tool result in its subtree.
+    #[must_use]
+    pub fn with_instructions(mut self, port: Arc<dyn InstructionsPort>) -> Self {
+        self.instructions = Some(port);
+        self
+    }
+
+    /// The instructions files the service follows, if any.
+    #[must_use]
+    pub fn instructions(&self) -> Option<&Arc<dyn InstructionsPort>> {
+        self.instructions.as_ref()
+    }
+
+    /// The system prompt of the next request: the fixed one and, after
+    /// it, the instructions files of the user and the root.
+    fn full_system_prompt(&self) -> String {
+        let base = self
+            .instructions
+            .as_ref()
+            .map(|port| port.base())
+            .filter(|base| !base.trim().is_empty());
+        match base {
+            None => self.system_prompt.clone(),
+            Some(base) if self.system_prompt.is_empty() => base.to_string(),
+            Some(base) => format!("{}\n\n{base}", self.system_prompt),
+        }
     }
 
     /// Runs the `before_tool` and `after_tool` hooks of `host` around
@@ -652,6 +688,7 @@ impl AgentService {
             cancel: opts.cancel,
             sent: Mutex::default(),
             running: Mutex::default(),
+            attached: Mutex::default(),
         };
         let result = run.run().await;
         let model_calls = run.model_calls;
@@ -728,6 +765,7 @@ impl AgentService {
             cancel: opts.cancel,
             sent: Mutex::default(),
             running: Mutex::default(),
+            attached: Mutex::default(),
         };
         let result = run.resume(pending).await;
         let model_calls = run.model_calls;
@@ -868,6 +906,10 @@ struct TurnRun<'a> {
     /// still here: they say what to tell the model and how the extra
     /// blocks end.
     running: Mutex<HashMap<ToolUseId, RunningCall>>,
+    /// Nested instructions files attached by the tool calls of this turn
+    /// (calls of one answer run together, before their results join the
+    /// turn).
+    attached: Mutex<BTreeSet<String>>,
 }
 
 /// The history as the requests of one turn send it. Each message is
@@ -1231,8 +1273,9 @@ impl TurnRun<'_> {
         let mut req = LlmRequest::new(self.model.clone(), Vec::new());
         req.messages = history.iter().chain(turn.iter()).cloned().collect();
         drop(sent);
-        if !self.service.system_prompt.is_empty() {
-            req.system = vec![SystemBlock::cached(self.service.system_prompt.clone())];
+        let system = self.service.full_system_prompt();
+        if !system.is_empty() {
+            req.system = vec![SystemBlock::cached(system)];
         }
         req.tools = self.service.offered_tools(self.tools.as_ref()).request;
         req.metadata = RequestMetadata {
@@ -1341,7 +1384,7 @@ impl TurnRun<'_> {
         }
         let history = estimate_tokens(self.session.history().chain(&self.turn.messages));
         let tools = self.service.offered_tools(self.tools.as_ref()).json_len;
-        let fixed = self.service.system_prompt.len() + tools;
+        let fixed = self.service.full_system_prompt().len() + tools;
         history.saturating_add(u64::try_from(fixed.div_ceil(4)).unwrap_or(u64::MAX))
     }
 
@@ -1411,7 +1454,16 @@ impl TurnRun<'_> {
                 return Compaction::Skipped;
             }
         };
-        let turn = summary_turn(&summary.text, &self.session.turns[..count], summary.usage);
+        let mut text = summary.text;
+        if self.service.instructions.is_some() {
+            let kept = instructions::attached_in_turns(&self.session.turns[count..]);
+            let mut dropped = instructions::attached_in_turns(&self.session.turns[..count]);
+            dropped.retain(|path| !kept.contains(path));
+            if let Some(reminder) = instructions::compaction_reminder(&dropped) {
+                text = format!("{text}\n\n{reminder}");
+            }
+        }
+        let turn = summary_turn(&text, &self.session.turns[..count], summary.usage);
         replace_turns(self.session, count, turn);
         self.context = None;
         self.sent
@@ -1857,12 +1909,44 @@ impl TurnRun<'_> {
             self.emit(event);
         }
         self.after_tool(name, input, &output).await;
+        if !output.is_error {
+            self.attach_instructions(name, input, &mut output);
+        }
         let status = if output.is_error {
             ToolStatus::Failed
         } else {
             ToolStatus::Succeeded
         };
         (output, status)
+    }
+
+    /// Appends to `output` the instructions files of the subdirectories a
+    /// call of `name` with `input` works in, those not attached yet.
+    fn attach_instructions(&self, name: &str, input: &Value, output: &mut ToolOutput) {
+        let Some(port) = &self.service.instructions else {
+            return;
+        };
+        let Some(path) = instructions::call_path(name, input) else {
+            return;
+        };
+        let files = port.nested(path);
+        if files.is_empty() {
+            return;
+        }
+        let mut attached = self.attached.lock().unwrap_or_else(PoisonError::into_inner);
+        let history =
+            instructions::attached(self.session.history().chain(self.turn.messages.iter()));
+        let new: Vec<_> = files
+            .into_iter()
+            .filter(|file| !history.contains(&file.path) && !attached.contains(&file.path))
+            .collect();
+        if new.is_empty() {
+            return;
+        }
+        attached.extend(new.iter().map(|file| file.path.clone()));
+        output
+            .content
+            .push(ToolResultContent::text(instructions::attachment(&new)));
     }
 }
 
@@ -1910,6 +1994,8 @@ mod compact_tests;
 mod cost_tests;
 #[cfg(test)]
 mod hook_tests;
+#[cfg(test)]
+mod instructions_tests;
 #[cfg(test)]
 mod routing_tests;
 #[cfg(test)]

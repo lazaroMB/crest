@@ -42,6 +42,7 @@ use super::web::WebTools;
 use crate::ports::approval::{ApprovalError, ApprovalPort, ApprovalRequest, ApprovalResponse};
 use crate::ports::events::{DomainEvent, EventSink};
 use crate::ports::fs::FileSystemPort;
+use crate::ports::instructions::InstructionsPort;
 use crate::ports::llm::LlmPort;
 use crate::ports::search::{ContentSearchPort, FileSearchPort};
 use crate::ports::telemetry::TelemetryPort;
@@ -105,6 +106,9 @@ pub struct TaskPorts {
     pub fs: Arc<dyn FileSystemPort>,
     /// The web tools, when the web is configured.
     pub web: Option<WebTools>,
+    /// The project's `AGENTS.md` and `CLAUDE.md` files, followed by the
+    /// subagent too.
+    pub instructions: Option<Arc<dyn InstructionsPort>>,
 }
 
 /// `task`: runs a read-only `explore` subagent and returns its report.
@@ -163,14 +167,18 @@ impl TaskTool {
             telemetry: Arc::clone(&self.ports.telemetry),
         };
         let permissions = Arc::new(Mutex::new(PermissionPolicy::read_only()));
-        AgentService::new(
+        let service = AgentService::new(
             deps,
             self.tools.clone(),
             self.ports.models.clone(),
             permissions,
         )
         .with_system_prompt(SUBAGENT_SYSTEM_PROMPT)
-        .with_max_iterations(self.max_iterations)
+        .with_max_iterations(self.max_iterations);
+        match &self.ports.instructions {
+            Some(port) => service.with_instructions(Arc::clone(port)),
+            None => service,
+        }
     }
 }
 
@@ -365,6 +373,7 @@ mod tests {
                     content_search: fs.clone(),
                     fs: fs.clone(),
                     web: None,
+                    instructions: None,
                 },
                 budget,
             )

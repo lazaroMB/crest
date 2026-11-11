@@ -372,6 +372,15 @@ pub const CATALOG: &[CommandInfo] = &[
         group: CommandGroup::Chat,
     },
     CommandInfo {
+        name: "init",
+        aliases: &[],
+        usage: "/init [focus]",
+        description: "Have the agent write (or improve) the AGENTS.md of the workspace: build \
+                      and test commands, architecture, conventions",
+        handler: Handler::Controller,
+        group: CommandGroup::Workspace,
+    },
+    CommandInfo {
         name: "simulate",
         aliases: &[],
         usage: "/simulate <spec>",

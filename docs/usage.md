@@ -160,6 +160,7 @@ You can redefine, add or remove mappings with `app.keymap.set` and `app.keymap.d
 | `/logout [anthropic\|opencode]` | Deletes the API key of that account (of every account without an argument) from the system keyring and restarts the agent. |
 | `/!<command> [args]`, `/! <command>` | Runs a [shell command](#shell-commands-) in the workspace. |
 | `/open @<path>` | Shows a workspace file in a modal ([Opening files](#opening-files-open-path)). |
+| `/init [focus]` | Asks the agent to survey the workspace and write (or improve) its `AGENTS.md`: build and test commands, architecture, conventions. Anything after `/init` is passed along (`/init the frontend only`). The file is written through `write_file`, so you approve it like any edit; see [Project instructions](#project-instructions-agentsmd-and-claudemd). |
 | `/mcp` | Opens the [MCP servers manager](#mcp-servers-mcp): every server with its state, tools and log; add, edit, test, restart, log in, turn on or off or remove one, all live. In a terminal (`-p`) it prints the table instead. See [configuration.md](configuration.md#mcp-servers). |
 | `/mcp add`, `/mcp <name>`, `/mcp tools <name>` | The manager on its add form, on that server, or on that server's Tools tab. |
 | `/mcp test\|restart\|enable\|disable\|login\|logout\|trust\|remove <name>` | The manager does that to the server: connects once more and reports; reconnects it; turns it on or off (remembered for `mcp.json` servers); OAuth login or logout; approves a workspace server and starts it; asks before removing it from its `mcp.json`. |
@@ -194,7 +195,7 @@ A **Shell** block shows the command, its exit status (`exit 0` in green, otherwi
 | 5 | MCP servers | Name, transport, origin and state: `ready (N tools)`, `failed: …`, `starting`, `needs login` (with `/mcp login`), `disabled` (with `/mcp enable`), or held back because the workspace config is not trusted (with the `/mcp trust` command). The [manager](#mcp-servers-mcp) shows the same, live. |
 | 6 | Models | Each role and the model it resolves to, the aliases, the `--model` override, the model of the next turn, the permission mode and the keys of `/permissions`. |
 | 7 | CLI | The flags of `crest`, generated from the command-line parser. |
-| 8 | Files & config | The workspace, the config files, the plugins directory, the session database, the trust stores and the startup problems. |
+| 8 | Files & config | The workspace, the config files, the `AGENTS.md` and `CLAUDE.md` files the agent follows (with their imports), the plugins directory, the session database, the trust stores and the startup problems. |
 
 | Key | Effect |
 | --- | --- |
@@ -678,6 +679,23 @@ An `ask_user` form is asked field by field on the terminal: each shows its label
 With `--research` and `--implement`, however, `Ctrl+C` kills the process: there is no orderly cancellation, and the workflow stays at its last checkpoint.
 
 Without an API key, headless mode exits with the key error and code 2. The window, by contrast, opens anyway and shows that error as its first block.
+
+## Project instructions (`AGENTS.md` and `CLAUDE.md`)
+
+crest follows the instructions a project already keeps for coding agents, so a repository set up for Claude Code, Cursor, Codex or any other `AGENTS.md` tool works in crest unchanged.
+
+- **What is read**, from general to specific (a later file wins where they disagree):
+  1. `~/.claude/CLAUDE.md`
+  2. `~/.config/crest/AGENTS.md` (`%APPDATA%\crest\AGENTS.md` on Windows)
+  3. `AGENTS.md`, `CLAUDE.md` and `CLAUDE.local.md` at the workspace root.
+
+  They go into the system prompt under `# Project instructions`. A chat with no directory reads only the first two.
+- **Subdirectories**: an `AGENTS.md`, `CLAUDE.md` or `CLAUDE.local.md` in a subdirectory applies to its subtree. It is not put in the prompt up front: the first time `read_file`, `edit_file`, `write_file`, `tree` or `grep` touches a path under it, crest attaches the file to that tool's result, wrapped in `<instructions path="…">`. It is attached once per conversation.
+- **Imports**: `@path` in a file (relative to that file, absolute, or `~/…`) inlines the file it names, up to 5 levels deep, as `CLAUDE.md` does. `@` words inside code spans or fenced blocks, and words that name no file (`@types/node`), are left as text. A project file can only import files inside the workspace, so a cloned repository cannot pull `@~/.ssh/id_rsa` into the prompt; your own files in your home can import anything.
+- **One copy of each rule**: a file already read (the same path, a symlink to it, or the same text) is skipped, so a `CLAUDE.md` holding only `@AGENTS.md`, or a symlink to `AGENTS.md`, adds nothing. Keeping the rules in `AGENTS.md` and a one-line `CLAUDE.md` is the way to share them between tools.
+- **Changes apply at once**: the files are checked before every model call, and an edited file (by you, or by the agent with `/init`) is in the next request. Each file is cut at 40 KB, with a startup warning.
+- **Compaction**: the root and user files live in the system prompt, so compaction never drops them. Subdirectory files that were in compacted turns are named in the summary and attached again the next time a tool works under them.
+- The implementation and research workflows and the `task` subagent follow the same files. `/help` (section 8) lists the ones loaded.
 
 ## Sessions and resuming
 

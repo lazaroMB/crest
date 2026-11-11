@@ -13,6 +13,7 @@ use application::ports::events::EventSink;
 use application::ports::form::FormPort;
 use application::ports::formats::FormatsPort;
 use application::ports::fs::FileSystemPort;
+use application::ports::instructions::InstructionsPort;
 use application::ports::llm::LlmPort;
 use application::ports::plugin::{PluginHostPort, PluginToolSpec};
 use application::ports::search::FileSearchPort;
@@ -68,6 +69,8 @@ pub(super) struct ToolInputs<'a> {
     pub(super) events: Arc<dyn EventSink>,
     /// The tools that `init.lua` and the plugins declare.
     pub(super) plugin_tools: &'a [PluginToolSpec],
+    /// The `AGENTS.md` and `CLAUDE.md` files, for the `task` subagent.
+    pub(super) instructions: Arc<dyn InstructionsPort>,
 }
 
 /// The registry and the ports built on the way that the app keeps.
@@ -105,6 +108,7 @@ pub(super) async fn register_tools(
         file_search,
         events,
         plugin_tools,
+        instructions,
     } = inputs;
     let mut tools = ToolRegistry::new().with_redactor(redactor);
     register_file_tools(
@@ -168,6 +172,7 @@ pub(super) async fn register_tools(
             content_search: search,
             fs: Arc::clone(&fs),
             web: web.clone(),
+            instructions: Some(instructions),
         },
         tools.budget(),
     )

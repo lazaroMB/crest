@@ -10,6 +10,7 @@ pub mod events;
 pub mod form;
 pub mod formats;
 pub mod fs;
+pub mod instructions;
 pub mod llm;
 pub mod mcp;
 pub mod permissions;

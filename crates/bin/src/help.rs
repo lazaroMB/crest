@@ -5,10 +5,12 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use application::decide::Decider;
 use application::keymap::layers::{GLOBAL_TOML, WORKSPACE_TOML, source_label};
 use application::keymap::{Action, KeymapEntry, parse_keys};
+use application::ports::instructions::InstructionsPort;
 use application::ports::mcp::{McpServerState, McpServerStatus, parse_qualified_name};
 use application::ports::plugin::{
     AppOptions, CommandSpec, ConfigOrigin, ConfigSources, HookKind, HookSpec, KeyAction,
@@ -52,6 +54,9 @@ pub struct HelpSource {
     mcp_specs: Vec<McpServerSpec>,
     config_errors: Vec<String>,
     warnings: Vec<String>,
+    /// The `AGENTS.md` and `CLAUDE.md` files, read again when the help
+    /// opens (`/init` may have written one).
+    instructions: Option<Arc<dyn InstructionsPort>>,
 }
 
 impl HelpSource {
@@ -77,6 +82,7 @@ impl HelpSource {
             plugin_capabilities: app.plugin_capabilities.clone(),
             config_sources: app.config_sources.clone(),
             tools: app.service.tools().clone(),
+            instructions: app.service.instructions().cloned(),
             models: app.model_policy().clone(),
             decider: app.decider.clone(),
             turn_override: app.turn_options.turn_override.clone(),
@@ -445,6 +451,29 @@ fn command_rows(source: &HelpSource) -> Vec<CommandRow> {
     commands
 }
 
+/// The rows of the instructions files the agent follows: one per file,
+/// or one that says where they would go.
+fn instruction_rows(port: Option<&dyn InstructionsPort>) -> Vec<PathRow> {
+    let files = port.map(InstructionsPort::loaded).unwrap_or_default();
+    if files.is_empty() {
+        return vec![PathRow {
+            label: "instructions".into(),
+            value: "none (AGENTS.md or CLAUDE.md at the workspace root; /init writes one)".into(),
+        }];
+    }
+    files
+        .into_iter()
+        .map(|file| PathRow {
+            label: format!("instructions ({})", file.scope.label()),
+            value: if file.imports.is_empty() {
+                file.path
+            } else {
+                format!("{} (imports {})", file.path, file.imports.join(", "))
+            },
+        })
+        .collect()
+}
+
 /// The help's snapshot of `source`; `statuses` are the MCP servers' states
 /// now.
 #[must_use]
@@ -542,7 +571,7 @@ pub fn snapshot(
         label: label.into(),
         value,
     };
-    let paths = vec![
+    let mut paths = vec![
         path("workspace", source.workspace.display().to_string()),
         path("global config", path_text(sources.global.as_deref())),
         path("workspace config", path_text(sources.workspace.as_deref())),
@@ -556,11 +585,12 @@ pub fn snapshot(
             "approved plugins",
             path_text(source.plugin_trust_path.as_deref()),
         ),
-        path(
-            "documentation",
-            "docs/usage.md, docs/configuration.md, docs/plugins.md (crest repository)".into(),
-        ),
     ];
+    paths.extend(instruction_rows(source.instructions.as_deref()));
+    paths.extend([path(
+        "documentation",
+        "docs/usage.md, docs/configuration.md, docs/plugins.md (crest repository)".into(),
+    )]);
 
     HelpSnapshot {
         commands,

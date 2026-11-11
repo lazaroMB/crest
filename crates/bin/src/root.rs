@@ -6,10 +6,11 @@
 //! later) and [`Overrides`] that replace external services in tests (the
 //! model above all, see `tests/it/headless_demo.rs`).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::instructions::FileInstructions;
 use crate::research::Research;
 use adapter_fs::guard::canonical_root;
 use adapter_fs::{LocalFs, WorkspaceGuard};
@@ -28,6 +29,7 @@ use application::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use application::ports::form::FormPort;
 use application::ports::formats::FormatsPort;
 use application::ports::fs::FileSystemPort;
+use application::ports::instructions::InstructionsPort;
 use application::ports::llm::{LlmPort, ModelCatalogPort};
 use application::ports::plugin::{
     AppOptions, CommandSpec, ConfigSources, HookSpec, KeymapSpec, McpServerSpec,
@@ -188,6 +190,10 @@ pub struct Overrides {
     /// The preferences file (last `/login`, models picked with `/model`)
     /// instead of the one in crest's data directory.
     pub preferences_path: Option<PathBuf>,
+    /// The `AGENTS.md` and `CLAUDE.md` files instead of those on disk.
+    /// Without it, `config_sources` set means no user-level files beyond
+    /// an `AGENTS.md` beside its global `init.lua`.
+    pub instructions: Option<Arc<dyn InstructionsPort>>,
 }
 
 /// No API key of any provider in the environment nor in the keyring; the
@@ -522,6 +528,34 @@ pub async fn build_app(
     let config_sources = sources.clone();
     let (mut loaded, config_warnings) = startup::load_config(host, sources).await;
     warnings.extend(config_warnings);
+    let instructions = match &overrides.instructions {
+        Some(port) => Arc::clone(port),
+        None => {
+            let ws = (!standalone).then(|| root.as_path().to_path_buf());
+            let user_dirs = match &overrides.config_sources {
+                // Tests with their own config do not read the user's files.
+                Some(sources) => (
+                    None,
+                    sources
+                        .global
+                        .as_deref()
+                        .and_then(Path::parent)
+                        .map(Path::to_path_buf),
+                ),
+                None => (platform::dirs::home_dir(), platform::dirs::config_dir()),
+            };
+            tokio::task::spawn_blocking(move || {
+                let port = FileInstructions::new(ws.as_deref(), user_dirs.0, user_dirs.1);
+                // Read now: the first turn finds them loaded, and their
+                // problems join the startup warnings.
+                let _ = port.base();
+                Arc::new(port) as Arc<dyn InstructionsPort>
+            })
+            .await
+            .context("reading AGENTS.md")?
+        }
+    };
+    warnings.extend(instructions.warnings());
     // The servers the MCP servers manager saved, merged with `app.mcp`.
     let mcp_config = crate::mcp_config::McpConfigPaths::from_sources(&config_sources);
     let (json_global, json_workspace, json_warnings) = {
@@ -713,6 +747,7 @@ pub async fn build_app(
             file_search: Arc::clone(&file_search),
             events: Arc::clone(&events),
             plugin_tools: &loaded.tools,
+            instructions: Arc::clone(&instructions),
         },
         &mut warnings,
     )
@@ -744,6 +779,7 @@ pub async fn build_app(
         Arc::clone(&permissions),
     );
     kit.system_prompt = chat_home::prompt(standalone, &root);
+    kit.instructions = Some(Arc::clone(&instructions));
     kit.project_rules = Some(project_rules.clone());
     let implement = ImplementDeps::new(Arc::clone(&events), Arc::clone(&fs), Arc::clone(&shell))
         .with_agent(kit)
@@ -788,6 +824,7 @@ pub async fn build_app(
                     search: Arc::clone(&file_search),
                 },
                 system_prompt: chat_home::prompt(standalone, &root),
+                instructions: Arc::clone(&instructions),
                 root: root.clone(),
                 storage: Arc::clone(storage),
                 decider: decider.clone(),
@@ -831,6 +868,7 @@ pub async fn build_app(
     let prompt_history = Arc::new(Mutex::new(prompt_history));
     let mut service = AgentService::new(deps, tools, policy, Arc::clone(&permissions))
         .with_system_prompt(prompt)
+        .with_instructions(Arc::clone(&instructions))
         .with_compaction(CompactionPolicy::default())
         .with_decider(decider.clone())
         .with_project_rules(project_rules);

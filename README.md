@@ -137,6 +137,10 @@ Each row has a menu: **pin** it to the top, **rename** it, **move** it to anothe
 </tr>
 </table>
 
+## Your AGENTS.md, as it is
+
+crest reads the instructions your project already keeps for agents: `AGENTS.md`, `CLAUDE.md` and `CLAUDE.local.md` at the root, your own `~/.claude/CLAUDE.md` and `~/.config/crest/AGENTS.md`, `@path` imports, and the files of subdirectories, which are attached the first time the agent works in them. An edited file applies on the next request, compaction never drops them, and `/init` has the agent write a first `AGENTS.md` for you. A repository set up for Claude Code, Cursor or Codex works the same here. [Project instructions](docs/usage.md#project-instructions-agentsmd-and-claudemd).
+
 ## A timeline, not a transcript
 
 The agent answers with real components, drawn natively on the GPU: bar, line, area and pie charts (press `t` for the data behind them), sortable tables, Mermaid diagrams with pan and zoom, colored diffs, rendered markdown, JSON trees, images, the blocks your plugins define and 47 kinds of block in all ([every block](docs/usage.md#blocks)). Replies and markdown typeset TeX math (inline `$..$`, display `$$..$$`, `\ce{}` for chemistry) on the text baseline ([math in text](docs/usage.md#math-in-text)). A rail of marks on the right lists the questions you asked and jumps to any of them ([focus](docs/usage.md#focus)).
@@ -449,7 +453,7 @@ flowchart TB
 
 ## Vision and roadmap
 
-crest is the workspace where a coding agent **shows its work, verifies it, and leaves you in control**. Next come **your project and your sessions** (`AGENTS.md` and `CLAUDE.md` loaded into the prompt, session tabs as in tmux, context and cost you can see, a definition of done that runs your checks before a turn ends), **pipelines written in Lua**, **any model** including local ones, **memory that survives compaction**, and **review and trust** (a review panel with `/undo`, sandboxed commands, workspace trust). Signed and notarized macOS builds are already here. Read the [vision and roadmap](docs/vision.md).
+crest is the workspace where a coding agent **shows its work, verifies it, and leaves you in control**. Next come **your project and your sessions** (session tabs as in tmux, context and cost you can see, a definition of done that runs your checks before a turn ends), **pipelines written in Lua**, **any model** including local ones, **memory that survives compaction**, and **review and trust** (a review panel with `/undo`, sandboxed commands, workspace trust). Signed and notarized macOS builds are already here. Read the [vision and roadmap](docs/vision.md).
 
 ## Status and license
 

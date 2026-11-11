@@ -9,6 +9,7 @@ pub mod compact;
 pub mod compute;
 pub mod evidence;
 pub mod git_status;
+pub mod instructions;
 pub mod login;
 pub mod mcp_servers;
 pub mod model3d;
