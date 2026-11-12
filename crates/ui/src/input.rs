@@ -167,7 +167,9 @@ pub enum Line {
 
 /// Splits a submitted line into a prompt or a `/command`; `//text` is the
 /// prompt `/text`; a line that starts with `!` is the shell command `!`
-/// (`! ls` is `/! ls`). `None` for an empty line or a bare `/`.
+/// (`! ls` is `/! ls`), one that starts with `&` a background agent
+/// (`& find x` is `/agent find x`). `None` for an empty line or a bare
+/// `/`.
 pub fn classify_line(text: &str) -> Option<Line> {
     if text.trim().is_empty() {
         return None;
@@ -178,6 +180,11 @@ pub fn classify_line(text: &str) -> Option<Line> {
     }
     if trimmed.starts_with('!') {
         return Some(Line::Command(trimmed.trim_end().to_owned()));
+    }
+    if let Some(job) = trimmed.strip_prefix('&') {
+        return Some(Line::Command(
+            format!("agent {}", job.trim()).trim_end().to_owned(),
+        ));
     }
     match trimmed.strip_prefix('/') {
         Some(command) if command.trim().is_empty() => None,

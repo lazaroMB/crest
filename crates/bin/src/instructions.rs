@@ -14,14 +14,26 @@
 //! model; the user's own files import anything. A file is read once: a
 //! symlink to one already read, a copy of its text, or a `CLAUDE.md` that
 //! only imports the `AGENTS.md` beside it adds nothing.
+//!
+//! Rules, as Claude Code keeps them: every `.md` file under `rules/` (in
+//! `~/.claude/`, crest's config directory, and the workspace's `.claude/`
+//! and `.crest/`), subdirectories included. A rule without `paths` in its
+//! frontmatter follows the files of its level in the base; one with
+//! `paths` (globs relative to the workspace root) is attached when a tool
+//! works on a file they match ([`InstructionsPort::for_path`]).
 
 use std::collections::BTreeSet;
+use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::SystemTime;
 
 use application::ports::instructions::{InstructionFile, InstructionScope, InstructionsPort};
+use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
+use serde::Deserialize;
+
+use crate::frontmatter;
 
 /// The names of an instructions file, in the order they are read.
 pub const NAMES: [&str; 3] = ["AGENTS.md", "CLAUDE.md", "CLAUDE.local.md"];
@@ -29,6 +41,8 @@ pub const NAMES: [&str; 3] = ["AGENTS.md", "CLAUDE.md", "CLAUDE.local.md"];
 pub const MAX_FILE_BYTES: usize = 40 * 1024;
 /// Levels of `@path` imports followed.
 pub const MAX_IMPORT_DEPTH: usize = 5;
+/// The folder of rules in each location.
+pub const RULES_DIR: &str = "rules";
 
 /// The instructions files of the user and of a workspace.
 #[derive(Debug)]
@@ -50,7 +64,16 @@ struct Loaded {
     /// Canonical paths of the files read, imports included.
     read: BTreeSet<PathBuf>,
     text: Arc<str>,
+    /// The rules with `paths`, and their globs compiled.
+    scoped: Vec<(InstructionFile, GlobSet)>,
     warnings: Vec<String>,
+}
+
+/// The frontmatter of a rule.
+#[derive(Debug, Default, Deserialize)]
+struct RuleFront {
+    #[serde(default, deserialize_with = "frontmatter::list")]
+    paths: Vec<String>,
 }
 
 impl FileInstructions {
@@ -77,24 +100,29 @@ impl FileInstructions {
         )
     }
 
-    /// The base files to look for, with their scope.
-    fn candidates(&self) -> Vec<(PathBuf, InstructionScope)> {
-        let mut out = Vec::new();
+    /// The base files to look for and the rules folders, by level (the
+    /// user's, then the workspace's).
+    fn levels(&self) -> Vec<(InstructionScope, Vec<PathBuf>, Vec<PathBuf>)> {
+        let mut user = (InstructionScope::User, Vec::new(), Vec::new());
         if let Some(home) = &self.home {
-            out.push((
-                home.join(".claude").join("CLAUDE.md"),
-                InstructionScope::User,
-            ));
+            let claude = home.join(".claude");
+            user.1.push(claude.join("CLAUDE.md"));
+            user.2.push(claude.join(RULES_DIR));
         }
         if let Some(config) = &self.config {
-            out.push((config.join("AGENTS.md"), InstructionScope::User));
+            user.1.push(config.join("AGENTS.md"));
+            user.2.push(config.join(RULES_DIR));
         }
+        let mut out = vec![user];
         if let Some(root) = &self.root {
-            out.extend(
-                NAMES
-                    .iter()
-                    .map(|name| (root.join(name), InstructionScope::Project)),
-            );
+            out.push((
+                InstructionScope::Project,
+                NAMES.iter().map(|name| root.join(name)).collect(),
+                vec![
+                    root.join(".claude").join(RULES_DIR),
+                    root.join(".crest").join(RULES_DIR),
+                ],
+            ));
         }
         out
     }
@@ -119,10 +147,28 @@ impl FileInstructions {
     fn load_base(&self) -> Loaded {
         let mut reader = Reader::new(self);
         let mut files = Vec::new();
-        for (path, scope) in self.candidates() {
-            reader.stamp(&path);
-            if let Some(file) = reader.file(&path, scope) {
-                files.push(file);
+        let mut scoped = Vec::new();
+        for (scope, paths, rule_dirs) in self.levels() {
+            for path in paths {
+                reader.stamp(&path);
+                if let Some(file) = reader.file(&path, scope) {
+                    files.push(file);
+                }
+            }
+            for dir in rule_dirs {
+                let mut rules = Vec::new();
+                let mut visited = BTreeSet::new();
+                rule_files(&dir, &mut reader.stamps, &mut visited, &mut rules);
+                for path in rules {
+                    let Some(rule) = reader.rule(&path, scope) else {
+                        continue;
+                    };
+                    if rule.paths.is_empty() {
+                        files.push(rule);
+                    } else if let Some(globs) = compile(&rule, &mut reader.warnings) {
+                        scoped.push((rule, globs));
+                    }
+                }
             }
         }
         let text = render(&files).into();
@@ -131,8 +177,29 @@ impl FileInstructions {
             files,
             read: reader.seen,
             text,
+            scoped,
             warnings: reader.warnings,
         }
+    }
+
+    /// `path` (as a tool names it) relative to the workspace root, if it
+    /// is inside it: relative paths without `..`, and absolute ones under
+    /// the root.
+    fn relative(&self, path: &str) -> Option<PathBuf> {
+        let path = Path::new(path.trim());
+        if path.is_absolute() {
+            let root = self.root.as_deref()?;
+            let inside = path
+                .strip_prefix(root)
+                .ok()
+                .map(Path::to_path_buf)
+                .or_else(|| {
+                    let canonical = path.canonicalize().ok()?;
+                    canonical.strip_prefix(root).ok().map(Path::to_path_buf)
+                })?;
+            return relative(&inside.to_string_lossy());
+        }
+        relative(&path.to_string_lossy())
     }
 
     /// The path shown for `path`: relative to the root, `~/…` under the
@@ -172,7 +239,7 @@ impl InstructionsPort for FileInstructions {
         let Some(root) = &self.root else {
             return Vec::new();
         };
-        let Some(rel) = relative(path) else {
+        let Some(rel) = self.relative(path) else {
             return Vec::new();
         };
         let target = root.join(&rel);
@@ -198,12 +265,94 @@ impl InstructionsPort for FileInstructions {
         out
     }
 
+    fn for_path(&self, path: &str) -> Vec<InstructionFile> {
+        let mut out = self.nested(path);
+        let Some(rel) = self
+            .relative(path)
+            .filter(|rel| !rel.as_os_str().is_empty())
+        else {
+            return out;
+        };
+        let rel = slashed(&rel);
+        out.extend(
+            self.current()
+                .scoped
+                .into_iter()
+                .filter(|(_, globs)| globs.is_match(&rel))
+                .map(|(rule, _)| rule),
+        );
+        out
+    }
+
     fn loaded(&self) -> Vec<InstructionFile> {
-        self.current().files
+        let current = self.current();
+        let mut out = current.files;
+        out.extend(current.scoped.into_iter().map(|(rule, _)| rule));
+        out
     }
 
     fn warnings(&self) -> Vec<String> {
         self.current().warnings
+    }
+}
+
+/// The `.md` files under `dir`, sorted, following symlinks (each folder
+/// once). Every folder is stamped, so a rule added or removed is seen.
+fn rule_files(
+    dir: &Path,
+    stamps: &mut Vec<(PathBuf, Option<(SystemTime, u64)>)>,
+    visited: &mut BTreeSet<PathBuf>,
+    out: &mut Vec<PathBuf>,
+) {
+    stamps.push((dir.to_path_buf(), modified(dir)));
+    let Ok(canonical) = dir.canonicalize() else {
+        return;
+    };
+    if !visited.insert(canonical) {
+        return;
+    }
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    let mut paths: Vec<PathBuf> = entries.flatten().map(|entry| entry.path()).collect();
+    paths.sort();
+    for path in paths {
+        let Ok(meta) = fs::metadata(&path) else {
+            continue;
+        };
+        if meta.is_dir() {
+            rule_files(&path, stamps, visited, out);
+        } else if meta.is_file() && path.extension().is_some_and(|ext| ext == "md") {
+            stamps.push((path.clone(), modified(&path)));
+            out.push(path);
+        }
+    }
+}
+
+/// The globs of `rule`'s `paths`, or `None` (with a warning) when none
+/// compiles.
+fn compile(rule: &InstructionFile, warnings: &mut Vec<String>) -> Option<GlobSet> {
+    let mut set = GlobSetBuilder::new();
+    let mut any = false;
+    for pattern in &rule.paths {
+        let pattern = pattern.trim_start_matches("./").trim_start_matches('/');
+        match GlobBuilder::new(pattern).literal_separator(true).build() {
+            Ok(glob) => {
+                set.add(glob);
+                any = true;
+            }
+            Err(e) => warnings.push(format!("{}: the path {pattern:?}: {e}", rule.path)),
+        }
+    }
+    if !any {
+        return None;
+    }
+    match set.build() {
+        Ok(set) => Some(set),
+        Err(e) => {
+            warnings.push(format!("{}: {e}", rule.path));
+            None
+        }
     }
 }
 
@@ -222,7 +371,7 @@ fn relative(path: &str) -> Option<PathBuf> {
 }
 
 /// `path` with `/` between its parts on every platform.
-fn slashed(path: &Path) -> String {
+pub(crate) fn slashed(path: &Path) -> String {
     path.components()
         .map(|c| c.as_os_str().to_string_lossy())
         .collect::<Vec<_>>()
@@ -231,7 +380,7 @@ fn slashed(path: &Path) -> String {
 
 /// When `path` changed and its size: a write within one tick of a coarse
 /// clock still changes the size, most of the time.
-fn modified(path: &Path) -> Option<(SystemTime, u64)> {
+pub(crate) fn modified(path: &Path) -> Option<(SystemTime, u64)> {
     let meta = std::fs::metadata(path).ok()?;
     Some((meta.modified().ok()?, meta.len()))
 }
@@ -265,6 +414,20 @@ impl<'a> Reader<'a> {
     /// The file at `path` with its imports, or `None` when it is missing,
     /// already read or adds nothing.
     fn file(&mut self, path: &Path, scope: InstructionScope) -> Option<InstructionFile> {
+        self.read_file(path, scope, false)
+    }
+
+    /// The rule at `path`: a file whose frontmatter may hold `paths`.
+    fn rule(&mut self, path: &Path, scope: InstructionScope) -> Option<InstructionFile> {
+        self.read_file(path, scope, true)
+    }
+
+    fn read_file(
+        &mut self,
+        path: &Path,
+        scope: InstructionScope,
+        rule: bool,
+    ) -> Option<InstructionFile> {
         let canonical = path.canonicalize().ok()?;
         if !canonical.is_file() || !self.seen.insert(canonical.clone()) {
             return None;
@@ -276,7 +439,19 @@ impl<'a> Reader<'a> {
             ));
             return None;
         }
-        let own = self.read(&canonical)?;
+        let mut own = self.read(&canonical)?;
+        let mut paths = Vec::new();
+        if rule {
+            let (front, body) = frontmatter::parse::<RuleFront>(&own);
+            match front {
+                Ok(front) => paths = front.paths,
+                Err(e) => self.warnings.push(format!(
+                    "{}: the frontmatter is not valid YAML ({e}); the rule applies everywhere",
+                    path.display()
+                )),
+            }
+            own = body.to_owned();
+        }
         let mut imports = Vec::new();
         let mut imported = String::new();
         self.imports(&canonical, &own, scope, 1, &mut imports, &mut imported);
@@ -300,6 +475,7 @@ impl<'a> Reader<'a> {
             scope,
             text,
             imports,
+            paths,
         })
     }
 
@@ -750,5 +926,122 @@ mod tests {
         let port = fx.port();
         assert!(port.base().contains("pkg rule"));
         assert!(port.nested("pkg/a.rs").is_empty());
+    }
+
+    #[test]
+    fn rules_without_paths_follow_the_files_of_their_level() {
+        let fx = Fixture::new();
+        fx.write(&fx.home.join(".claude/CLAUDE.md"), "user file");
+        fx.write(&fx.home.join(".claude/rules/style.md"), "user rule");
+        fx.ws("AGENTS.md", "root file");
+        fx.ws(
+            ".claude/rules/b.md",
+            "---\ndescription: x\n---\nproject rule b",
+        );
+        fx.ws(".claude/rules/a/deep.md", "project rule deep");
+        fx.ws(".crest/rules/c.md", "crest rule");
+        fx.ws(".claude/rules/notes.txt", "not a rule");
+        let port = fx.port();
+        assert_eq!(
+            paths(&port.loaded()),
+            [
+                "~/.claude/CLAUDE.md",
+                "~/.claude/rules/style.md",
+                "AGENTS.md",
+                ".claude/rules/a/deep.md",
+                ".claude/rules/b.md",
+                ".crest/rules/c.md",
+            ]
+        );
+        let base = port.base();
+        assert!(base.contains("project rule b"));
+        assert!(
+            !base.contains("description: x"),
+            "the frontmatter is not text"
+        );
+        assert!(!base.contains("not a rule"));
+    }
+
+    #[test]
+    fn rules_with_paths_are_attached_to_the_files_they_match() {
+        let fx = Fixture::new();
+        fx.ws(
+            ".claude/rules/api.md",
+            "---\npaths:\n  - \"src/api/**/*.rs\"\n---\nAPI rule",
+        );
+        fx.ws(
+            ".claude/rules/ts.md",
+            "---\npaths: \"**/*.{ts,tsx}\"\n---\nTS rule",
+        );
+        fx.write(
+            &fx.home.join(".claude/rules/docs.md"),
+            "---\npaths: docs/*.md\n---\nDocs rule",
+        );
+        let port = fx.port();
+        assert!(!port.base().contains("API rule"));
+        let files = port.for_path("src/api/v1/users.rs");
+        assert_eq!(paths(&files), [".claude/rules/api.md"]);
+        assert_eq!(files[0].paths, ["src/api/**/*.rs"]);
+        assert_eq!(files[0].text, "API rule");
+        assert!(port.for_path("src/main.rs").is_empty());
+        assert_eq!(
+            paths(&port.for_path("web/app.tsx")),
+            [".claude/rules/ts.md"]
+        );
+        assert_eq!(paths(&port.for_path("app.ts")), [".claude/rules/ts.md"]);
+        assert_eq!(
+            paths(&port.for_path("docs/a.md")),
+            ["~/.claude/rules/docs.md"]
+        );
+        assert!(
+            port.for_path("docs/sub/a.md").is_empty(),
+            "* stays in one folder"
+        );
+        let absolute = fx.root.join("src/api/x.rs");
+        assert_eq!(
+            paths(&port.for_path(&absolute.to_string_lossy())),
+            [".claude/rules/api.md"]
+        );
+        assert!(port.for_path("../ws/src/api/x.rs").is_empty());
+        assert_eq!(paths(&port.loaded()).len(), 3, "/help lists them");
+    }
+
+    #[test]
+    fn absolute_paths_inside_the_root_find_nested_files() {
+        let fx = Fixture::new();
+        fx.ws("pkg/AGENTS.md", "pkg rule");
+        let port = fx.port();
+        let absolute = fx.root.join("pkg/a.rs");
+        assert_eq!(
+            paths(&port.nested(&absolute.to_string_lossy())),
+            ["pkg/AGENTS.md"]
+        );
+    }
+
+    #[test]
+    fn a_rule_added_later_is_read_and_bad_frontmatter_warns() {
+        let fx = Fixture::new();
+        fx.ws("AGENTS.md", "root");
+        let port = fx.port();
+        assert!(!port.base().contains("late rule"));
+        fx.ws(".claude/rules/sub/late.md", "late rule");
+        assert!(port.base().contains("late rule"));
+        fx.ws(".claude/rules/bad.md", "---\npaths: [oops\n---\nbad rule");
+        assert!(port.base().contains("bad rule"), "applies everywhere");
+        assert!(port.warnings().iter().any(|w| w.contains("not valid YAML")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlinked_rule_folders_are_followed_once() {
+        let fx = Fixture::new();
+        fx.ws("shared/team.md", "team rule");
+        std::fs::create_dir_all(fx.root.join(".claude/rules")).unwrap();
+        std::os::unix::fs::symlink(fx.root.join("shared"), fx.root.join(".claude/rules/team"))
+            .unwrap();
+        std::os::unix::fs::symlink(fx.root.join(".claude/rules"), fx.root.join("shared/loop"))
+            .unwrap();
+        let port = fx.port();
+        assert_eq!(paths(&port.loaded()), [".claude/rules/team/team.md"]);
     }
 }

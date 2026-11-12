@@ -1,8 +1,10 @@
-//! The instructions files of subdirectories, attached to tool results.
+//! The instructions files of subdirectories, and the rules scoped to some
+//! paths, attached to tool results.
 //!
-//! A nested `AGENTS.md` (or `CLAUDE.md`) applies to its subtree. Rather than
-//! putting every one of them in the system prompt, the agent loop attaches
-//! a file to the result of the first tool call that touches its subtree,
+//! A nested `AGENTS.md` (or `CLAUDE.md`) applies to its subtree, and a rule
+//! with `paths` (`.claude/rules/api.md`) to the files they match. Rather
+//! than putting every one of them in the system prompt, the agent loop
+//! attaches a file to the result of the first tool call that touches it,
 //! wrapped in an [`open_tag`] the history can be searched for. The history
 //! is the record of what was attached: a file already in it is not
 //! attached again, and once compaction replaces the turns that had it, the
@@ -45,11 +47,14 @@ pub fn call_path<'a>(tool: &str, input: &'a Value) -> Option<&'a str> {
 #[must_use]
 pub fn attachment(files: &[InstructionFile]) -> String {
     let mut out = String::from(
-        "The directories of this path have their own instructions; follow them for files \
-         under them (they add to and take precedence over the project's):",
+        "Instructions that apply to this path; follow them for the files they cover (they \
+         add to and take precedence over the project's):",
     );
     for file in files {
         out.push_str("\n\n");
+        if !file.paths.is_empty() {
+            out.push_str(&format!("(rule for {})\n", file.paths.join(", ")));
+        }
         out.push_str(&open_tag(&file.path));
         out.push('\n');
         out.push_str(file.text.trim());
@@ -106,8 +111,8 @@ pub fn compaction_reminder(paths: &BTreeSet<String>) -> Option<String> {
         .collect::<Vec<_>>()
         .join(", ");
     Some(format!(
-        "Subdirectories with their own instructions (attached again when you next work in \
-         them): {list}."
+        "Instructions for some subdirectories and paths (attached again when you next work \
+         on them): {list}."
     ))
 }
 
@@ -119,12 +124,7 @@ mod tests {
     use serde_json::json;
 
     fn file(path: &str, text: &str) -> InstructionFile {
-        InstructionFile {
-            path: path.into(),
-            scope: InstructionScope::Nested,
-            text: text.into(),
-            imports: Vec::new(),
-        }
+        InstructionFile::new(path, InstructionScope::Nested, text)
     }
 
     #[test]

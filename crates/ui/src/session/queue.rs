@@ -3,6 +3,7 @@
 
 use application_core::ports::events::{DomainEvent, NoticeLevel};
 use application_core::usecases::cancel::CancelToken;
+use application_core::usecases::run_turn::SkillCall;
 use domain::block::{Block, BlockKind};
 use domain::conversation::{ImageAttachment, StopReason};
 use domain::model::ModelRole;
@@ -17,6 +18,8 @@ pub(super) struct Queued {
     prompt: String,
     role: Option<ModelRole>,
     images: Vec<ImageAttachment>,
+    /// The skill a `/name` line runs first.
+    skill: Option<SkillCall>,
 }
 
 impl Queued {
@@ -66,15 +69,44 @@ impl Session {
         images: Vec<ImageAttachment>,
         cx: &mut Context<Self>,
     ) {
-        if self.is_busy() {
-            self.queue.push_back(Queued {
+        self.submit_queued(
+            Queued {
                 prompt,
                 role,
                 images,
-            });
+                skill: None,
+            },
+            cx,
+        );
+    }
+
+    /// Runs the skill `name` with `args` (the user's `/name args`), or
+    /// queues it while the session is busy.
+    pub fn submit_skill(&mut self, name: String, args: String, cx: &mut Context<Self>) {
+        let prompt = format!("/{name} {args}").trim_end().to_owned();
+        self.submit_queued(
+            Queued {
+                prompt,
+                role: None,
+                images: Vec::new(),
+                skill: Some(SkillCall { name, args }),
+            },
+            cx,
+        );
+    }
+
+    fn submit_queued(&mut self, queued: Queued, cx: &mut Context<Self>) {
+        if self.is_busy() {
+            self.queue.push_back(queued);
             self.sync_activity(cx);
             return;
         }
+        let Queued {
+            prompt,
+            role,
+            images,
+            skill,
+        } = queued;
         let cancel = CancelToken::new();
         self.running = Some(cancel.clone());
         let turn = self.controller.run_turn(TurnRequest {
@@ -83,6 +115,7 @@ impl Session {
             model_override: self.model_override.take(),
             role,
             cancel,
+            skill,
         });
         self.turn = Some(cx.spawn(async move |this, cx| {
             let end = turn.await;
@@ -119,9 +152,29 @@ impl Session {
         if !self.is_busy()
             && let Some(next) = self.queue.pop_front()
         {
-            self.submit_with(next.prompt, next.role, next.images, cx);
+            self.submit_queued(next, cx);
         }
         self.sync_activity(cx);
+        self.try_wake(cx);
+    }
+
+    /// Starts the turn that reads the reports of background agents, once
+    /// the session is free and nothing waits in the queue (a queued prompt
+    /// reads them itself).
+    pub(super) fn try_wake(&mut self, cx: &mut Context<Self>) {
+        if !self.wake_pending || self.is_busy() || !self.queue.is_empty() {
+            return;
+        }
+        self.wake_pending = false;
+        let cancel = CancelToken::new();
+        self.running = Some(cancel.clone());
+        let turn = self.controller.wake(cancel);
+        self.turn = Some(cx.spawn(async move |this, cx| {
+            let end = turn.await;
+            this.update(cx, |this, cx| this.turn_ended(end, cx)).ok();
+        }));
+        self.sync_activity(cx);
+        cx.notify();
     }
 
     /// Shows the current work and the queue in the activity line, and tells
@@ -165,6 +218,7 @@ impl Session {
     fn turn_ended(&mut self, end: TurnEnd, cx: &mut Context<Self>) {
         self.running = None;
         self.turn = None;
+        self.load_commands(cx);
         if std::mem::take(&mut self.pending_clear) {
             self.reset(cx);
         }

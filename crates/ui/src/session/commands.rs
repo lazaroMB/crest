@@ -162,6 +162,7 @@ impl Session {
                 for action in actions {
                     match action {
                         PluginAction::Send { text, role } => self.submit_as(text, role, cx),
+                        PluginAction::Skill { name, args } => self.submit_skill(name, args, cx),
                         PluginAction::Cmd { command } if depth < MAX_COMMAND_DEPTH => {
                             self.command_at(&command, depth + 1, window, cx);
                         }

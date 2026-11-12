@@ -90,10 +90,12 @@ use crate::ports::llm::{
     SystemBlock, ToolDefinition,
 };
 use crate::ports::plugin::{HookEvent, HookKind, HookOutcome, PluginError, PluginHostPort};
+use crate::ports::skills::SkillsPort;
 use crate::ports::telemetry::{LlmCallRecord, SpanId, TelemetryPort, ToolCallRecord, TurnSpan};
 use crate::privacy;
 use crate::tools::registry::{PreparedCall, ToolContext, ToolError, ToolOutput, ToolRegistry};
 
+use super::agents::{AgentInbox, reports_text};
 pub use super::approval::SharedPermissions;
 use super::approval::{ApprovalGate, PendingApproval, UserVerdict, policy_denial};
 use super::cancel::{CancelToken, Interrupted};
@@ -105,6 +107,7 @@ use super::compact::{
 use super::instructions;
 use super::permissions::ProjectRules;
 use super::routing::{Routing, route, used_tools};
+use super::skills;
 use super::web_sources::web_sources;
 
 /// Name of the `ask_user` tool ([`tools::form`](crate::tools::form)): the
@@ -156,6 +159,18 @@ pub struct TurnOptions {
     /// Lower limit of model calls for this turn; the service's limit still
     /// applies when it is smaller.
     pub max_iterations: Option<u32>,
+    /// The skill the user ran (`/name args`): the turn loads it with a
+    /// `skill` call before the model answers.
+    pub skill: Option<SkillCall>,
+}
+
+/// A skill the user ran: its name and what was typed after it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkillCall {
+    /// The skill's name, without the slash.
+    pub name: String,
+    /// The arguments, as typed.
+    pub args: String,
 }
 
 impl Default for TurnOptions {
@@ -174,6 +189,7 @@ impl TurnOptions {
             pinned_role: None,
             cancel: CancelToken::new(),
             max_iterations: None,
+            skill: None,
         }
     }
 
@@ -189,6 +205,17 @@ impl TurnOptions {
     #[must_use]
     pub fn with_max_iterations(mut self, limit: u32) -> Self {
         self.max_iterations = Some(limit.max(1));
+        self
+    }
+
+    /// Returns the same options running the skill `name` with `args`
+    /// first.
+    #[must_use]
+    pub fn with_skill(mut self, name: impl Into<String>, args: impl Into<String>) -> Self {
+        self.skill = Some(SkillCall {
+            name: name.into(),
+            args: args.into(),
+        });
         self
     }
 
@@ -340,6 +367,11 @@ pub struct AgentService {
     /// The `AGENTS.md` and `CLAUDE.md` files: the user's and the root's
     /// join the system prompt, the nested ones the tool results.
     instructions: Option<Arc<dyn InstructionsPort>>,
+    /// The skills, for the `.claude/skills` of the subdirectories the
+    /// tools work in.
+    skills: Option<Arc<dyn SkillsPort>>,
+    /// The reports of background agents, read at the next model call.
+    inbox: Option<AgentInbox>,
     max_iterations: u32,
     clock: fn() -> u64,
     /// The tools sent last, kept while the registry and the routing
@@ -398,6 +430,8 @@ impl AgentService {
             checkpoint: None,
             system_prompt: String::new(),
             instructions: None,
+            skills: None,
+            inbox: None,
             max_iterations: DEFAULT_MAX_ITERATIONS,
             clock: system_now_ms,
             offered: Mutex::new(None),
@@ -426,6 +460,41 @@ impl AgentService {
     pub fn with_instructions(mut self, port: Arc<dyn InstructionsPort>) -> Self {
         self.instructions = Some(port);
         self
+    }
+
+    /// Looks for the skills of the subdirectories the tools work in with
+    /// `port`.
+    #[must_use]
+    pub fn with_skills(mut self, port: Arc<dyn SkillsPort>) -> Self {
+        self.skills = Some(port);
+        self
+    }
+
+    /// Reads the reports background agents leave in `inbox`: those that
+    /// arrive during a turn join its next model call.
+    #[must_use]
+    pub fn with_inbox(mut self, inbox: AgentInbox) -> Self {
+        self.inbox = Some(inbox);
+        self
+    }
+
+    /// The inbox of background agents' reports, if any.
+    #[must_use]
+    pub fn inbox(&self) -> Option<&AgentInbox> {
+        self.inbox.as_ref()
+    }
+
+    /// The text of the reports waiting in the inbox, taking them.
+    fn take_reports(&self) -> Option<String> {
+        self.inbox
+            .as_ref()
+            .and_then(|inbox| reports_text(&inbox.drain()))
+    }
+
+    /// The skills the service finds, if any.
+    #[must_use]
+    pub fn skills(&self) -> Option<&Arc<dyn SkillsPort>> {
+        self.skills.as_ref()
     }
 
     /// The instructions files the service follows, if any.
@@ -622,6 +691,7 @@ impl AgentService {
         mut opts: TurnOptions,
     ) -> Result<TurnOutcome, TurnError> {
         let input = self.mask_prompt(input.into());
+        let skill = opts.skill.take();
         let routing = self.route(session, &input.text, &opts).await;
         if let Some(model) = routing.as_ref().and_then(|r| r.model.clone()) {
             opts.turn_override = Some(model);
@@ -659,6 +729,11 @@ impl AgentService {
             return Err(err);
         }
         let mut turn = Turn::new(Message::user(input.text, input.images));
+        if let Some(reports) = self.take_reports() {
+            turn.messages[0]
+                .content
+                .push(ContentPart::Text { text: reports });
+        }
         let turn_id = turn.id;
         self.emit(DomainEvent::TurnStarted {
             session_id: session.id,
@@ -690,9 +765,24 @@ impl AgentService {
             running: Mutex::default(),
             attached: Mutex::default(),
         };
-        let result = run.run().await;
+        // A skill's `allowed-tools` last one turn.
+        self.clear_grants();
+        let result = match skill {
+            Some(skill) => run.run_skill(skill).await,
+            None => run.run().await,
+        };
+        self.clear_grants();
         let model_calls = run.model_calls;
         self.finish_turn(session, turn, span, model_calls, result)
+    }
+
+    /// Drops what the skills of a turn allowed.
+    fn clear_grants(&self) {
+        self.gate
+            .permissions()
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clear_grants();
     }
 
     /// Continues the last turn of `session` when the process ended while
@@ -1024,6 +1114,34 @@ impl TurnRun<'_> {
     }
 
     /// The loop: model, tools, model… until the model stops calling tools.
+    /// Loads the skill the user ran with a `skill` call, as if the model
+    /// had made it (its block, approval and result are a call's), then
+    /// goes on as [`Self::run`].
+    async fn run_skill(&mut self, skill: SkillCall) -> Result<StopReason, TurnError> {
+        let id = skills::user_call_id(&self.turn.id);
+        let input = json!({ "skill": skill.name, "args": skill.args });
+        let block_id = BlockId::for_tool_use(id.as_str(), "tool_call");
+        self.emit(DomainEvent::BlockAdded {
+            block: Block {
+                id: block_id,
+                kind: tool_call_kind(&id, skills::SKILL_TOOL, input.clone(), skill.name),
+            },
+        });
+        self.turn
+            .messages
+            .push(Message::assistant(vec![ContentPart::ToolUse {
+                id: id.clone(),
+                name: skills::SKILL_TOOL.to_owned(),
+                input: input.clone(),
+            }]));
+        let blocks = HashMap::from([(id.clone(), block_id)]);
+        let uses = vec![(id, skills::SKILL_TOOL.to_owned(), input)];
+        if let Some(stop) = self.run_tools(uses, &blocks, Vec::new()).await {
+            return Ok(stop);
+        }
+        self.run().await
+    }
+
     async fn run(&mut self) -> Result<StopReason, TurnError> {
         loop {
             if self.cancel.is_cancelled() {
@@ -1126,6 +1244,11 @@ impl TurnRun<'_> {
                 content: output.content,
                 is_error: true,
             });
+        }
+        // Reports of background agents that ended meanwhile go with the
+        // results, so the next model call reads them.
+        if finished && let Some(reports) = self.service.take_reports() {
+            results.push(ContentPart::Text { text: reports });
         }
         self.turn.messages.push(Message::new(Role::User, results));
         (!finished).then_some(StopReason::Interrupted)
@@ -1462,6 +1585,12 @@ impl TurnRun<'_> {
             if let Some(reminder) = instructions::compaction_reminder(&dropped) {
                 text = format!("{text}\n\n{reminder}");
             }
+        }
+        let kept = skills::invoked(&self.session.turns[count..]);
+        let mut dropped = skills::invoked(&self.session.turns[..count]);
+        dropped.retain(|name| !kept.contains(name));
+        if let Some(reminder) = skills::compaction_reminder(&dropped) {
+            text = format!("{text}\n\n{reminder}");
         }
         let turn = summary_turn(&text, &self.session.turns[..count], summary.usage);
         replace_turns(self.session, count, turn);
@@ -1923,13 +2052,16 @@ impl TurnRun<'_> {
     /// Appends to `output` the instructions files of the subdirectories a
     /// call of `name` with `input` works in, those not attached yet.
     fn attach_instructions(&self, name: &str, input: &Value, output: &mut ToolOutput) {
-        let Some(port) = &self.service.instructions else {
-            return;
-        };
         let Some(path) = instructions::call_path(name, input) else {
             return;
         };
-        let files = port.nested(path);
+        if let Some(skills) = &self.service.skills {
+            skills.discover(path);
+        }
+        let Some(port) = &self.service.instructions else {
+            return;
+        };
+        let files = port.for_path(path);
         if files.is_empty() {
             return;
         }
@@ -1998,6 +2130,8 @@ mod hook_tests;
 mod instructions_tests;
 #[cfg(test)]
 mod routing_tests;
+#[cfg(test)]
+mod skills_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

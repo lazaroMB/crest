@@ -10,6 +10,7 @@ use crate::ports::instructions::{InstructionFile, InstructionScope, Instructions
 pub struct FixedInstructions {
     base: Mutex<String>,
     nested: Vec<(String, String)>,
+    rules: Vec<(String, String, String)>,
     lookups: Mutex<Vec<String>>,
 }
 
@@ -30,6 +31,15 @@ impl FixedInstructions {
     #[must_use]
     pub fn with_nested(mut self, dir: &str, text: &str) -> Self {
         self.nested.push((dir.to_owned(), text.to_owned()));
+        self
+    }
+
+    /// The rule at `path` holds `text` and applies to the paths that start
+    /// with `prefix`.
+    #[must_use]
+    pub fn with_rule(mut self, path: &str, prefix: &str, text: &str) -> Self {
+        self.rules
+            .push((path.to_owned(), prefix.to_owned(), text.to_owned()));
         self
     }
 
@@ -64,13 +74,24 @@ impl InstructionsPort for FixedInstructions {
         self.nested
             .iter()
             .filter(|(dir, _)| path.starts_with(&format!("{dir}/")))
-            .map(|(dir, text)| InstructionFile {
-                path: format!("{dir}/AGENTS.md"),
-                scope: InstructionScope::Nested,
-                text: text.clone(),
-                imports: Vec::new(),
+            .map(|(dir, text)| {
+                InstructionFile::new(format!("{dir}/AGENTS.md"), InstructionScope::Nested, text)
             })
             .collect()
+    }
+
+    fn for_path(&self, path: &str) -> Vec<InstructionFile> {
+        let mut out = self.nested(path);
+        out.extend(
+            self.rules
+                .iter()
+                .filter(|(_, prefix, _)| path.starts_with(prefix.as_str()))
+                .map(|(rule, prefix, text)| InstructionFile {
+                    paths: vec![format!("{prefix}**")],
+                    ..InstructionFile::new(rule, InstructionScope::Project, text)
+                }),
+        );
+        out
     }
 
     fn loaded(&self) -> Vec<InstructionFile> {

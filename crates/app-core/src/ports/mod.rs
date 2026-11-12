@@ -19,6 +19,7 @@ pub mod projects;
 pub mod search;
 pub mod shell;
 pub mod sim;
+pub mod skills;
 pub mod store;
 pub mod telemetry;
 pub mod theme;

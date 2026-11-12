@@ -345,6 +345,65 @@ expression: "schemars::schema_for!(Block)"
       ]
     },
     {
+      "description": "A subagent working in the background: what it was asked, what it\nis doing, and its report once it ends.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "agent"
+        },
+        "agent_id": {
+          "description": "Its number in the session (`/agents stop 3`).",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "name": {
+          "description": "A short title of the job.",
+          "type": "string"
+        },
+        "kind": {
+          "description": "`explore` (read-only) or `general` (the chat's tools).",
+          "type": "string"
+        },
+        "origin": {
+          "description": "Who started it: `user` (`/agent`, `&`) or `model`.",
+          "type": "string"
+        },
+        "prompt": {
+          "description": "What it was asked.",
+          "type": "string"
+        },
+        "status": {
+          "description": "Where it is.",
+          "$ref": "#/$defs/AgentStatus"
+        },
+        "activity": {
+          "description": "Its latest tool calls, oldest first (`grep \"foo\" ✓`).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "report": {
+          "description": "Its report, once it ended.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "agent_id",
+        "name",
+        "kind",
+        "origin",
+        "prompt",
+        "status"
+      ]
+    },
+    {
       "description": "Failure of the API or a tool.",
       "type": "object",
       "properties": {
@@ -3002,6 +3061,31 @@ expression: "schemars::schema_for!(Block)"
             "url",
             "title"
           ]
+        }
+      ]
+    },
+    "AgentStatus": {
+      "description": "Lifecycle of a background agent.",
+      "oneOf": [
+        {
+          "description": "Working.",
+          "type": "string",
+          "const": "running"
+        },
+        {
+          "description": "Finished with a report.",
+          "type": "string",
+          "const": "done"
+        },
+        {
+          "description": "Ended with an error.",
+          "type": "string",
+          "const": "failed"
+        },
+        {
+          "description": "Stopped by the user (`/agents stop`) or the end of crest.",
+          "type": "string",
+          "const": "cancelled"
         }
       ]
     },

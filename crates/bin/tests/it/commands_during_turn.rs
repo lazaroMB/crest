@@ -42,6 +42,7 @@ fn request(prompt: &str, cancel: CancelToken) -> TurnRequest {
         model_override: None,
         role: None,
         cancel,
+        skill: None,
     }
 }
 

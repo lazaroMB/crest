@@ -40,6 +40,11 @@ crest loads the instructions a project already keeps for agents: `AGENTS.md` and
 *Why:* instructions that agents ignore or lose are one of the most repeated complaints about coding agents, and teams should not maintain one file per tool.
 *Done when:* a project set up for Claude Code (or any `AGENTS.md` tool) behaves the same in crest without changes.
 
+**1b. Claude Code's rules and skills.** *(Done: see [Rules](usage.md#rules-clauderules) and [Skills](usage.md#skills-and-custom-commands-claudeskills-claudecommands).)*
+`.claude/rules/*.md`, always or for the paths their globs match, and `.claude/skills/<name>/SKILL.md` with the custom commands of `.claude/commands/`: the model loads a skill with the `skill` tool, the user runs it as `/name`, with its arguments, `` !`command` `` lines, `allowed-tools`, `model` and `context: fork`.
+*Why:* teams keep their know-how in skills and rules; it should not be tied to one tool.
+*Done when:* a repository's rules, skills and commands written for Claude Code work in crest without changes.
+
 **2. Session tabs, tmux style.**
 Several sessions in one window, each with its own agent, turn and queue, running at the same time. A tab bar shows each one's state (working, waiting for approval, done, failed); an approval or a notice in a background tab marks it. Keys on the leader, as in tmux: `Ctrl+G c` new tab, `Ctrl+G x` close, `Ctrl+G n` / `Ctrl+G b` next and previous, `Ctrl+G 1`–`9` go to a tab, `Ctrl+G ,` rename, `Ctrl+G s` choose among saved sessions (which also ends "only the last session is resumed"). The tabs come back when the workspace is opened again.
 *Why:* real work is parallel: a research flow running while you fix something small, two features at once.

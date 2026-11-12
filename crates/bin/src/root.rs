@@ -12,6 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::instructions::FileInstructions;
 use crate::research::Research;
+use crate::skills::FileSkills;
 use adapter_fs::guard::canonical_root;
 use adapter_fs::{LocalFs, WorkspaceGuard};
 use adapter_lua::{HostOptions, LuaHost, default_sources};
@@ -37,6 +38,7 @@ use application::ports::plugin::{
 };
 use application::ports::search::{ContentSearchPort, FileSearchPort};
 use application::ports::shell::ShellPort;
+use application::ports::skills::SkillsPort;
 use application::ports::store::{SessionStorePort, StoreError, StoredSession};
 use application::ports::telemetry::TelemetryPort;
 use application::ports::web::WebPort;
@@ -46,7 +48,9 @@ use application::tools::form::FORM_TOOL_PROMPT;
 use application::tools::formats::FORMAT_TOOLS_PROMPT;
 use application::tools::ghs::GHS_TOOL_PROMPT;
 use application::tools::web::WEB_TOOLS_PROMPT;
+use application::usecases::agents::AgentInbox;
 use application::usecases::approval::lock_permissions;
+use application::usecases::background::{AgentRunner, GeneralKit};
 use application::usecases::compact::CompactionPolicy;
 use application::usecases::run_turn::{AgentDeps, AgentService, SharedPermissions, TurnOptions};
 use application::usecases::simulate::Simulator;
@@ -194,6 +198,10 @@ pub struct Overrides {
     /// Without it, `config_sources` set means no user-level files beyond
     /// an `AGENTS.md` beside its global `init.lua`.
     pub instructions: Option<Arc<dyn InstructionsPort>>,
+    /// The skills instead of those on disk. Without it, `config_sources`
+    /// set means no user-level skills beyond those beside its global
+    /// `init.lua`.
+    pub skills: Option<Arc<dyn SkillsPort>>,
 }
 
 /// No API key of any provider in the environment nor in the keyring; the
@@ -236,6 +244,8 @@ pub type SharedShellContext = Arc<Mutex<Vec<String>>>;
 pub struct App {
     /// The agent.
     pub service: AgentService,
+    /// The subagents (`/agent`, `task`, forked skills) and their reports.
+    pub agents: Arc<AgentRunner>,
     /// The current session: the latest one of the workspace when resumed,
     /// otherwise a new one.
     pub session: Session,
@@ -528,22 +538,24 @@ pub async fn build_app(
     let config_sources = sources.clone();
     let (mut loaded, config_warnings) = startup::load_config(host, sources).await;
     warnings.extend(config_warnings);
+    let ws = (!standalone).then(|| root.as_path().to_path_buf());
+    let user_dirs = match &overrides.config_sources {
+        // Tests with their own config do not read the user's files.
+        Some(sources) => (
+            None,
+            sources
+                .global
+                .as_deref()
+                .and_then(Path::parent)
+                .map(Path::to_path_buf),
+        ),
+        None => (platform::dirs::home_dir(), platform::dirs::config_dir()),
+    };
     let instructions = match &overrides.instructions {
         Some(port) => Arc::clone(port),
         None => {
-            let ws = (!standalone).then(|| root.as_path().to_path_buf());
-            let user_dirs = match &overrides.config_sources {
-                // Tests with their own config do not read the user's files.
-                Some(sources) => (
-                    None,
-                    sources
-                        .global
-                        .as_deref()
-                        .and_then(Path::parent)
-                        .map(Path::to_path_buf),
-                ),
-                None => (platform::dirs::home_dir(), platform::dirs::config_dir()),
-            };
+            let ws = ws.clone();
+            let user_dirs = user_dirs.clone();
             tokio::task::spawn_blocking(move || {
                 let port = FileInstructions::new(ws.as_deref(), user_dirs.0, user_dirs.1);
                 // Read now: the first turn finds them loaded, and their
@@ -556,6 +568,17 @@ pub async fn build_app(
         }
     };
     warnings.extend(instructions.warnings());
+    let skills = match &overrides.skills {
+        Some(port) => Arc::clone(port),
+        None => tokio::task::spawn_blocking(move || {
+            let port = FileSkills::new(ws.as_deref(), user_dirs.0, user_dirs.1);
+            let _ = port.list();
+            Arc::new(port) as Arc<dyn SkillsPort>
+        })
+        .await
+        .context("reading the skills")?,
+    };
+    warnings.extend(skills.warnings());
     // The servers the MCP servers manager saved, merged with `app.mcp`.
     let mcp_config = crate::mcp_config::McpConfigPaths::from_sources(&config_sources);
     let (json_global, json_workspace, json_warnings) = {
@@ -725,8 +748,11 @@ pub async fn build_app(
     warnings.extend(privacy_warning);
     let (rewriter, rtk_warning) = startup::rtk(&loaded.options, &root);
     warnings.extend(rtk_warning);
+    // The agent of forked skills, built with the chat's once it exists.
+    let agent_runner: Arc<std::sync::OnceLock<Arc<AgentRunner>>> = Arc::default();
     let Tools {
         mut tools,
+        explore,
         compute,
         formats,
         simulator,
@@ -748,6 +774,9 @@ pub async fn build_app(
             events: Arc::clone(&events),
             plugin_tools: &loaded.tools,
             instructions: Arc::clone(&instructions),
+            skills: Arc::clone(&skills),
+            permissions: Arc::clone(&permissions),
+            runner: Arc::clone(&agent_runner),
         },
         &mut warnings,
     )
@@ -866,9 +895,37 @@ pub async fn build_app(
         prompt.push_str(GHS_TOOL_PROMPT);
     }
     let prompt_history = Arc::new(Mutex::new(prompt_history));
+    // Subagents: `task` and forked skills wait on them or send them to the
+    // background, as `/agent` does; their reports reach the chat through
+    // the inbox.
+    let inbox = AgentInbox::new();
+    let agents = Arc::new(AgentRunner::new(
+        explore,
+        Arc::clone(&events),
+        Arc::clone(&deps.approval),
+        inbox.clone(),
+        if standalone {
+            String::new()
+        } else {
+            root.as_path().display().to_string()
+        },
+    ));
+    agents.set_general(GeneralKit {
+        deps: deps.clone(),
+        tools: tools.clone(),
+        models: policy.clone(),
+        permissions: Arc::clone(&permissions),
+        system_prompt: prompt.clone(),
+        instructions: Some(Arc::clone(&instructions)),
+        skills: Some(Arc::clone(&skills)),
+        project_rules: Some(project_rules.clone()),
+    });
+    let _ = agent_runner.set(Arc::clone(&agents));
     let mut service = AgentService::new(deps, tools, policy, Arc::clone(&permissions))
+        .with_inbox(inbox)
         .with_system_prompt(prompt)
         .with_instructions(Arc::clone(&instructions))
+        .with_skills(Arc::clone(&skills))
         .with_compaction(CompactionPolicy::default())
         .with_decider(decider.clone())
         .with_project_rules(project_rules);
@@ -911,6 +968,7 @@ pub async fn build_app(
         file_search,
         shell: Arc::clone(&shell),
         shell_context: Arc::default(),
+        agents,
         content_search,
         plugins,
         keymaps: loaded.keymaps,

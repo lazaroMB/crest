@@ -14,6 +14,7 @@ pub mod permissions;
 pub mod project_book;
 pub mod projects;
 pub mod sim;
+pub mod skills;
 pub mod system;
 pub mod theme;
 pub mod web;
