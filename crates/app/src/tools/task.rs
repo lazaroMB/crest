@@ -23,7 +23,7 @@
 //! cancelled) drops the subagent's turn, which closes its model stream and
 //! cancels its running tool.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use async_trait::async_trait;
 use domain::conversation::{ContentPart, Role, Session, StopReason};
@@ -46,6 +46,7 @@ use crate::ports::instructions::InstructionsPort;
 use crate::ports::llm::LlmPort;
 use crate::ports::search::{ContentSearchPort, FileSearchPort};
 use crate::ports::telemetry::TelemetryPort;
+use crate::usecases::background::{AgentJob, AgentKind, AgentOrigin, AgentRunner};
 use crate::usecases::run_turn::{AgentDeps, AgentService, TurnOptions};
 
 /// Default limit of model calls of one subagent run.
@@ -76,7 +77,11 @@ web_fetch when the web is configured: it cannot edit, write or run commands. Do 
 yourself after reading its report.
 - It does not see this conversation: put everything it needs in `prompt` (what to find, where \
 to look, what to report).
-- Its report lists paths and line numbers; read the files yourself before editing them.";
+- Its report lists paths and line numbers; read the files yourself before editing them.
+- Set `background` to true for a long job you do not need right away: it then runs while you \
+go on (and the user can keep chatting), and its report arrives later in a message, as \
+<agent-report id=\"N\">. Do not wait for it or ask about it; carry on with other work. Leave \
+it false when your next step depends on the answer.";
 
 /// Input of `task`.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
@@ -86,6 +91,10 @@ pub struct TaskInput {
     /// Full instructions for the subagent: what to find or read and what to
     /// report. It does not see this conversation.
     pub prompt: String,
+    /// Run it in the background: the call returns at once and the report
+    /// arrives later in a message.
+    #[serde(default)]
+    pub background: bool,
 }
 
 /// The ports the subagent runs on. There is deliberately no shell nor any
@@ -117,6 +126,8 @@ pub struct TaskTool {
     tools: ToolRegistry,
     budget: ResultBudget,
     max_iterations: u32,
+    /// Runs the jobs sent to the background, once it exists.
+    runner: Arc<OnceLock<Arc<AgentRunner>>>,
 }
 
 impl std::fmt::Debug for TaskTool {
@@ -143,6 +154,7 @@ impl TaskTool {
             tools,
             budget,
             max_iterations: DEFAULT_SUBAGENT_MAX_ITERATIONS,
+            runner: Arc::default(),
         })
     }
 
@@ -153,16 +165,38 @@ impl TaskTool {
         self
     }
 
+    /// Sends the calls with `background` to the runner in `runner`, once
+    /// it is set; until then (and without background jobs) they run while
+    /// the turn waits.
+    #[must_use]
+    pub fn with_runner(mut self, runner: Arc<OnceLock<Arc<AgentRunner>>>) -> Self {
+        self.runner = runner;
+        self
+    }
+
+    /// A tool over the same ports (tests).
+    #[cfg(test)]
+    #[must_use]
+    pub fn clone_for_test(&self) -> Self {
+        Self {
+            ports: self.ports.clone(),
+            tools: self.tools.clone(),
+            budget: self.budget,
+            max_iterations: self.max_iterations,
+            runner: Arc::default(),
+        }
+    }
+
     /// The tools the subagent can call.
     #[must_use]
     pub fn subagent_tools(&self) -> &ToolRegistry {
         &self.tools
     }
 
-    fn subagent(&self) -> AgentService {
+    fn subagent(&self, events: Arc<dyn EventSink>) -> AgentService {
         let deps = AgentDeps {
             llm: Arc::clone(&self.ports.llm),
-            events: Arc::new(DiscardEvents),
+            events,
             approval: Arc::new(DenyAll),
             telemetry: Arc::clone(&self.ports.telemetry),
         };
@@ -179,6 +213,50 @@ impl TaskTool {
             Some(port) => service.with_instructions(Arc::clone(port)),
             None => service,
         }
+    }
+}
+
+impl TaskTool {
+    /// Runs the subagent on `prompt` with `role` pinned (or the model
+    /// `model`, when given) and returns its report, cut to the budget.
+    /// Forked skills (`context: fork`, `agent: Explore`) run here too.
+    pub fn report(
+        &self,
+        prompt: String,
+        role: ModelRole,
+        model: Option<String>,
+    ) -> futures::future::BoxFuture<'static, Result<String, ToolError>> {
+        self.report_to(prompt, role, model, Arc::new(DiscardEvents))
+    }
+
+    /// [`Self::report`] with the subagent's events sent to `events` (a
+    /// background agent's block follows its tool calls with them).
+    pub fn report_to(
+        &self,
+        prompt: String,
+        role: ModelRole,
+        model: Option<String>,
+        events: Arc<dyn EventSink>,
+    ) -> futures::future::BoxFuture<'static, Result<String, ToolError>> {
+        let service = self.subagent(events);
+        // A chat without a directory has an empty root.
+        let root = crate::ports::fs::workspace_root_text(self.ports.fs.as_ref());
+        let budget = self.budget;
+        async move {
+            let mut session = Session::new(root, 0);
+            let mut opts = TurnOptions {
+                pinned_role: Some(role),
+                ..TurnOptions::new(ModelRole::Main)
+            };
+            opts.turn_override = model;
+            let outcome = service.run_turn(&mut session, prompt, opts).await;
+            let report = final_text(&session);
+            match outcome {
+                Ok(outcome) => Ok(budget.truncate_text(&with_note(report, outcome.stop_reason))),
+                Err(err) => Err(ToolError::Execution(format!("the subagent failed: {err}"))),
+            }
+        }
+        .boxed()
     }
 }
 
@@ -225,36 +303,41 @@ impl TypedTool for TaskTool {
             });
         }
         let subject = input.description.trim().to_owned();
-        let service = self.subagent();
-        // A chat without a directory has an empty root.
-        let root = crate::ports::fs::workspace_root_text(self.ports.fs.as_ref());
-        let budget = self.budget;
-        let run = async move {
-            let mut session = Session::new(root, 0);
-            let outcome = service
-                .run_turn(
-                    &mut session,
-                    input.prompt,
-                    TurnOptions {
-                        pinned_role: Some(ModelRole::Explore),
-                        ..TurnOptions::new(ModelRole::Main)
-                    },
-                )
-                .await;
-            let report = final_text(&session);
-            match outcome {
-                Ok(outcome) => Ok(ToolOutput::text(
-                    budget.truncate_text(&with_note(report, outcome.stop_reason)),
-                )),
-                Err(err) => Err(ToolError::Execution(format!("the subagent failed: {err}"))),
-            }
-        };
+        let runner = self
+            .runner
+            .get()
+            .filter(|runner| runner.background_available());
+        if input.background
+            && let Some(runner) = runner
+        {
+            let job =
+                AgentJob::new(AgentKind::Explore, input.prompt, AgentOrigin::Model).named(&subject);
+            let text = match runner.spawn(job) {
+                Ok(id) => started_text(id),
+                Err(err) => return Err(ToolError::Execution(err)),
+            };
+            let run = async move { Ok(ToolOutput::text(text)) };
+            return Ok(PreparedCall::new(subject, run.boxed()));
+        }
+        let run = self
+            .report(input.prompt, ModelRole::Explore, None)
+            .map(|report| report.map(ToolOutput::text));
         Ok(PreparedCall::new(subject, run.boxed()))
     }
 }
 
+/// What a call that sent its job to the background returns.
+#[must_use]
+pub fn started_text(id: u64) -> String {
+    format!(
+        "Started agent #{id} in the background. Its report will arrive in a later message as \
+         <agent-report id=\"{id}\">; do not wait for it. Go on with the rest of the work, or \
+         end your turn if nothing else is left (tell the user it is running)."
+    )
+}
+
 /// Text of the last assistant message of the session's last turn.
-fn final_text(session: &Session) -> String {
+pub(crate) fn final_text(session: &Session) -> String {
     session
         .turns
         .last()
@@ -279,7 +362,7 @@ fn final_text(session: &Session) -> String {
 }
 
 /// The report, with a note when it is empty or was cut short.
-fn with_note(report: String, stop_reason: StopReason) -> String {
+pub(crate) fn with_note(report: String, stop_reason: StopReason) -> String {
     let report = if report.trim().is_empty() {
         "[the subagent finished without a report]".to_owned()
     } else {

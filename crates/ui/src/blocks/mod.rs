@@ -8,6 +8,7 @@
 //! because some keep GPUI state per block (a table's `TableView`, a
 //! diagram's pan and zoom) that is created and updated while drawing.
 
+pub mod agent;
 pub mod ansi;
 pub mod arrays;
 pub mod bench;
@@ -118,6 +119,7 @@ pub trait BlockView: Sync + 'static {
 
 /// Every block view; a new kind adds its line here.
 pub static VIEWS: &[&dyn BlockView] = &[
+    &agent::View,
     &chart::View,
     &custom::View,
     &diff::View,

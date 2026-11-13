@@ -15,7 +15,7 @@ use application_testing::fs::{InMemoryFs, ScriptedShell, test_root};
 use application_testing::llm::{ScriptedLlm, ScriptedResponse};
 use application_testing::permissions::MemoryPermissionStore;
 use application_testing::system::{RecordingSink, RecordingTelemetry};
-use domain::block::{BlockKind, ToolStatus};
+use domain::block::{BlockId, BlockKind, ToolStatus};
 use domain::conversation::ContentPart;
 use domain::conversation::Session as Conversation;
 use domain::model::{ModelPolicy, ModelRole};
@@ -84,6 +84,19 @@ impl SessionController for AgentController {
         });
         rx.map(|end| end.unwrap_or(TurnEnd::Failed("turn lost".into())))
             .boxed()
+    }
+
+    /// Reads the agents' reports as the binary does: a turn with them as
+    /// its message.
+    fn wake(&self, cancel: CancelToken) -> BoxFuture<'static, TurnEnd> {
+        self.run_turn(TurnRequest {
+            prompt: "(agent reports)".into(),
+            images: Vec::new(),
+            model_override: None,
+            role: None,
+            cancel,
+            skill: None,
+        })
     }
 
     fn permission_mode(&self) -> PermissionMode {
@@ -3349,5 +3362,59 @@ fn the_plus_menu_row_opens_the_mcp_manager(cx: &mut TestAppContext) {
     let view = mcp_view(&h, cx).expect("the row opens the manager");
     cx.update(|window, cx| {
         assert!(view.focus_handle(cx).contains_focused(window, cx));
+    });
+}
+
+fn agent_block(id: BlockId, status: domain::block::AgentStatus) -> Block {
+    Block {
+        id,
+        kind: BlockKind::Agent {
+            agent_id: 1,
+            name: "Find x".into(),
+            kind: "explore".into(),
+            origin: "user".into(),
+            prompt: "Find x".into(),
+            status,
+            activity: Vec::new(),
+            report: status.is_terminal().then(|| "Found x.".into()),
+        },
+    }
+}
+
+#[gpui::test]
+fn an_agent_that_ends_wakes_the_idle_chat(cx: &mut TestAppContext) {
+    use domain::block::AgentStatus;
+    let (h, cx) = harness(vec![ScriptedResponse::text("It found x.")], cx);
+    let id = BlockId::new();
+    h.sink.emit(DomainEvent::BlockAdded {
+        block: agent_block(id, AgentStatus::Running),
+    });
+    cx.run_until_parked();
+    assert!(h.llm.requests().is_empty(), "a running agent wakes nothing");
+    h.sink.emit(DomainEvent::BlockUpdated {
+        block: agent_block(id, AgentStatus::Done),
+    });
+    wait_until(&h, cx, "the wake turn", |_, _| !h.llm.requests().is_empty());
+    wait_until(&h, cx, "the end of the turn", |s, _| !s.is_busy());
+    assert_eq!(h.llm.requests().len(), 1);
+}
+
+#[gpui::test]
+fn an_agent_that_ends_during_a_turn_waits_for_it(cx: &mut TestAppContext) {
+    use domain::block::AgentStatus;
+    let (h, cx) = harness(
+        vec![
+            ScriptedResponse::text("first"),
+            ScriptedResponse::text("woken"),
+        ],
+        cx,
+    );
+    h.session.update(cx, |s, cx| s.submit("hola".into(), cx));
+    let id = BlockId::new();
+    h.sink.emit(DomainEvent::BlockUpdated {
+        block: agent_block(id, AgentStatus::Done),
+    });
+    wait_until(&h, cx, "both turns", |s, _| {
+        !s.is_busy() && h.llm.requests().len() == 2
     });
 }

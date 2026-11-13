@@ -160,6 +160,9 @@ You can redefine, add or remove mappings with `app.keymap.set` and `app.keymap.d
 | `/logout [anthropic\|opencode]` | Deletes the API key of that account (of every account without an argument) from the system keyring and restarts the agent. |
 | `/!<command> [args]`, `/! <command>` | Runs a [shell command](#shell-commands-) in the workspace. |
 | `/open @<path>` | Shows a workspace file in a modal ([Opening files](#opening-files-open-path)). |
+| `/agent [explore\|plan] <what to do>` | Sends a job to a background agent (also `& <what to do>`). You keep chatting while it works; its report reaches the chat when it ends. See [Background agents](#background-agents-agent-and-). |
+| `/agents [stop <n>\|stop all]` | Lists the session's background agents, or stops one or all of them. |
+| `/skills` | Opens the help on the skills and custom commands: each one's name, arguments, description and where it comes from. Run one with `/<name> [arguments]`; see [Skills](#skills-and-custom-commands-claudeskills-claudecommands). |
 | `/init [focus]` | Asks the agent to survey the workspace and write (or improve) its `AGENTS.md`: build and test commands, architecture, conventions. Anything after `/init` is passed along (`/init the frontend only`). The file is written through `write_file`, so you approve it like any edit; see [Project instructions](#project-instructions-agentsmd-and-claudemd). |
 | `/mcp` | Opens the [MCP servers manager](#mcp-servers-mcp): every server with its state, tools and log; add, edit, test, restart, log in, turn on or off or remove one, all live. In a terminal (`-p`) it prints the table instead. See [configuration.md](configuration.md#mcp-servers). |
 | `/mcp add`, `/mcp <name>`, `/mcp tools <name>` | The manager on its add form, on that server, or on that server's Tools tab. |
@@ -696,6 +699,98 @@ crest follows the instructions a project already keeps for coding agents, so a r
 - **Changes apply at once**: the files are checked before every model call, and an edited file (by you, or by the agent with `/init`) is in the next request. Each file is cut at 40 KB, with a startup warning.
 - **Compaction**: the root and user files live in the system prompt, so compaction never drops them. Subdirectory files that were in compacted turns are named in the summary and attached again the next time a tool works under them.
 - The implementation and research workflows and the `task` subagent follow the same files. `/help` (section 8) lists the ones loaded.
+
+### Rules (`.claude/rules`)
+
+Rules are Claude Code's way to split instructions into topic files. crest reads every `.md` file under a `rules/` folder, subfolders included, in alphabetical order:
+
+| Folder | Applies to |
+| --- | --- |
+| `~/.claude/rules/`, `~/.config/crest/rules/` | every project (after your own `CLAUDE.md` / `AGENTS.md`) |
+| `.claude/rules/`, `.crest/rules/` in the workspace | this project (after its root `AGENTS.md` / `CLAUDE.md`) |
+
+- **A rule without `paths`** joins the system prompt like a `CLAUDE.md`, after the files of its level.
+- **A rule with `paths`** applies to the files its globs match, relative to the workspace root. Like a subdirectory's file, it is attached to the result of the first `read_file`, `edit_file`, `write_file`, `tree` or `grep` on a matching path, once per conversation:
+
+  ```markdown
+  ---
+  paths:
+    - "src/api/**/*.ts"
+    - "lib/**/*.{ts,tsx}"
+  ---
+  Validate every request body with the shared schema.
+  ```
+
+  `*` stays in one folder, `**` crosses folders, `{a,b}` is either. `paths` may also be a single string (`paths: src/**/*.rs, docs/*.md`).
+- Rules take `@path` imports, are read once each (the same file or text is skipped) and are cut at 40 KB, like the other files. A changed, added or removed rule applies on the next request. Symlinked folders are followed; a project rule that points outside the workspace is not read.
+- Frontmatter that is not valid YAML gives a startup warning, and the rule then applies everywhere. `/help` (section 8) lists every rule, with its `paths`.
+
+## Skills and custom commands (`.claude/skills`, `.claude/commands`)
+
+A skill is a folder with a `SKILL.md`: instructions for one kind of task (review a change, fill a PDF form, write the standup) and the files they use. crest reads the skills and custom commands written for Claude Code unchanged. The model sees each skill's name and description and loads one with the `skill` tool when a request matches it. You run one yourself as `/name [arguments]`.
+
+```markdown
+---
+name: review-pr
+description: Reviews the current branch's changes against our checklist
+argument-hint: "[focus]"
+allowed-tools: Bash(git diff:*), Bash(git log:*), Read
+---
+Review the changes below. Focus on $ARGUMENTS.
+
+Changes: !`git diff main...HEAD --stat`
+
+Follow checklist.md in this skill's folder.
+```
+
+**Where they are**, in order of precedence (when two share a name, the first wins; as in Claude Code, your own win over the project's):
+
+1. Yours: `~/.claude/skills/<name>/SKILL.md`, then `~/.config/crest/skills/<name>/SKILL.md`, then the commands `~/.claude/commands/*.md` and `~/.config/crest/commands/*.md`.
+2. The workspace's: `.claude/skills/`, `.crest/skills/`, then `.claude/commands/`, `.crest/commands/`.
+3. The `.claude/skills` of a subdirectory (a package in a monorepo), from the first time a file tool works under it.
+
+A custom command (`commands/<name>.md`, also in subfolders) is a skill without a folder. A skill that a built-in command already names (`/help`, `/model`...) is not loaded, nor is one whose name is not 1-64 letters, digits, `-` or `_`; each gives a startup warning. Added, edited and removed skills are picked up on the next turn.
+
+**Frontmatter** (every key is optional):
+
+| Key | What it does |
+| --- | --- |
+| `name` | The name (`/name`). The folder's name, or the file's, by default. |
+| `description` | What it is for: the model decides from it. The first paragraph of the body by default. |
+| `when_to_use` | More on when to use it, added to the description. |
+| `argument-hint` | What the arguments are, shown in the palette (`/review-pr [focus]`). |
+| `disable-model-invocation` | `true`: only you run it; the model does not see it. |
+| `user-invocable` | `false`: only the model loads it; it is not a command. |
+| `allowed-tools` | Tools it may use without asking, until the turn ends: `Bash(git diff:*)`, `Read`, `Edit`, `Write`, `Grep`, `Glob`, `WebFetch`, `mcp__server__tool`, or crest's own notation (`run_command(cargo test *)`). |
+| `model` | The model of its turn when you run it (an alias, a role or an id). |
+| `context: fork` | Runs it in a subagent: only the subagent's report comes back. |
+| `agent` | The subagent of a forked skill: `Explore` or `Plan` (read-only, as the `task` tool), anything else the chat's agent with your approvals. |
+
+`hooks` is not supported (a warning says so); other keys are ignored.
+
+**The body**:
+
+- `$ARGUMENTS` is what follows `/name` (or the model's `args`); `$ARGUMENTS[0]` and `$0` are its first word (quotes group words), `$1` the second... When the body names no argument, the arguments are added at the end as `ARGUMENTS: …`.
+- `${CLAUDE_SKILL_DIR}` is the skill's folder, `${CLAUDE_SESSION_ID}` the session's id.
+- `` !`command` `` runs before the model reads the skill, in the workspace, and is replaced by its output (60 s at most). A command line with pipes or `&&` runs in the shell of `/!`. Commands are checked like `run_command`: read-only `git` commands and those the skill's `allowed-tools` (or your rules) allow just run; for any other, loading the skill asks first, listing the commands. A denied command (plan mode, a deny rule) is not run and the body says so.
+- The model gets the skill's folder and the list of its other files, and reads them with `skill` too (`file: "checklist.md"`), even when the skill lives outside the workspace; nothing outside the skill's folder can be read that way.
+
+**What `allowed-tools` grants** lasts until the turn ends, and works like an "allow always" rule: a deny rule and plan mode still win. A skill from the repository (`.claude/skills` in the workspace or a subdirectory) that pre-approves more than reading (`Bash`, `Edit`, `Write`, `WebFetch`, an MCP tool) must be approved when it is loaded, naming what it pre-approves; "allow always" remembers that skill with that list. Your own skills are trusted.
+
+**Running one**: `/name [arguments]` sends the line as your prompt and loads the skill (a `skill` call in the timeline) before the model answers. A skill's `model` runs that turn, unless you picked one with `/model <alias>`. The palette lists the skills you can run under **Skills**; `/skills` opens the help on them, and `/help` (section 8) lists each one with its file. Built-in commands, then the commands of `init.lua` and plugins, take a name before a skill does.
+
+**Compaction**: the skills loaded in compacted turns are named in the summary, so the model loads them again if the work goes on.
+
+## Background agents (`/agent` and `&`)
+
+A subagent can work in the background while you keep chatting with the main agent: a long search, a review, a refactor in another corner of the code.
+
+- **Start one** with `/agent <what to do>`, or begin the line with `&` (`& find every place we parse dates`). `/agent explore …` and `/agent plan …` start a read-only one (the `task` subagent: it only reads and searches and never asks you anything); the default has the chat's tools, permissions and `AGENTS.md`, and its edits and commands ask in the usual dialog, titled with its name (`agent #2 · … · Allow edit_file?`). It does not see the chat: write the job as you would for a colleague.
+- **The model starts them too**: `task` (read-only) and the skills with `context: fork` take `background: true` for jobs the model does not need right away. A forked skill you run with `/name` goes to the background by default.
+- **Its block** in the timeline (`agent #1 · …`) shows its job, its latest tool calls while it works, and its report when it ends; `Enter` expands it, `y` copies the report.
+- **When it ends**, its report goes to the main agent: a turn that is running reads it at its next model call; if the chat is idle, crest starts a turn for it, and the agent goes on with the work or tells you what it found. An agent you stopped yourself reports nothing.
+- `/agents` lists them; `/agents stop <n>` (or `stop all`) stops them. `Ctrl+C` interrupts the chat's turn, not the agents. At most 4 run at once.
+- They live with the window: closing crest stops them, and the headless mode (`--headless`) runs every subagent while its turn waits.
 
 ## Sessions and resuming
 

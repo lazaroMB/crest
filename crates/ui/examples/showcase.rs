@@ -695,6 +695,7 @@ fn approval(sink: &RecordingSink, approval: &UiApproval, prompt: &str) {
             unified: RENAME_DIFF.into(),
             approval: None,
         }),
+        origin: None,
     };
     usage(sink, 9_120, 412, 0.0312);
     // Never answered: the dialog stays for the screenshot.

@@ -35,7 +35,7 @@ const MAX_PROMPT_CHARS: usize = 4_000;
 /// Characters of a tool description put in a question.
 const MAX_DESCRIPTION_CHARS: usize = 120;
 /// Tools offered in every turn.
-const CORE_TOOLS: [&str; 8] = [
+const CORE_TOOLS: [&str; 9] = [
     "list_files",
     "find_file",
     "tree",
@@ -44,6 +44,7 @@ const CORE_TOOLS: [&str; 8] = [
     "edit_file",
     "write_file",
     "run_command",
+    "skill",
 ];
 /// Question id of the difficulty.
 const DIFFICULTY: &str = "difficulty";

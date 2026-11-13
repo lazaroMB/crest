@@ -150,6 +150,7 @@ impl Fakes {
             effect: ToolEffect::Write,
             subject: path.into(),
             preview: ApprovalPreview::Diff(spec.clone()),
+            origin: None,
         };
         let fakes = self.clone();
         std::thread::spawn(move || {
@@ -187,6 +188,7 @@ impl Fakes {
                 args: vec!["test".into(), "-p".into(), "ui".into()],
                 cwd: ".".into(),
             },
+            origin: None,
         };
         let fakes = self.clone();
         std::thread::spawn(move || {

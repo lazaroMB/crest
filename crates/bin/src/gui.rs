@@ -328,6 +328,10 @@ pub struct UiController {
     theme_options: application::ports::plugin::AppOptions,
     /// The statistics engine, for Recompute on a card.
     compute: application::tools::compute::ComputeToolPorts,
+    /// The skills `/name` runs.
+    skills: Option<Arc<dyn application::ports::skills::SkillsPort>>,
+    /// The background agents (`/agent`, `/agents`).
+    agents: Arc<application::usecases::background::AgentRunner>,
 }
 
 /// The research flow of the workspace, taken out of the [`App`] so a flow
@@ -618,6 +622,13 @@ impl UiController {
         let themes = app.themes.clone();
         let theme_options = app.options.clone();
         let compute = app.compute.clone();
+        let skills = app.service.skills().cloned();
+        // The window outlives turns: agents can run in the background here.
+        let spawn_on = handle.clone();
+        app.agents.enable_background(Arc::new(move |work| {
+            drop(spawn_on.spawn(work));
+        }));
+        let agents = Arc::clone(&app.agents);
         let commands = app
             .commands
             .iter()
@@ -653,6 +664,8 @@ impl UiController {
             themes,
             theme_options,
             compute,
+            skills,
+            agents,
         }
     }
 }
@@ -743,6 +756,22 @@ pub async fn run_turn_in(app: &mut App, request: TurnRequest, context: Option<St
     if let Some(model) = request.model_override {
         opts = opts.with_override(model);
     }
+    if let Some(skill) = request.skill {
+        // The skill's `model` runs its turn, unless one was picked for it.
+        let model = app.service.skills().and_then(|skills| {
+            skills
+                .list()
+                .iter()
+                .find(|meta| meta.name == skill.name)
+                .and_then(|meta| meta.model.clone())
+        });
+        if let Some(model) = model
+            && opts.turn_override.is_none()
+        {
+            opts = opts.with_override(model);
+        }
+        opts = opts.with_skill(skill.name, skill.args);
+    }
     let result = app
         .service
         .run_turn(&mut app.session, UserInput::new(prompt, images), opts)
@@ -758,6 +787,25 @@ pub async fn run_turn_in(app: &mut App, request: TurnRequest, context: Option<St
 
 /// Continues the turn a restart cut while `ask_user` waited (see
 /// [`AgentService::resume_pending_tools`]) and saves the session.
+/// A turn that reads the reports background agents left, if any, and
+/// saves the session. Nobody typed its message: the timeline shows no
+/// prompt for it, only the agent's answer.
+pub async fn wake(app: &mut App, cancel: CancelToken) -> TurnEnd {
+    let reports = app.agents.inbox().drain();
+    let Some(prompt) = application::usecases::agents::wake_prompt(&reports) else {
+        return TurnEnd::Finished(domain::conversation::StopReason::EndTurn);
+    };
+    let opts = app.turn_options.clone().with_cancel(cancel);
+    let result = app.service.run_turn(&mut app.session, prompt, opts).await;
+    if let Err(err) = app.save().await {
+        app.warn(format!("could not save the session: {err}"));
+    }
+    match result {
+        Ok(outcome) => TurnEnd::Finished(outcome.stop_reason),
+        Err(err) => TurnEnd::Failed(err.to_string()),
+    }
+}
+
 pub async fn resume_pending(app: &mut App, cancel: CancelToken) -> TurnEnd {
     let opts = app.turn_options.clone().with_cancel(cancel);
     let result = app
@@ -1119,6 +1167,7 @@ pub fn command_turn(prompt: &str) -> TurnRequest {
         model_override: None,
         role: None,
         cancel: CancelToken::new(),
+        skill: None,
     }
 }
 
@@ -1179,6 +1228,35 @@ impl CommandHandler for UiController {
         self.spawn_command("plugin", task)
     }
 
+    fn agent(&self, arg: String) -> ReplyFuture {
+        use application::usecases::background::{AgentJob, AgentKind, AgentOrigin};
+        let (kind, prompt) = match arg.split_once(char::is_whitespace) {
+            Some((word, rest)) if matches!(word, "explore" | "plan" | "general") => {
+                (AgentKind::named(word), rest.trim().to_owned())
+            }
+            _ => (AgentKind::General, arg),
+        };
+        let reply = if prompt.is_empty() {
+            Reply::Notice(
+                NoticeLevel::Warning,
+                application::usecases::commands::AGENT_USAGE.into(),
+            )
+        } else {
+            match self
+                .agents
+                .spawn(AgentJob::new(kind, prompt, AgentOrigin::User))
+            {
+                Ok(_) => Reply::Done,
+                Err(err) => Reply::Notice(NoticeLevel::Warning, err),
+            }
+        };
+        futures::future::ready(reply).boxed()
+    }
+
+    fn agents(&self, arg: String) -> ReplyFuture {
+        futures::future::ready(agents_reply(&self.agents, &arg)).boxed()
+    }
+
     fn open(&self, arg: String) -> ReplyFuture {
         let step = application::usecases::open_file::StepReader {
             formats: Arc::clone(&self.formats),
@@ -1189,8 +1267,29 @@ impl CommandHandler for UiController {
     }
 
     fn callback(&self, name: &str, arg: String) -> Option<ReplyFuture> {
-        let id = self.commands.get(name)?;
-        Some(self.run_callback(id.0, serde_json::Value::String(arg)))
+        if let Some(id) = self.commands.get(name) {
+            return Some(self.run_callback(id.0, serde_json::Value::String(arg)));
+        }
+        // Then the skills and custom commands (`.claude/skills`, `/name`).
+        let skill = self
+            .skills
+            .as_ref()?
+            .list()
+            .iter()
+            .find(|skill| skill.name == name)
+            .cloned()?;
+        let reply = if skill.user_invocable {
+            Reply::Actions(vec![application::ports::plugin::PluginAction::Skill {
+                name: skill.name,
+                args: arg,
+            }])
+        } else {
+            Reply::Notice(
+                NoticeLevel::Warning,
+                format!("/{name} is a skill only the model loads (user-invocable: false)"),
+            )
+        };
+        Some(futures::future::ready(reply).boxed())
     }
 }
 
@@ -1198,6 +1297,18 @@ impl SessionController for UiController {
     fn run_turn(&self, request: TurnRequest) -> BoxFuture<'static, TurnEnd> {
         let router = self.router();
         self.spawn_turn(async move { router.line(request).await })
+    }
+
+    fn wake(&self, cancel: CancelToken) -> BoxFuture<'static, TurnEnd> {
+        // Nothing to read (a running turn took it): no turn at all.
+        if self.agents.inbox().is_empty() {
+            return futures::future::ready(TurnEnd::Finished(
+                domain::conversation::StopReason::EndTurn,
+            ))
+            .boxed();
+        }
+        let app = Arc::clone(&self.app);
+        self.spawn_turn(async move { wake(&mut *app.lock().await, cancel).await })
     }
 
     fn resume_pending(&self, cancel: CancelToken) -> BoxFuture<'static, TurnEnd> {
@@ -2201,6 +2312,75 @@ fn theme_choices(
         .collect()
 }
 
+/// What `/agents` answers: the list, or what stopping did.
+fn agents_reply(agents: &application::usecases::background::AgentRunner, arg: &str) -> Reply {
+    use domain::block::AgentStatus;
+    let mut words = arg.split_whitespace();
+    match (words.next(), words.next()) {
+        (None, _) => {
+            let list = agents.list();
+            if list.is_empty() {
+                return Reply::Notice(
+                    NoticeLevel::Info,
+                    "no background agents yet: `/agent <what to do>` or `& <what to do>` starts one"
+                        .into(),
+                );
+            }
+            let mut source = String::from(
+                "| # | Agent | Kind | Started by | Status |\n| --- | --- | --- | --- | --- |\n",
+            );
+            for agent in list {
+                source.push_str(&format!(
+                    "| {} | {} | {} | {} | {} |\n",
+                    agent.id,
+                    agent.name.replace('|', "\\|"),
+                    agent.kind.label(),
+                    match agent.origin {
+                        application::usecases::background::AgentOrigin::User => "you",
+                        application::usecases::background::AgentOrigin::Model => "the agent",
+                    },
+                    agent.status.label(),
+                ));
+            }
+            let running = agents
+                .list()
+                .iter()
+                .filter(|a| a.status == AgentStatus::Running)
+                .count();
+            if running > 0 {
+                source.push_str("\n`/agents stop <n>` stops one, `/agents stop all` every one.");
+            }
+            Reply::block(domain::block::Block::new(
+                domain::block::BlockKind::Markdown {
+                    title: Some("Background agents".into()),
+                    source,
+                },
+            ))
+        }
+        (Some("stop"), Some("all")) => {
+            let stopped = agents.stop_all();
+            Reply::Notice(
+                NoticeLevel::Info,
+                format!("stopped {stopped} background agent(s)"),
+            )
+        }
+        (Some("stop"), Some(id)) => match id.trim_start_matches('#').parse::<u64>() {
+            Ok(id) if agents.stop(id) => {
+                Reply::Notice(NoticeLevel::Info, format!("agent #{id} stopped"))
+            }
+            Ok(id) => Reply::Notice(
+                NoticeLevel::Warning,
+                format!("agent #{id} is not running (/agents lists them)"),
+            ),
+            Err(_) => Reply::Notice(NoticeLevel::Warning, "usage: /agents stop <n>|all".into()),
+        },
+        _ => Reply::Notice(
+            NoticeLevel::Warning,
+            "usage: /agents [stop <n>|stop all]".into(),
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -2368,6 +2548,7 @@ mod tests {
             model_override: None,
             role: None,
             cancel: CancelToken::new(),
+            skill: None,
         }));
         assert_eq!(end, TurnEnd::Unavailable("the API key is missing".into()));
         controller.set_permission_mode(PermissionMode::Plan);

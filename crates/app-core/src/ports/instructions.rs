@@ -1,10 +1,11 @@
 //! Instructions port: the `AGENTS.md` and `CLAUDE.md` files a project (and
-//! the user) keeps for coding agents.
+//! the user) keeps for coding agents, and its rules (`.claude/rules/*.md`).
 //!
-//! The user's and the workspace root's files go into the system prompt
-//! ([`InstructionsPort::base`]); the files of subdirectories are attached
-//! to the result of the first tool call that touches their subtree
-//! ([`InstructionsPort::nested`]). The adapter reads the files, follows
+//! The user's and the workspace root's files, and the rules without
+//! `paths`, go into the system prompt ([`InstructionsPort::base`]); the
+//! files of subdirectories and the rules whose `paths` match are attached
+//! to the result of the first tool call that touches them
+//! ([`InstructionsPort::for_path`]). The adapter reads the files, follows
 //! their `@path` imports and drops duplicates; it reloads them when they
 //! change, so the next request sees the new text.
 
@@ -45,6 +46,23 @@ pub struct InstructionFile {
     pub text: String,
     /// The files it imports (shown like `path`).
     pub imports: Vec<String>,
+    /// For a rule that only applies to some files, their globs (relative
+    /// to the workspace root); empty for every other file.
+    pub paths: Vec<String>,
+}
+
+impl InstructionFile {
+    /// A file at `path` with `text`, no imports and no `paths`.
+    #[must_use]
+    pub fn new(path: impl Into<String>, scope: InstructionScope, text: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            scope,
+            text: text.into(),
+            imports: Vec::new(),
+            paths: Vec::new(),
+        }
+    }
 }
 
 /// Reads the instructions files of the user and the workspace.
@@ -61,6 +79,12 @@ pub trait InstructionsPort: Send + Sync {
     /// and `path` (a file or a directory, relative to the root), outermost
     /// first. Empty for a path outside the workspace.
     fn nested(&self, path: &str) -> Vec<InstructionFile>;
+
+    /// What applies to `path` beyond the base: the [`Self::nested`] files,
+    /// then the rules whose `paths` match it.
+    fn for_path(&self, path: &str) -> Vec<InstructionFile> {
+        self.nested(path)
+    }
 
     /// The files in [`Self::base`], in their order, for `/help`.
     fn loaded(&self) -> Vec<InstructionFile>;

@@ -162,6 +162,42 @@ async fn a_nested_file_is_attached_to_the_first_call_in_its_subtree_only() {
 }
 
 #[tokio::test]
+async fn a_rule_is_attached_to_the_first_matching_call_only() {
+    let port = Arc::new(FixedInstructions::new().with_rule(
+        ".claude/rules/api.md",
+        "src/api/",
+        "Validate every input.",
+    ));
+    let mut h = harness(
+        vec![
+            read("t1", "src/main.rs"),
+            read("t2", "src/api/users.rs"),
+            read("t3", "src/api/orders.rs"),
+            ScriptedResponse::text("listo"),
+        ],
+        &port,
+    );
+    h.run("lee").await.unwrap();
+    let turn = h.session.turns.last().unwrap();
+    let results: Vec<_> = turn
+        .messages
+        .iter()
+        .filter(|m| m.role == Role::User)
+        .skip(1)
+        .map(result_texts)
+        .collect();
+    assert_eq!(results[0], ["contents of src/main.rs"]);
+    assert!(
+        results[1][1].contains(
+            "<instructions path=\".claude/rules/api.md\">\nValidate every input.\n</instructions>"
+        ),
+        "{results:?}"
+    );
+    assert!(results[1][1].contains("(rule for src/api/**)"));
+    assert_eq!(results[2], ["contents of src/api/orders.rs"]);
+}
+
+#[tokio::test]
 async fn parallel_calls_in_one_subtree_attach_the_file_once() {
     let port = Arc::new(FixedInstructions::new().with_nested("pkg", "x"));
     let mut h = harness(
@@ -198,12 +234,11 @@ async fn after_compaction_the_summary_names_the_file_and_it_is_attached_again() 
             content: vec![
                 ToolResultContent::text("contents"),
                 ToolResultContent::text(crate::usecases::instructions::attachment(&[
-                    crate::ports::instructions::InstructionFile {
-                        path: "pkg/AGENTS.md".into(),
-                        scope: crate::ports::instructions::InstructionScope::Nested,
-                        text: "x".into(),
-                        imports: Vec::new(),
-                    },
+                    crate::ports::instructions::InstructionFile::new(
+                        "pkg/AGENTS.md",
+                        crate::ports::instructions::InstructionScope::Nested,
+                        "x",
+                    ),
                 ])),
             ],
             is_error: false,

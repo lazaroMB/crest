@@ -2,6 +2,7 @@
 //! builds on the research flow, lives in `application` (its `usecases`
 //! module re-exports these and adds it).
 
+pub mod agents;
 pub mod approval;
 pub mod cancel;
 pub mod commands;
@@ -22,5 +23,6 @@ pub mod routing;
 pub mod run_turn;
 pub mod shell_command;
 pub mod sidebar;
+pub mod skills;
 pub mod user_blocks;
 pub mod web_sources;

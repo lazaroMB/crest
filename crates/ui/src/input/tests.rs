@@ -753,6 +753,20 @@ fn lines_are_prompts_or_commands() {
 }
 
 #[test]
+fn an_ampersand_sends_the_line_to_a_background_agent() {
+    assert_eq!(
+        classify_line("& find the permission checks "),
+        Some(Line::Command("agent find the permission checks".into()))
+    );
+    assert_eq!(classify_line("&"), Some(Line::Command("agent".into())));
+    assert_eq!(
+        classify_line("a & b"),
+        Some(Line::Prompt("a & b".into())),
+        "only at the start"
+    );
+}
+
+#[test]
 fn palette_choices_run_fixed_words_and_complete_arguments() {
     assert_eq!(choice(&row("clear", "/clear")), Choice::Run("clear".into()));
     assert_eq!(

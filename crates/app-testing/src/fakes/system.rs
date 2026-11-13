@@ -288,6 +288,7 @@ mod approval_tests {
             preview: ApprovalPreview::Text {
                 text: "cargo test".into(),
             },
+            origin: None,
         }
     }
 

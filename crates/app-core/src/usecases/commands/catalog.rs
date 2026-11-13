@@ -381,6 +381,33 @@ pub const CATALOG: &[CommandInfo] = &[
         group: CommandGroup::Workspace,
     },
     CommandInfo {
+        name: "agent",
+        aliases: &[],
+        usage: "/agent [explore|plan] <what to do>",
+        description: "Send a job to a background agent (also `& <what to do>`): it works while you \
+                      keep chatting, and its report reaches the chat when it ends. `explore` and \
+                      `plan` only read; the default has the chat's tools and asks you as the chat does",
+        handler: Handler::Controller,
+        group: CommandGroup::Chat,
+    },
+    CommandInfo {
+        name: "agents",
+        aliases: &[],
+        usage: "/agents [stop <n>|stop all]",
+        description: "List the background agents of this session, or stop one or all of them",
+        handler: Handler::Controller,
+        group: CommandGroup::Chat,
+    },
+    CommandInfo {
+        name: "skills",
+        aliases: &[],
+        usage: "/skills",
+        description: "List the skills and custom commands (.claude/skills, .claude/commands) with \
+                      where they come from; run one with /<name> [args]",
+        handler: Handler::Ui,
+        group: CommandGroup::Workspace,
+    },
+    CommandInfo {
         name: "simulate",
         aliases: &[],
         usage: "/simulate <spec>",

@@ -137,9 +137,13 @@ Each row has a menu: **pin** it to the top, **rename** it, **move** it to anothe
 </tr>
 </table>
 
-## Your AGENTS.md, as it is
+## Your AGENTS.md, rules and skills, as they are
 
 crest reads the instructions your project already keeps for agents: `AGENTS.md`, `CLAUDE.md` and `CLAUDE.local.md` at the root, your own `~/.claude/CLAUDE.md` and `~/.config/crest/AGENTS.md`, `@path` imports, and the files of subdirectories, which are attached the first time the agent works in them. An edited file applies on the next request, compaction never drops them, and `/init` has the agent write a first `AGENTS.md` for you. A repository set up for Claude Code, Cursor or Codex works the same here. [Project instructions](docs/usage.md#project-instructions-agentsmd-and-claudemd).
+
+Claude Code's rules and skills work too. A rule in `.claude/rules/` applies everywhere, or only to the files its `paths` globs match. A skill in `.claude/skills/<name>/SKILL.md` (or a custom command in `.claude/commands/`) is loaded by the model when a request matches its description, or run by you as `/name [arguments]`. Skills keep their `$ARGUMENTS`, their `` !`command` `` lines (checked like any command), their `allowed-tools`, their `model` and `context: fork`. [Rules](docs/usage.md#rules-clauderules) · [Skills](docs/usage.md#skills-and-custom-commands-claudeskills-claudecommands).
+
+Send work to a background agent with `& <what to do>` (or `/agent`) and keep chatting: its block follows what it does, and its report reaches the main agent when it ends. The model can do the same with `task` and forked skills. [Background agents](docs/usage.md#background-agents-agent-and-).
 
 ## A timeline, not a transcript
 
