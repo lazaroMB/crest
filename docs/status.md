@@ -32,6 +32,7 @@ crest is a **work in progress**. Every phase of the original plan is implemented
 
 ## Not available yet
 
+- The accounts in use for this work are OpenCode and OpenRouter. **Connect and continue** checks an OpenRouter key with `GET https://openrouter.ai/api/v1/models` and stores it as `OPENROUTER_API_KEY`. Model calls do not use that key yet, so it does not become the default provider. Anthropic remains available in the project.
 - The font is not configurable (JetBrains Mono when installed).
 - Actions such as `session.resume` are not implemented.
 - Compaction assumes a 200,000-token context window, whatever the model, and its threshold is not configurable.

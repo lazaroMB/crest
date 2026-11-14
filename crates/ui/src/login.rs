@@ -22,8 +22,8 @@ use gpui_component::{ActiveTheme as _, Icon, IconName, Sizable as _, h_flex, v_f
 use crate::theme::token;
 use crate::tour::{card_glow, sweep};
 
-/// Which key this screen is asking for. OpenRouter is only a choice here:
-/// its key is created on another site, and Crest does not store it yet.
+/// Which key this screen is asking for. OpenRouter is checked and stored
+/// on its own; Anthropic stays in the project and is not a choice here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProviderPick {
     OpenCode,
@@ -83,7 +83,9 @@ impl ProviderPick {
     const fn stored_note(self) -> &'static str {
         match self {
             Self::OpenCode => "Your key is stored in the system keyring.",
-            Self::OpenRouter => "OpenRouter uses its own key, separate from OpenCode.",
+            Self::OpenRouter => {
+                "Your OpenRouter key is stored in the system keyring, separate from OpenCode."
+            }
         }
     }
 }
@@ -174,12 +176,21 @@ impl LoginView {
         self.error.as_deref()
     }
 
-    /// Opens the dialog on OpenCode with an empty field and focuses it.
-    /// The account argument is ignored: connecting still stores an OpenCode key.
-    pub fn show(&mut self, _account: Account, window: &mut Window, cx: &mut Context<Self>) {
+    /// Opens the dialog on OpenCode, or on OpenRouter when `account` is
+    /// OpenRouter. Anthropic stays out of this screen and opens on OpenCode.
+    pub fn show(&mut self, account: Account, window: &mut Window, cx: &mut Context<Self>) {
         self.open = true;
-        self.pick = ProviderPick::OpenCode;
-        self.set_account(Account::OpenCode, window, cx);
+        let account = if account == Account::OpenRouter {
+            Account::OpenRouter
+        } else {
+            Account::OpenCode
+        };
+        self.pick = if account == Account::OpenRouter {
+            ProviderPick::OpenRouter
+        } else {
+            ProviderPick::OpenCode
+        };
+        self.set_account(account, window, cx);
         self.busy = false;
         self.error = None;
         self.input
@@ -194,7 +205,8 @@ impl LoginView {
         self.error = None;
         let placeholder = match account {
             Account::Anthropic => "sk-ant-…",
-            Account::OpenCode => self.pick.placeholder(),
+            Account::OpenCode => ProviderPick::OpenCode.placeholder(),
+            Account::OpenRouter => ProviderPick::OpenRouter.placeholder(),
         };
         self.input.update(cx, |input, cx| {
             input.set_placeholder(placeholder, window, cx)
@@ -239,14 +251,6 @@ impl LoginView {
             return;
         }
         let key = self.input.read(cx).value().trim().to_owned();
-        if self.pick == ProviderPick::OpenRouter {
-            self.error = Some(
-                "OpenRouter uses its own key. This screen can open its page; Crest does not store that key yet."
-                    .into(),
-            );
-            cx.notify();
-            return;
-        }
         if key.is_empty() {
             self.error = Some(application_core::usecases::login::key_prompt(self.account).into());
             cx.notify();
@@ -278,19 +282,14 @@ impl LoginView {
         self.focus(window, cx);
     }
 
-    /// Selects OpenRouter. Its key page is different; the typed key is not
-    /// sent to OpenCode.
+    /// Selects OpenRouter. Its key is checked and stored on its own.
     fn pick_openrouter(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.open || self.busy {
             return;
         }
         self.pick = ProviderPick::OpenRouter;
-        self.error = None;
-        self.input.update(cx, |input, cx| {
-            input.set_placeholder(ProviderPick::OpenRouter.placeholder(), window, cx);
-        });
+        self.set_account(Account::OpenRouter, window, cx);
         self.focus(window, cx);
-        cx.notify();
     }
 
     fn on_keystroke(
@@ -572,7 +571,7 @@ impl LoginView {
         )
     }
 
-    /// OpenRouter. Its key is created on another site and is not stored yet.
+    /// OpenRouter. Its key is checked with OpenRouter and stored on its own.
     fn openrouter_card(&self, accent: Hsla, cx: &mut Context<Self>) -> gpui::AnyElement {
         self.choice_card(ProviderPick::OpenRouter, accent, cx, |this, window, cx| {
             this.pick_openrouter(window, cx);

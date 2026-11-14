@@ -156,7 +156,7 @@ You can redefine, add or remove mappings with `app.keymap.set` and `app.keymap.d
 | `/clear` | Starts a new session with an empty timeline. The previous one stays saved. Does not work while a turn is running. |
 | `/modal close` | Closes the front [plugin modal](#plugin-modals). |
 | `/project` | Goes back to the [project picker](#opening-a-project); this project closes once you choose another one, and `Esc` or **Back** returns to it. Not while a turn or command runs. |
-| `/login [anthropic\|opencode]` | Asks for the API key of Anthropic or OpenCode (`Tab` switches) in a masked field, checks it, stores it in the system keyring and restarts the agent (it also opens by itself when there is no key). `Esc` or **Cancel** closes it, also while the key is being checked; a check with no answer in 30 s fails with a message. See [configuration.md](configuration.md#model-providers-and-api-keys). |
+| `/login [opencode\|openrouter]` | Asks for the API key of OpenCode or OpenRouter in a masked field, checks it, stores it in the system keyring and restarts the agent (it also opens by itself when there is no key). OpenRouter is stored as its own key and is not used for model calls yet. `Esc` or **Cancel** closes it, also while the key is being checked; a check with no answer in 30 s fails with a message. See [configuration.md](configuration.md#model-providers-and-api-keys). |
 | `/logout [anthropic\|opencode]` | Deletes the API key of that account (of every account without an argument) from the system keyring and restarts the agent. |
 | `/!<command> [args]`, `/! <command>` | Runs a [shell command](#shell-commands-) in the workspace. |
 | `/open @<path>` | Shows a workspace file in a modal ([Opening files](#opening-files-open-path)). |

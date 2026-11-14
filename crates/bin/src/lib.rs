@@ -20,6 +20,7 @@ pub mod mcp;
 pub mod mcp_config;
 pub mod mcp_control;
 pub mod opencode;
+pub mod openrouter;
 mod organize;
 pub mod permissions;
 pub mod plugin_trust;

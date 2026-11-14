@@ -155,11 +155,14 @@ pub enum Account {
     Anthropic,
     /// OpenCode, for Go and Zen (`OPENCODE_API_KEY`).
     OpenCode,
+    /// OpenRouter (`OPENROUTER_API_KEY`). The key is checked and stored;
+    /// model calls do not use it yet.
+    OpenRouter,
 }
 
 impl Account {
     /// Every account, in declaration order.
-    pub const ALL: [Self; 2] = [Self::Anthropic, Self::OpenCode];
+    pub const ALL: [Self; 3] = [Self::Anthropic, Self::OpenCode, Self::OpenRouter];
 
     /// The name used in `/login` and `/logout`.
     #[must_use]
@@ -167,6 +170,7 @@ impl Account {
         match self {
             Self::Anthropic => "anthropic",
             Self::OpenCode => "opencode",
+            Self::OpenRouter => "openrouter",
         }
     }
 
@@ -176,6 +180,7 @@ impl Account {
         match self {
             Self::Anthropic => "Anthropic",
             Self::OpenCode => "OpenCode",
+            Self::OpenRouter => "OpenRouter",
         }
     }
 
@@ -186,6 +191,7 @@ impl Account {
         match self {
             Self::Anthropic => "ANTHROPIC_API_KEY",
             Self::OpenCode => "OPENCODE_API_KEY",
+            Self::OpenRouter => "OPENROUTER_API_KEY",
         }
     }
 }

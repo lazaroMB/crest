@@ -42,6 +42,7 @@ impl ApiKeyPort for KeyringCredentials {
         match account {
             Account::Anthropic => check_key(&self.anthropic, key).await,
             Account::OpenCode => crate::opencode::check_key(key, &self.providers).await,
+            Account::OpenRouter => crate::openrouter::check_key(key).await,
         }
     }
 

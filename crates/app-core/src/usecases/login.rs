@@ -1,5 +1,5 @@
 //! `/login` and `/logout`: the API key of each account (Anthropic,
-//! OpenCode) stored in the system keyring.
+//! OpenCode, OpenRouter) stored in the system keyring.
 //!
 //! `/login` checks the key with the provider before storing it: a rejected
 //! key is never stored, and one that cannot be checked (no network) is
@@ -17,6 +17,7 @@ pub fn key_prompt(account: Account) -> &'static str {
     match account {
         Account::Anthropic => "paste your Anthropic API key (it starts with sk-ant-)",
         Account::OpenCode => "paste your OpenCode API key (opencode.ai, Go or Zen)",
+        Account::OpenRouter => "paste your OpenRouter API key (openrouter.ai/keys)",
     }
 }
 

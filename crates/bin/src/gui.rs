@@ -1697,7 +1697,11 @@ fn login_on(
         };
         let saved = tokio::task::spawn_blocking(move || {
             crate::preferences::update(Some(&path), |p| {
-                p.provider = Some(Preferences::provider_of(account));
+                // OpenRouter is stored and checked, and does not replace the
+                // provider that answers until its models are connected.
+                if let Some(provider) = Preferences::provider_of(account) {
+                    p.provider = Some(provider);
+                }
                 // A new key: the next start asks what it may use.
                 if account == Account::OpenCode {
                     p.opencode_access = None;

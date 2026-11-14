@@ -81,11 +81,14 @@ impl Preferences {
     /// The provider a `/login` to `account` makes the default. OpenCode's
     /// key serves Go and Zen; Go, its flat-rate plan, until the next start
     /// asks which plans the key may use (see [`Self::opencode_plan`]).
+    /// OpenRouter's key is stored, and does not become the default: model
+    /// calls do not use it yet.
     #[must_use]
-    pub fn provider_of(account: Account) -> ProviderId {
+    pub fn provider_of(account: Account) -> Option<ProviderId> {
         match account {
-            Account::Anthropic => ProviderId::Anthropic,
-            Account::OpenCode => ProviderId::OpencodeGo,
+            Account::Anthropic => Some(ProviderId::Anthropic),
+            Account::OpenCode => Some(ProviderId::OpencodeGo),
+            Account::OpenRouter => None,
         }
     }
 
@@ -221,11 +224,12 @@ mod tests {
     fn logins_map_to_providers() {
         assert_eq!(
             Preferences::provider_of(Account::Anthropic),
-            ProviderId::Anthropic
+            Some(ProviderId::Anthropic)
         );
         assert_eq!(
             Preferences::provider_of(Account::OpenCode),
-            ProviderId::OpencodeGo
+            Some(ProviderId::OpencodeGo)
         );
+        assert_eq!(Preferences::provider_of(Account::OpenRouter), None);
     }
 }

@@ -146,15 +146,15 @@ pub const CATALOG: &[CommandInfo] = &[
     CommandInfo {
         name: "login",
         aliases: &[],
-        usage: "/login [anthropic|opencode]",
-        description: "Store an API key (Anthropic or OpenCode) in the system keyring and restart the agent",
+        usage: "/login [opencode|openrouter]",
+        description: "Store an OpenCode or OpenRouter API key in the system keyring and restart the agent",
         handler: Handler::Ui,
         group: CommandGroup::App,
     },
     CommandInfo {
         name: "logout",
         aliases: &[],
-        usage: "/logout [anthropic|opencode]",
+        usage: "/logout [anthropic|opencode|openrouter]",
         description: "Delete the API key of one account (or of every account) from the system keyring",
         handler: Handler::Ui,
         group: CommandGroup::App,
