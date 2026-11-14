@@ -258,7 +258,7 @@ fn card_view<T: Host>(
         .into_any_element()
 }
 
-fn card_glow(accent: Hsla) -> Vec<BoxShadow> {
+pub(crate) fn card_glow(accent: Hsla) -> Vec<BoxShadow> {
     vec![
         BoxShadow::new(px(0.), px(0.), accent.opacity(0.45))
             .blur_radius(px(18.))
@@ -268,7 +268,7 @@ fn card_glow(accent: Hsla) -> Vec<BoxShadow> {
     ]
 }
 
-fn sweep(accent: Hsla) -> AnyElement {
+pub(crate) fn sweep(accent: Hsla) -> AnyElement {
     canvas(
         |_, _, _| {},
         move |bounds, _, window, _| paint_waves(bounds, accent, window),

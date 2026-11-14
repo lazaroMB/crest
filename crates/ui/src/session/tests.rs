@@ -776,7 +776,7 @@ fn login_names_the_account_and_tab_switches_it(cx: &mut TestAppContext) {
     );
     cx.simulate_keystrokes("tab");
     cx.run_until_parked();
-    assert_eq!(login.read_with(cx, |l, _| l.account()), Account::Anthropic);
+    assert_eq!(login.read_with(cx, |l, _| l.account()), Account::OpenCode);
     cx.simulate_keystrokes("escape");
     cx.run_until_parked();
 
@@ -835,7 +835,7 @@ fn login_tabs_switch_the_account_on_click(cx: &mut TestAppContext) {
     send("/login", cx);
     cx.run_until_parked();
     let login = login_view(&h, cx);
-    assert_eq!(login.read_with(cx, |l, _| l.account()), Account::Anthropic);
+    assert_eq!(login.read_with(cx, |l, _| l.account()), Account::OpenCode);
 
     let tab = cx
         .debug_bounds("login-tab-opencode")
