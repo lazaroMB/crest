@@ -12,7 +12,7 @@ crest is the workspace where a coding agent **shows its work, verifies it, and l
 4. **Open and portable.** crest reads the `AGENTS.md` and `CLAUDE.md` your project already has, talks to any model provider (cloud or local), and is free software. Leaving costs nothing.
 5. **Programmable.** Tools, commands, hooks, blocks, modals and whole **pipelines** are Lua, in a sandbox, with capabilities you approve.
 
-## Where we are (v0.19)
+## Where we are (v0.20)
 
 - A native GPUI window: a timeline of rich blocks, a prompt with history and a `+` menu for its mode (chat, research, deep research), a status bar with model, permission mode, cost and git, an information mark that keeps the errors and warnings, and a rail of the questions asked. A welcome tour on the first start (`/tour`).
 - Your work organised: a sidebar in three widths (hidden, a strip of marks, the full list) with projects that span several directories, their chats pinned, renamed, moved, archived or branched from a point of a conversation, and Wild Chats with no directory at all.
@@ -20,6 +20,7 @@ crest is the workspace where a coding agent **shows its work, verifies it, and l
 - Blocks for technical work: test reports, findings, datasets, traces, flame graphs, logs, query plans, waveforms, CAD parts, molecules, sequences, spectra, maps, Gantt charts and more, computed from the file and summarised to the model.
 - Numbers you can verify: statistics, calc sheets with units, solvers and engineering cards computed by deterministic engines, with provenance, Recompute, number slots in the reply and reproduce lines for Python and R; TeX math in replies; `ask_user` forms answered in the chat.
 - Guided workflows: research (from a problem to a Spec and a plan: five stages by default, with the independent work in parallel and gates only where you decide, or the full fourteen with `--deep`), implementation (task by task, one commit each, a report) and simulation (a Spec's scenarios on a 3D board).
+- Your project's own instructions: `AGENTS.md`, `CLAUDE.md` and `CLAUDE.local.md` (with nested files and `@path` imports, live and kept through compaction, `/init` to write one), Claude Code's rules and skills (`.claude/rules`, `.claude/skills`, `.claude/commands`), and background agents (`&`, `/agent`) that work while the chat goes on.
 - Approvals with the exact diff, `ask` / `auto-edit` / `plan` modes and "allow always" rules.
 - Lua config and plugins (tools, commands, hooks, keymaps, blocks, computed cards, format readers, forms, modals) with capabilities; MCP servers with explicit trust, managed live from `/mcp` and saved in `mcp.json`; web search and fetch through `curl`.
 - An optional decision model (Cloudflare Clef) that routes each prompt's tools and model and reads answers at the gates.
