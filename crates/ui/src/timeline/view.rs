@@ -20,6 +20,8 @@
 //! block widget leaves gives the focus back to the timeline first
 //! ([`TimelineView::focus_widget`] is the way in).
 
+use std::collections::HashSet;
+
 use application_core::keymap::{Action, Key, KeyCode, Keymap, default_keymap, parse_keys};
 use application_core::ports::events::DomainEvent;
 use futures::StreamExt as _;
@@ -36,8 +38,11 @@ use gpui_component::scroll::ScrollableElement as _;
 use gpui_component::tooltip::Tooltip;
 use gpui_component::{ActiveTheme as _, IconName, Sizable as _, h_flex, v_flex};
 
+use domain::block::BlockId;
+
 use super::column::{COLUMN_GUTTER, block_width};
 use super::selection::{self, CopyHint, render_hint};
+use super::summary::{self, Counts, Span};
 use super::{TimelineChange, TimelineState, copy_text, render_block};
 
 /// Pixels rendered above and below the viewport to avoid pop-in on scroll.
@@ -62,6 +67,17 @@ impl DeferredKey {
             fallback: Box::new(fallback),
         }
     }
+}
+
+/// One side of a turn summary: `+1` in green, or `−1` in red.
+fn count_mark(label: String, color: gpui::Hsla) -> gpui::Div {
+    div()
+        .px_1()
+        .rounded(px(4.))
+        .bg(color.opacity(0.18))
+        .text_color(color)
+        .text_xs()
+        .child(label)
 }
 
 /// The timeline area of the main window.
@@ -93,6 +109,9 @@ pub struct TimelineView {
     welcome: Vec<(String, String)>,
     /// The line a branched chat starts with, above its blocks.
     pub(crate) banner: super::banner::Banner,
+    /// Turn summaries folded by the id of their first block. Open by
+    /// default, so the rows stay where they were.
+    folded: HashSet<BlockId>,
     _reply_expiry: Option<Task<()>>,
     _events: Option<Task<()>>,
 }
@@ -126,6 +145,7 @@ impl TimelineView {
             deferred: None,
             welcome: welcome_keys(&default_keymap()),
             banner: super::banner::Banner::default(),
+            folded: HashSet::new(),
             _reply_expiry: None,
             _events: None,
         }
@@ -413,10 +433,10 @@ impl TimelineView {
             return false;
         };
         match name.as_str() {
-            "block.next" => self.select_with(TimelineState::select_next, cx),
-            "block.prev" => self.select_with(TimelineState::select_prev, cx),
-            "block.first" => self.select_with(TimelineState::select_first, cx),
-            "block.last" => self.select_with(TimelineState::select_last, cx),
+            "block.next" => self.select_visible(true, cx),
+            "block.prev" => self.select_visible(false, cx),
+            "block.first" => self.select_edge(false, cx),
+            "block.last" => self.select_edge(true, cx),
             "block.toggle" => {
                 if let Some(ix) = self.state.toggle_selected() {
                     self.list.remeasure_items(ix..ix + 1);
@@ -437,6 +457,133 @@ impl TimelineView {
             _ => return false,
         }
         true
+    }
+
+    /// `j` and `k`. With every summary open this is the plain move. A
+    /// folded summary skips the rows it is hiding, so the selection never
+    /// lands on a row that is not drawn.
+    fn select_visible(&mut self, forward: bool, cx: &mut Context<Self>) {
+        if self.folded.is_empty() {
+            let select = if forward {
+                TimelineState::select_next
+            } else {
+                TimelineState::select_prev
+            };
+            self.select_with(select, cx);
+            return;
+        }
+        let before = self.state.selected();
+        let len = self.state.len();
+        if len == 0 {
+            return;
+        }
+        let start = match before {
+            Some(ix) if forward => ix.saturating_add(1),
+            Some(ix) => ix.saturating_sub(1),
+            None => len - 1,
+        };
+        let Some(ix) = self.nearest_visible(start, forward) else {
+            return;
+        };
+        self.state.select(ix);
+        self.remeasure_selection(before, Some(ix));
+        self.reveal(ix);
+        cx.notify();
+    }
+
+    /// `g` and `G`, skipping a row a folded summary is hiding.
+    fn select_edge(&mut self, last: bool, cx: &mut Context<Self>) {
+        if self.folded.is_empty() {
+            let select = if last {
+                TimelineState::select_last
+            } else {
+                TimelineState::select_first
+            };
+            self.select_with(select, cx);
+            return;
+        }
+        let before = self.state.selected();
+        let len = self.state.len();
+        if len == 0 {
+            return;
+        }
+        let start = if last { len - 1 } else { 0 };
+        let Some(ix) = self.nearest_visible(start, !last) else {
+            return;
+        };
+        self.state.select(ix);
+        self.remeasure_selection(before, Some(ix));
+        self.reveal(ix);
+        cx.notify();
+    }
+
+    /// `ix` when it is drawn, otherwise the next drawn row in `forward`'s
+    /// direction, then the other way.
+    fn nearest_visible(&self, ix: usize, forward: bool) -> Option<usize> {
+        let len = self.state.len();
+        if len == 0 || ix >= len {
+            return None;
+        }
+        if !self.trace_hidden(ix) {
+            return Some(ix);
+        }
+        let step = |ix: usize| if forward { ix + 1 } else { ix.wrapping_sub(1) };
+        let mut cursor = ix;
+        for _ in 0..len {
+            cursor = step(cursor);
+            if cursor >= len {
+                break;
+            }
+            if !self.trace_hidden(cursor) {
+                return Some(cursor);
+            }
+        }
+        cursor = ix;
+        for _ in 0..len {
+            cursor = if forward {
+                cursor.wrapping_sub(1)
+            } else {
+                cursor + 1
+            };
+            if cursor >= len {
+                break;
+            }
+            if !self.trace_hidden(cursor) {
+                return Some(cursor);
+            }
+        }
+        None
+    }
+
+    /// A thinking or tool row inside a folded summary, other than the first
+    /// row, which keeps the chip.
+    fn trace_hidden(&self, ix: usize) -> bool {
+        let Some(span) = summary::span_at(self.state.entries(), ix) else {
+            return false;
+        };
+        if ix == span.start {
+            return false;
+        }
+        self.state
+            .get(span.start)
+            .is_some_and(|entry| self.folded.contains(&entry.block.id))
+    }
+
+    /// Folds or opens the summary that starts at `anchor`.
+    fn toggle_summary(&mut self, anchor: BlockId, span: Span, cx: &mut Context<Self>) {
+        let folded = !self.folded.remove(&anchor);
+        if folded {
+            self.folded.insert(anchor);
+            if self
+                .state
+                .selected()
+                .is_some_and(|ix| self.trace_hidden(ix))
+            {
+                self.state.select(span.start);
+            }
+        }
+        self.list.remeasure_items(span.start..span.end);
+        cx.notify();
     }
 
     fn select_with(
@@ -773,6 +920,63 @@ impl TimelineView {
         cx.notify();
     }
 
+    /// The chip in front of a run of thinking, tool calls and diffs. The
+    /// chevron folds that run; the rows underneath keep their own `Enter`.
+    fn turn_summary(
+        &self,
+        span: Span,
+        counts: Counts,
+        folded: bool,
+        view: WeakEntity<Self>,
+        cx: &App,
+    ) -> AnyElement {
+        let anchor = self.state.get(span.start).map(|entry| entry.block.id);
+        let success = cx.theme().success;
+        let danger = cx.theme().danger;
+        let muted = cx.theme().muted_foreground;
+        let fill = crate::theme::token(cx, "button.bg");
+        let hover = crate::theme::token(cx, "button.hover.bg");
+        let border = cx.theme().border;
+        let mark = if folded { "▸" } else { "▾" };
+        // The row is full width so the block stays put; the button itself
+        // stays as wide as the chevron and the counts.
+        h_flex()
+            .w_full()
+            .mb_1()
+            .child(
+                h_flex()
+                    .id(SharedString::from(format!("turn-summary-{}", span.start)))
+                    .debug_selector(move || format!("turn-summary-{}", span.start))
+                    .flex_none()
+                    .items_center()
+                    .gap_1()
+                    .px_2()
+                    .py(px(3.))
+                    .rounded(px(8.))
+                    .bg(fill)
+                    .border_1()
+                    .border_color(border)
+                    .cursor_pointer()
+                    .hover(move |style| style.bg(hover))
+                    .on_click(move |_, _, cx| {
+                        cx.stop_propagation();
+                        let Some(anchor) = anchor else {
+                            return;
+                        };
+                        view.update(cx, |this, cx| this.toggle_summary(anchor, span, cx))
+                            .ok();
+                    })
+                    .child(div().text_color(muted).text_sm().child(mark))
+                    .when(counts.done > 0, |row| {
+                        row.child(count_mark(format!("+{}", counts.done), success))
+                    })
+                    .when(counts.failed > 0, |row| {
+                        row.child(count_mark(format!("−{}", counts.failed), danger))
+                    }),
+            )
+            .into_any_element()
+    }
+
     fn render_item(
         &self,
         ix: usize,
@@ -783,7 +987,28 @@ impl TimelineView {
         let Some(entry) = self.state.get(ix) else {
             return div().into_any_element();
         };
-        let content = render_block(entry, window, cx);
+        if self.trace_hidden(ix) {
+            return div()
+                .id(ElementId::Integer(ix as u64))
+                .h(px(0.))
+                .into_any_element();
+        }
+        let span = summary::span_at(self.state.entries(), ix).filter(|span| span.start == ix);
+        let folded = span.is_some_and(|span| {
+            self.state
+                .get(span.start)
+                .is_some_and(|anchor| self.folded.contains(&anchor.block.id))
+        });
+        let summary = span.map(|span| {
+            self.turn_summary(
+                span,
+                summary::counts(self.state.entries(), span),
+                folded,
+                view.clone(),
+                cx,
+            )
+        });
+        let content = (!folded).then(|| render_block(entry, window, cx));
         let selected = self.state.selected() == Some(ix);
         let copy_row = selected
             .then(|| crate::blocks::copy::row(entry, copy_text_of(view.clone()), window, cx))
@@ -801,7 +1026,8 @@ impl TimelineView {
             .py_1()
             .border_l_2()
             .debug_selector(move || format!("block-{ix}"))
-            .child(content)
+            .children(summary)
+            .children(content)
             .children(copy_row)
             .children(footer);
         let block = if selected {
@@ -1401,6 +1627,64 @@ mod tests {
             view.handle_action(&Action::builtin("block.last"), cx);
             view.handle_action(&Action::builtin("block.toggle_view"), cx);
             assert!(view.state().entries()[0].alt_view);
+        });
+    }
+
+    #[gpui::test]
+    fn the_turn_summary_folds_its_run_and_keeps_enter(cx: &mut TestAppContext) {
+        cx.update(gpui_component::init);
+        let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+        let thinking = Block::new(BlockKind::Thinking {
+            text: "hmm".into(),
+            collapsed: true,
+        });
+        let tool = |status: domain::block::ToolStatus| {
+            Block::new(BlockKind::ToolCall {
+                tool_use_id: "toolu".into(),
+                name: "git".into(),
+                summary: String::new(),
+                input: serde_json::json!({}),
+                status,
+                output: None,
+            })
+        };
+        view.update(cx, |view, cx| {
+            view.apply_all(
+                [
+                    thinking,
+                    tool(domain::block::ToolStatus::Succeeded),
+                    tool(domain::block::ToolStatus::Denied),
+                    text("listo"),
+                ]
+                .map(|block| DomainEvent::BlockAdded { block }),
+                cx,
+            );
+        });
+        cx.draw(
+            gpui::point(px(0.), px(0.)),
+            gpui::size(px(800.), px(600.)),
+            |_, _| div().size_full().child(view.clone()),
+        );
+        let at = cx
+            .debug_bounds("turn-summary-0")
+            .expect("turn summary")
+            .center();
+        cx.simulate_click(at, gpui::Modifiers::none());
+        cx.run_until_parked();
+        view.update(cx, |view, cx| {
+            assert!(
+                !view.state().entries()[0].expanded,
+                "the chip does not expand the thinking row"
+            );
+            assert!(view.folded.contains(&view.state().entries()[0].block.id));
+            view.handle_action(&Action::builtin("block.first"), cx);
+            view.handle_action(&Action::builtin("block.next"), cx);
+            assert_eq!(view.state().selected(), Some(3), "j skips the folded rows");
+            view.handle_action(&Action::builtin("block.toggle"), cx);
+            assert!(
+                !view.state().entries()[3].expanded,
+                "Enter still toggles the selected block"
+            );
         });
     }
 }

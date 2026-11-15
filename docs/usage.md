@@ -407,6 +407,8 @@ Servers declared in `init.lua` are listed read-only (an `init.lua` chip): edit t
 
 ### Blocks
 
+A run of thinking, tool calls and the diffs they show opens with a turn summary: `+N` for tools that finished, `−N` for tools that failed, were denied or were cancelled, and a chevron. The chevron hides that run, including its diffs. `Enter` still expands the selected block. A side whose count is zero is left out, and a tool that is still running is in neither count.
+
 | Block | Source | Interaction |
 | --- | --- | --- |
 | Text | Model reply (streamed markdown); your prompt appears quoted with `>`. | — |

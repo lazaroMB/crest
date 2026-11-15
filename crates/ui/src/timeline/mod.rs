@@ -9,6 +9,7 @@ mod render;
 mod selection;
 mod spy;
 mod state;
+mod summary;
 mod view;
 
 pub use column::{BlockWidth, COLUMN_GUTTER, PROSE_MAX_WIDTH, WIDE_MAX_WIDTH, block_width};
