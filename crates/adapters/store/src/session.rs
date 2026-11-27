@@ -79,7 +79,7 @@ impl SqliteSessionStore {
     }
 
     /// Runs `f` with the connection on the blocking pool.
-    async fn run<T, F>(&self, f: F) -> Result<T, StoreError>
+    pub(crate) async fn run<T, F>(&self, f: F) -> Result<T, StoreError>
     where
         T: Send + 'static,
         F: FnOnce(&mut Connection) -> Result<T, StoreError> + Send + 'static,

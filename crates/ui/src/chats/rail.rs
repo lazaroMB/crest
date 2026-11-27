@@ -106,6 +106,25 @@ impl ChatsPanel {
         cx.notify();
     }
 
+    /// The Docs button of the strip: the open chat's newest document (else
+    /// the newest of all) alone over its chat; a new one when there is none.
+    pub(super) fn open_docs_from_rail(&mut self, cx: &mut Context<Self>) {
+        let docs = &self.listed.docs;
+        let pick = self
+            .current_id
+            .as_deref()
+            .and_then(|id| docs.iter().find(|doc| doc.chat_id == id))
+            .or_else(|| docs.first());
+        match pick {
+            Some(doc) => cx.emit(ChatsEvent::OpenDoc {
+                root: self.root_of(&doc.chat_id).unwrap_or_default(),
+                chat_id: doc.chat_id.clone(),
+                doc_id: doc.id.clone(),
+            }),
+            None => cx.emit(ChatsEvent::NewDoc),
+        }
+    }
+
     /// A project's initial: its newest chat, or a new one in the project.
     fn open_project(&mut self, project: &ProjectChats, cx: &mut Context<Self>) {
         match project.chats.first() {
@@ -155,6 +174,11 @@ const PROJECTS: RailItem = RailItem {
     id: "sidebar-projects",
     icon: IconName::Folder,
     title: "Projects",
+};
+const DOCS: RailItem = RailItem {
+    id: "sidebar-docs",
+    icon: IconName::FileText,
+    title: "Docs",
 };
 
 /// The overlay every width shares: pinned top left, `width` wide, with the
@@ -225,6 +249,42 @@ fn icon_button(item: RailItem, click: Click, cx: &mut Context<ChatsPanel>) -> An
         .into_any_element()
 }
 
+/// The Docs button of the strip, with the number of documents when there
+/// are some.
+fn docs_button(panel: &ChatsPanel, cx: &mut Context<ChatsPanel>) -> AnyElement {
+    let count = panel.listed.docs.len();
+    let click: Click = Box::new(|this, _, cx| this.open_docs_from_rail(cx));
+    let (ink, accent) = (
+        crate::theme::token(cx, "accent.fg"),
+        crate::theme::token(cx, "accent.bg"),
+    );
+    let button = icon_button(DOCS, click, cx);
+    div()
+        .relative()
+        .child(button)
+        .when(count > 0, |item| {
+            item.child(
+                div()
+                    .debug_selector(|| "sidebar-docs-count".to_owned())
+                    .absolute()
+                    .top(px(0.))
+                    .right(px(0.))
+                    .min_w(px(14.))
+                    .h(px(14.))
+                    .px(px(3.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_full()
+                    .bg(accent)
+                    .text_color(ink)
+                    .text_size(px(9.))
+                    .child(count.to_string()),
+            )
+        })
+        .into_any_element()
+}
+
 /// The strip's rows under the mark: new chat, search, projects, a rule and
 /// one initial per project. Shared by the strip and the hidden reveal.
 fn strip_rows(panel: &ChatsPanel, cx: &mut Context<ChatsPanel>) -> Vec<AnyElement> {
@@ -234,6 +294,7 @@ fn strip_rows(panel: &ChatsPanel, cx: &mut Context<ChatsPanel>) -> Vec<AnyElemen
         icon_button(NEW_CHAT, new_chat(), cx),
         icon_button(SEARCH, search, cx),
         icon_button(PROJECTS, go(SidebarWidth::Full), cx),
+        docs_button(panel, cx),
         div()
             .w(px(20.))
             .my_1()

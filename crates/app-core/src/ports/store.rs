@@ -8,6 +8,7 @@
 use async_trait::async_trait;
 use domain::block::Block;
 use domain::conversation::{ProjectId, Session, SessionId};
+use domain::doc::{Doc, DocId};
 use domain::permission::PermissionRule;
 use domain::project::{Project, ProjectError};
 use serde::{Deserialize, Serialize};
@@ -103,14 +104,54 @@ pub enum StoreError {
     /// The stored data could not be decoded (corrupt or from a newer version).
     #[error("stored session is corrupt: {0}")]
     Corrupt(String),
+    /// No document with that id.
+    #[error("document {0} not found")]
+    DocNotFound(DocId),
     /// The backend failed (I/O, locked database, ...).
     #[error("session store failed: {0}")]
     Backend(String),
 }
 
+/// Persists where the documents of chats are (R03). The text of a document
+/// lives in its file, see [`DocFilesPort`](super::docs::DocFilesPort); the
+/// rows go when their chat is deleted and the files stay.
+#[async_trait]
+pub trait DocStorePort: Send + Sync {
+    /// Every document, most recently updated first.
+    async fn docs(&self) -> Result<Vec<Doc>, StoreError>;
+
+    /// The documents of one chat, most recently updated first.
+    async fn docs_of(&self, session: SessionId) -> Result<Vec<Doc>, StoreError>;
+
+    /// The document `id`, or [`StoreError::DocNotFound`].
+    async fn doc(&self, id: DocId) -> Result<Doc, StoreError>;
+
+    /// Inserts a document the caller built (id, file name unique in its
+    /// folder, folder, times).
+    async fn create_doc(&self, doc: Doc) -> Result<(), StoreError>;
+
+    /// Sets the title and the file name of `id` and its `updated_at` to `now`.
+    async fn rename_doc(
+        &self,
+        id: DocId,
+        title: &str,
+        file_name: &str,
+        now: u64,
+    ) -> Result<(), StoreError>;
+
+    /// Sets `updated_at` of `id` to `now`.
+    async fn touch_doc(&self, id: DocId, now: u64) -> Result<(), StoreError>;
+
+    /// Deletes the row of `id`; the files stay.
+    async fn delete_doc(&self, id: DocId) -> Result<(), StoreError>;
+
+    /// Sets the folder of `id`, after its files were moved there.
+    async fn set_doc_dir(&self, id: DocId, dir: &str) -> Result<(), StoreError>;
+}
+
 /// Persists sessions by workspace.
 #[async_trait]
-pub trait SessionStorePort: ProjectStorePort + OrganizeStorePort {
+pub trait SessionStorePort: ProjectStorePort + OrganizeStorePort + DocStorePort {
     /// Inserts or replaces the session with the same id, updating its
     /// listing entry. Must be atomic: a crash leaves the old or new version.
     /// Takes the session by value: callers build it for the save, and an

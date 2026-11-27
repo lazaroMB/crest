@@ -101,6 +101,20 @@ impl Session {
         let Some(key) = key_from_keystroke(&event.keystroke) else {
             return;
         };
+        // The doc panel's editors (source, diagram code, title, link) keep
+        // what is typed in them: nothing falls into the prompt. Chords still
+        // go through the keymap; Esc is the panel's own (it leaves the editor
+        // and then gives the focus back to the prompt).
+        if self.docs.panel.read(cx).owns_focus(window, cx) {
+            if key.code != KeyCode::Esc
+                && self
+                    .input
+                    .update(cx, |input, cx| input.feed_key(key, window, cx))
+            {
+                cx.stop_propagation();
+            }
+            return;
+        }
         // The chats list takes its own keys (arrows, Enter, F2, `r`,
         // Delete); chords, `Esc` and function keys still go through the
         // keymap, and nothing it leaves is typed into the prompt.
@@ -263,20 +277,36 @@ impl Session {
             || crate::widgets::owns_focus(window, cx)
     }
 
-    /// `<C-Tab>`: prompt → timeline → tree (when shown) → chats (when
+    /// `<C-Tab>`: prompt → timeline → doc (when shown; straight from the prompt
+    /// when the doc is alone) → tree (when shown) → chats (when
     /// shown) → prompt.
     pub fn focus_next(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let timeline = self.timeline.focus_handle(cx);
         let tree_shown = self.tree.read(cx).is_visible();
         let in_timeline = timeline.contains_focused(window, cx);
         let in_tree = self.tree.focus_handle(cx).contains_focused(window, cx);
-        if self.input.read(cx).owns_focus(window, cx) {
+        let panel = self.docs.panel.read(cx);
+        let doc_shown = panel.view() != crate::docs::DocView::Hidden && panel.doc().is_some();
+        let alone = panel.view() == crate::docs::DocView::Alone;
+        let in_panel = panel.owns_focus(window, cx);
+        if self.input.read(cx).owns_focus(window, cx) && doc_shown && alone {
+            // The chat is out of the way: the doc is the next stop.
+            self.docs
+                .panel
+                .update(cx, |panel, cx| panel.focus(window, cx));
+        } else if self.input.read(cx).owns_focus(window, cx) {
             window.focus(&timeline, cx);
             self.timeline
                 .update(cx, |view, cx| view.select_last_if_none(cx));
-        } else if in_timeline && tree_shown {
+        } else if in_timeline && doc_shown {
+            self.docs
+                .panel
+                .update(cx, |panel, cx| panel.focus(window, cx));
+        } else if (in_timeline || in_panel) && tree_shown {
             self.tree.update(cx, |tree, cx| tree.focus(window, cx));
-        } else if (in_timeline || in_tree) && self.sidebar != crate::chats::SidebarWidth::Strip {
+        } else if (in_timeline || in_tree || in_panel)
+            && self.sidebar != crate::chats::SidebarWidth::Strip
+        {
             cx.emit(SessionEvent::Chats(crate::chats::ChatsCommand::Focus));
         } else {
             self.focus_input(window, cx);
@@ -297,7 +327,10 @@ impl Session {
                 Some(form) => {
                     form.update(cx, |form, cx| form.reply(prompt.clone(), window, cx));
                 }
-                None => self.submit(prompt.clone(), cx),
+                None => {
+                    let chips = self.input.update(cx, |input, _| input.take_doc_chips());
+                    self.submit_full(prompt.clone(), None, Vec::new(), chips, cx);
+                }
             },
             InputEvent::SubmitImages {
                 text,
@@ -308,7 +341,8 @@ impl Session {
                     let message = "a form is waiting for an answer; the images go to the next turn";
                     self.notice(NoticeLevel::Info, message.to_owned(), cx);
                 }
-                self.submit_with(text.clone(), None, images.clone(), cx);
+                let chips = self.input.update(cx, |input, _| input.take_doc_chips());
+                self.submit_full(text.clone(), None, images.clone(), chips, cx);
             }
             InputEvent::SubmitImages {
                 text,
@@ -363,6 +397,14 @@ impl Session {
         };
         match name {
             INTERRUPT_ACTION => {
+                // Ctrl+C in the doc's page copies what is selected there.
+                if self
+                    .docs
+                    .panel
+                    .update(cx, |panel, cx| panel.copy_page_selection(window, cx))
+                {
+                    return;
+                }
                 if !self.interrupt(cx) {
                     self.notice(NoticeLevel::Info, "nothing to interrupt", cx);
                 }
@@ -370,12 +412,43 @@ impl Session {
             // Copies from anywhere and never interrupts: the prompt's
             // selection first, else the chat's.
             "selection.copy" => {
+                if self
+                    .docs
+                    .panel
+                    .update(cx, |panel, cx| panel.copy_page_selection(window, cx))
+                {
+                    return;
+                }
                 let copied = self.input.read(cx).copy_selection(cx)
                     || self
                         .timeline
                         .update(cx, |timeline, cx| timeline.copy_selection(window, cx));
                 if !copied {
                     self.notice(NoticeLevel::Info, "nothing selected to copy", cx);
+                }
+            }
+            // Adds the text selected in the chat to the chat's document.
+            "selection.add_to_doc" => {
+                let added = self
+                    .timeline
+                    .update(cx, |timeline, cx| timeline.add_selection_to_doc(window, cx));
+                if !added {
+                    self.notice(NoticeLevel::Info, "nothing selected to add", cx);
+                }
+            }
+            crate::docs::TOGGLE_ACTION => self.cycle_doc_view(cx),
+            name if crate::docs::is_panel_action(name) => {
+                let handled = self
+                    .docs
+                    .panel
+                    .update(cx, |panel, cx| panel.handle_action(action, window, cx));
+                if !handled {
+                    let what = if name.starts_with("diagram.") {
+                        "no diagram open"
+                    } else {
+                        "no document open"
+                    };
+                    self.notice(NoticeLevel::Info, what, cx);
                 }
             }
             PERMISSION_ACTION => self.cycle_permission_mode(cx),

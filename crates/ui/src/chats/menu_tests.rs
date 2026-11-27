@@ -56,6 +56,7 @@ fn panel(cx: &mut TestAppContext) -> (Entity<ChatsPanel>, Events, &mut VisualTes
             }],
             chats: vec![chat("z1")],
         },
+        docs: Vec::new(),
     };
     let (view, cx) = cx.add_window_view(move |_, cx| {
         let mut panel = ChatsPanel::new("/w/api".into(), Some("a1".into()), cx);

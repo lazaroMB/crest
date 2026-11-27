@@ -10,6 +10,7 @@ use gpui::{
 use gpui_component::{ActiveTheme as _, Theme, h_flex};
 
 use super::completion::{Paint, Popup, PopupKey, palette_top, window_note};
+use super::doc_popup::doc_key;
 use super::groups::{GroupRow, PaletteView, group_indices, view_of};
 use super::model_popup::model_key;
 use super::path_popup::path_key;
@@ -172,6 +173,7 @@ impl InputView {
                 }
                 Completion::Model(popup) => model_key(key, popup, self.palette_selected),
                 Completion::Theme(popup) => theme_key(key, popup, self.palette_selected),
+                Completion::Doc(popup) => doc_key(key, popup, self.palette_selected),
             };
             let theme = matches!(shown, Completion::Theme(_));
             match pressed {

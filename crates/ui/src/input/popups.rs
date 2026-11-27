@@ -7,7 +7,7 @@ use domain::model::ModelId;
 use gpui::{App, Context, ScrollWheelEvent, Window, px};
 
 use super::completion::{PALETTE_ROWS, Popup, scroll_window};
-use super::{InputEvent, InputView, ModelPopup, PathPopup, ThemePopup, WHEEL_ROW};
+use super::{DocPopup, InputEvent, InputView, ModelPopup, PathPopup, ThemePopup, WHEEL_ROW};
 use crate::session::{ModelChoice, ThemeChoice};
 
 /// The completion popup the input shows.
@@ -18,6 +18,8 @@ pub(super) enum Completion {
     Model(ModelPopup),
     /// `/theme ` themes.
     Theme(ThemePopup),
+    /// `/doc find `, `/doc use ` and `/doc export ` rows.
+    Doc(DocPopup),
 }
 
 impl Completion {
@@ -27,6 +29,7 @@ impl Completion {
             Self::Path(popup) => popup.len(),
             Self::Model(popup) => popup.len(),
             Self::Theme(popup) => popup.len(),
+            Self::Doc(popup) => popup.len(),
         }
     }
 }
@@ -86,6 +89,20 @@ impl InputView {
         }
     }
 
+    /// Hands the `/doc ` popup the documents it lists, newest first.
+    pub fn set_docs(&mut self, docs: Vec<super::DocChoice>, cx: &mut Context<Self>) {
+        self.docs = docs;
+        cx.notify();
+    }
+
+    /// What the `/doc ` popup shows for the current text, if anything.
+    pub fn doc_popup(&self, cx: &App) -> Option<DocPopup> {
+        if self.palette_hidden {
+            return None;
+        }
+        super::doc_popup::doc_popup(&self.docs, &self.shared_text(cx))
+    }
+
     /// What the `/model ` popup shows for the current text, if anything.
     pub fn model_popup(&self, cx: &App) -> Option<ModelPopup> {
         if self.palette_hidden {
@@ -103,7 +120,10 @@ impl InputView {
         if let Some(popup) = self.model_popup(cx) {
             return Some(Completion::Model(popup));
         }
-        self.theme_popup(cx).map(Completion::Theme)
+        if let Some(popup) = self.theme_popup(cx) {
+            return Some(Completion::Theme(popup));
+        }
+        self.doc_popup(cx).map(Completion::Doc)
     }
 
     /// Entries of the popup the input shows, the same one `render` picks.

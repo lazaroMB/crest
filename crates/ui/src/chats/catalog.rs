@@ -105,6 +105,21 @@ impl Archive {
     }
 }
 
+/// One document of a chat, as the Docs section lists it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DocEntry {
+    /// Document id, as printed.
+    pub id: String,
+    /// Its title.
+    pub title: String,
+    /// Session id of the chat it belongs to.
+    pub chat_id: String,
+    /// The title of that chat.
+    pub chat_title: String,
+    /// Last change, in milliseconds since the Unix epoch.
+    pub updated_at: u64,
+}
+
 /// What the sidebar lists: the projects in their order, and the chats that
 /// are in none, newest first.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -115,9 +130,17 @@ pub struct Catalog {
     pub chats: Vec<ChatEntry>,
     /// What is archived.
     pub archived: Archive,
+    /// Every document of the chats that are not archived, newest first.
+    pub docs: Vec<DocEntry>,
 }
 
 impl Catalog {
+    /// How many documents the chat `id` has.
+    #[must_use]
+    pub fn docs_of(&self, id: &str) -> usize {
+        self.docs.iter().filter(|doc| doc.chat_id == id).count()
+    }
+
     /// The chat `id`, in a project or in none.
     #[must_use]
     pub fn chat(&self, id: &str) -> Option<&ChatEntry> {

@@ -12,6 +12,7 @@ use domain::conversation::SessionId;
 use domain::project::{Project, name_from_root, normalize_root};
 
 use crate::ports::store::{SessionStorePort, SessionSummary, StoreError};
+use crate::usecases::docs::DocService;
 
 /// A project and its chats, newest first.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -171,18 +172,20 @@ pub async fn project_for_directory(
 }
 
 /// Puts the saved chat `id` in the project of `directory` when it has none
-/// (a chat saved by a version without projects).
+/// (a chat saved by a version without projects). Its documents follow it
+/// when there is a [`DocService`].
 ///
 /// # Errors
 ///
 /// The store's error.
 pub async fn adopt(
     store: &dyn SessionStorePort,
+    docs: Option<&DocService>,
     id: SessionId,
     directory: &str,
 ) -> Result<(), StoreError> {
     let project = project_for_directory(store, directory).await?;
-    store.move_session(id, Some(project.id)).await
+    super::organize::move_chat(store, docs, id, Some(project.id)).await
 }
 
 #[cfg(test)]

@@ -7,6 +7,7 @@ pub mod cancel;
 pub mod commands;
 pub mod compact;
 pub mod compute;
+pub mod docs;
 pub mod evidence;
 pub mod git_status;
 pub mod login;

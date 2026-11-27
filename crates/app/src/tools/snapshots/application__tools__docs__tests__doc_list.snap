@@ -1,0 +1,16 @@
+---
+source: crates/app/src/tools/docs.rs
+expression: def
+---
+{
+  "name": "doc_list",
+  "description": "Lists the documents of this chat: id, title and size. Use the id or the title with `doc_read`, `doc_edit` or `doc_write`.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "description": "Input of `doc_list`.",
+    "title": "DocListRequest",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  },
+  "cache": false
+}

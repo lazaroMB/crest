@@ -8,7 +8,7 @@
 //! data yet: they join [`visible_projects`] (its input and output) when
 //! the store has them.
 
-use super::{Catalog, ChatEntry, ProjectChats, project_name, same_workspace};
+use super::{Catalog, ChatEntry, DocEntry, ProjectChats, project_name, same_workspace};
 
 /// Width of the sidebar in each state, in pixels.
 pub const FULL_WIDTH: f32 = 240.0;
@@ -146,6 +146,23 @@ pub fn listed_with(mut catalog: Catalog, current: &CurrentChat<'_>) -> Catalog {
         project.chats.splice(0..0, fresh);
     }
     catalog
+}
+
+/// The documents a search leaves, newest first: those whose title or whose
+/// chat's title matches. An empty query leaves every one.
+#[must_use]
+pub fn visible_docs(docs: &[DocEntry], query: &str) -> Vec<DocEntry> {
+    let query = query.trim().to_lowercase();
+    let mut kept: Vec<DocEntry> = docs
+        .iter()
+        .filter(|doc| {
+            doc.title.to_lowercase().contains(&query)
+                || doc.chat_title.to_lowercase().contains(&query)
+        })
+        .cloned()
+        .collect();
+    kept.sort_by_key(|doc| std::cmp::Reverse(doc.updated_at));
+    kept
 }
 
 /// The chats in no project that a search leaves: those whose title matches.

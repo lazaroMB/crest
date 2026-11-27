@@ -118,17 +118,20 @@ pub enum MenuEntry {
     Mode(ChatMode),
     /// Type this character in the prompt, which opens its completion.
     Insert(char),
+    /// Type `/doc ` in the prompt, which lists the documents.
+    Doc,
     /// Open the MCP servers manager (`/mcp`).
     Mcp,
 }
 
 /// The rows of the menu: the modes, the inserts, then the manager.
-pub const MENU: [MenuEntry; 6] = [
+pub const MENU: [MenuEntry; 7] = [
     MenuEntry::Mode(ChatMode::Chat),
     MenuEntry::Mode(ChatMode::Research),
     MenuEntry::Mode(ChatMode::Deep),
     MenuEntry::Insert('@'),
     MenuEntry::Insert('/'),
+    MenuEntry::Doc,
     MenuEntry::Mcp,
 ];
 
@@ -141,6 +144,7 @@ impl MenuEntry {
             Self::Mode(mode) => (mode.label(), mode.hint()),
             Self::Insert('@') => ("File from the workspace", "@"),
             Self::Insert(_) => ("Command", "/"),
+            Self::Doc => ("Document", "/doc"),
             Self::Mcp => ("MCP servers", "/mcp"),
         }
     }
@@ -244,6 +248,7 @@ impl InputView {
         match entry {
             MenuEntry::Mode(mode) => self.set_chat_mode(mode, window, cx),
             MenuEntry::Insert(c) => self.insert_text(&c.to_string(), window, cx),
+            MenuEntry::Doc => self.insert_text("/doc ", window, cx),
             MenuEntry::Mcp => cx.emit(InputEvent::Command("mcp".into())),
         }
     }
@@ -288,6 +293,7 @@ mod tests {
             [
                 ("File from the workspace", "@"),
                 ("Command", "/"),
+                ("Document", "/doc"),
                 ("MCP servers", "/mcp")
             ]
         );
@@ -300,7 +306,7 @@ mod tests {
         assert_eq!(control.press(&key(KeyCode::Down)), Press::Pass, "closed");
         control.toggle();
         assert_eq!(control.press(&key(KeyCode::Up)), Press::Taken);
-        assert_eq!(control.menu, Some(5), "wraps around");
+        assert_eq!(control.menu, Some(6), "wraps around");
         for _ in 0..3 {
             control.press(&key(KeyCode::Down));
         }

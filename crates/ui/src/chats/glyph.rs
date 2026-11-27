@@ -14,6 +14,7 @@ pub(super) enum Glyph {
     Trash,
     Pin,
     More,
+    Doc,
 }
 
 impl Glyph {
@@ -27,6 +28,7 @@ impl Glyph {
             Self::Restore => Icon::new(gpui_kit_assets::IconName::ArchiveRestore),
             Self::Trash => Icon::new(gpui_kit_assets::IconName::Trash),
             Self::Pin => Icon::new(gpui_kit_assets::IconName::Pin),
+            Self::Doc => Icon::new(gpui_kit_assets::IconName::FileText),
         }
     }
 }

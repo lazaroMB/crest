@@ -27,6 +27,7 @@ pub fn run_sized(
     let title = SharedString::from(title.to_owned());
     ui::assets::install(gpui_platform::application()).run(move |cx: &mut App| {
         gpui_component::init(cx);
+        zorite_editor::bind_keys(cx);
         apply_theme(cx);
         cx.bind_keys([KeyBinding::new("secondary-q", ui::app::Quit, None)]);
         cx.on_action(|_: &ui::app::Quit, cx| cx.quit());

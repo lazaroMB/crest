@@ -13,6 +13,7 @@ pub mod layout;
 pub mod paint;
 pub mod plot;
 pub mod scale;
+pub mod svg;
 
 use std::rc::Rc;
 
@@ -209,6 +210,15 @@ impl BlockView for View {
         true
     }
 
+    fn bar_inset(&self, entry: &TimelineEntry) -> f32 {
+        let BlockKind::Chart(spec) = &entry.block.kind else {
+            return 0.0;
+        };
+        // The caption (text_xs, about 6.5 px a character), the frame's
+        // padding and a gap.
+        caption(spec, entry.alt_view).chars().count() as f32 * 6.5 + 12. + 12.
+    }
+
     fn copy_formats(&self, kind: &BlockKind) -> Vec<CopyFormat> {
         let BlockKind::Chart(chart) = kind else {
             return Vec::new();
@@ -219,6 +229,16 @@ impl BlockView for View {
             CopyFormat::new("tsv", "TSV", super::copy::tsv(&table)),
         ]
     }
+}
+
+/// The caption at the right of the header: the kind and the `t` hint.
+fn caption(spec: &ChartSpec, as_table: bool) -> String {
+    let hint = if as_table {
+        "table · t: chart"
+    } else {
+        "t: table"
+    };
+    format!("{} · {hint}", kind_label(spec.kind))
 }
 
 /// Draws `spec` as the chart of `id` (a block, or a node of a custom
@@ -246,11 +266,7 @@ pub fn render_spec(
         chart_body(spec, state.read(cx), &id.to_string(), window, cx)
     };
     let theme = cx.theme();
-    let hint = if as_table {
-        "table · t: chart"
-    } else {
-        "t: table"
-    };
+    let caption = caption(spec, as_table);
     let title = if spec.title.trim().is_empty() {
         "Chart"
     } else {
@@ -266,10 +282,7 @@ pub fn render_spec(
         .child(
             crate::kit::header(cx)
                 .child(crate::kit::title(SharedString::from(title.to_owned())))
-                .child(crate::kit::caption(
-                    format!("{} · {hint}", kind_label(spec.kind)),
-                    cx,
-                )),
+                .child(crate::kit::caption(caption, cx)),
         )
         .child(body)
         .into_any_element()

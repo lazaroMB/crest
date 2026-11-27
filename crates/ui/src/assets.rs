@@ -13,8 +13,33 @@ use gpui::{Application, AssetSource, SharedString};
 
 // The icons crest draws that gpui-component's default bundle lacks, taken
 // from the full Lucide catalog: the branch of a chat, the Archived section
-// and the pin. Only these are embedded, not the 1800 of the catalog.
-gpui_kit_assets::icon_assets!(Extra, [GitBranch, Archive, ArchiveRestore, Trash, Pin]);
+// the pin and the doc panel's glyphs. Only these are embedded, not the 1800 of the catalog.
+gpui_kit_assets::icon_assets!(
+    Extra,
+    [
+        GitBranch,
+        Archive,
+        ArchiveRestore,
+        Trash,
+        Pin,
+        FileText,
+        Bold,
+        Italic,
+        Heading,
+        List,
+        Quote,
+        Code,
+        Table,
+        Link,
+        Image,
+        Workflow,
+        Columns2,
+        Maximize2,
+        Download,
+        FileCode,
+        Eye
+    ]
+);
 
 /// The source of the app's icons: gpui-component's default bundle (Lucide)
 /// plus [`Extra`], all embedded in the binary.
@@ -76,12 +101,36 @@ mod tests {
                 Ellipsis,
                 Info,
                 TriangleAlert,
-                CircleX
+                CircleX,
+                ChevronDown,
+                Minus
             ]
         );
         let catalog = icons!(
             gpui_kit_assets,
-            [GitBranch, Archive, ArchiveRestore, Trash, Pin]
+            [
+                GitBranch,
+                Archive,
+                ArchiveRestore,
+                Trash,
+                Pin,
+                FileText,
+                Bold,
+                Italic,
+                Heading,
+                List,
+                Quote,
+                Code,
+                Table,
+                Link,
+                Image,
+                Workflow,
+                Columns2,
+                Maximize2,
+                Download,
+                FileCode,
+                Eye
+            ]
         );
         [component, catalog].concat()
     }

@@ -337,6 +337,8 @@ impl FlameView {
             .debug_selector(|| "flame-matches".to_owned())
         });
         crate::kit::header(cx)
+            // Room for the block's floating copy bar (it shows on hover).
+            .pr(px(96.))
             .child(crate::kit::title(self.title.clone()))
             .child(crate::kit::caption(info, cx))
             .children(found)

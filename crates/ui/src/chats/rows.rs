@@ -12,14 +12,16 @@ use gpui_component::{ActiveTheme as _, Sizable as _, h_flex, v_flex};
 
 use super::glyph::{Glyph, icon_button};
 
-use super::{ChatEntry, ChatRow, ChatsEvent, ChatsPanel, ProjectChats};
+use super::{ChatEntry, ChatRow, ChatsEvent, ChatsPanel, ProjectChats, label};
 
 impl ChatsPanel {
     /// One element per row of [`Self::rows`]: a project header (with its
     /// "No chats yet" line), a chat or an Archived row, so the scroll can
     /// keep the selected row in view.
     pub(super) fn row_elements(&self, focused: bool, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let archived = self.archived_elements(focused, cx);
+        // The Docs section sits below the chats and above Archived.
+        let mut archived = self.doc_elements(focused, cx);
+        archived.extend(self.archived_elements(focused, cx));
         if self.visible.projects.is_empty() && self.visible.chats.is_empty() {
             let text = if self.searching() {
                 "No match"
@@ -75,6 +77,76 @@ impl ChatsPanel {
         }
         if self.visible.chats.is_empty() && !self.searching() {
             out.push(with_heading("WILD CHATS", loose_hint(cx), cx));
+        }
+        out
+    }
+
+    /// The Docs section: every document, newest first, each with the title
+    /// of its chat, under a heading. A click or `Enter` opens it alone.
+    fn doc_elements(&self, focused: bool, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let (muted, ring, active) = (
+            cx.theme().muted_foreground,
+            cx.theme().ring,
+            cx.theme().list_active,
+        );
+        let mut out = Vec::new();
+        for (ix, doc) in self.visible.docs.iter().enumerate() {
+            let keyed = focused && self.selected == Some(ChatRow::Doc(doc.id.clone()));
+            let selected = self.current_doc.as_deref() == Some(doc.id.as_str());
+            let doc_id = doc.id.clone();
+            let event = ChatsEvent::OpenDoc {
+                root: self.root_of(&doc.chat_id).unwrap_or_default(),
+                chat_id: doc.chat_id.clone(),
+                doc_id: doc.id.clone(),
+            };
+            let group = SharedString::from(format!("doc-row-{ix}"));
+            let mut item = row_frame(format!("chats-doc-{ix}"), group, cx)
+                .pl(px(22.))
+                .pr_2()
+                .py_1()
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.clear_action(cx);
+                    this.current_doc = Some(doc_id.clone());
+                    cx.emit(event.clone());
+                }))
+                .child(Glyph::Doc.icon().xsmall().text_color(muted))
+                .child(label(&doc.title))
+                .child(
+                    div()
+                        .flex_none()
+                        .max_w(px(110.))
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_xs()
+                        .text_color(muted)
+                        .child(SharedString::from(doc.chat_title.clone())),
+                );
+            if selected {
+                item = item.bg(active).rounded_sm();
+            }
+            if keyed {
+                item = item.border_color(ring).rounded_sm();
+            }
+            if ix == 0 {
+                let plus = cx.listener(|this, _, _, cx| {
+                    cx.stop_propagation();
+                    this.clear_action(cx);
+                    cx.emit(ChatsEvent::NewDoc);
+                });
+                let button = icon_button("chats-docs-new".to_owned(), Glyph::Plus, plus, cx)
+                    .tooltip(|window, cx| {
+                        gpui_component::tooltip::Tooltip::new("New doc").build(window, cx)
+                    });
+                out.push(with_heading_action(
+                    "DOCS",
+                    button.into_any_element(),
+                    item.into_any_element(),
+                    cx,
+                ));
+            } else {
+                out.push(item.into_any_element());
+            }
         }
         out
     }
@@ -171,13 +243,19 @@ impl ChatsPanel {
             .on_mouse_down(MouseButton::Right, on_right_click((false, menu_id), cx))
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.clear_action(cx);
+                this.current_doc = None;
                 if this.current_id.as_deref() != Some(id.as_str()) {
                     let (root, id) = (root.clone(), id.clone());
                     cx.emit(ChatsEvent::Open { root, id });
                 }
             }))
             .child(title)
-            .children(chat_marks(chat, badge, muted))
+            .children(chat_marks(
+                chat,
+                self.listed.docs_of(&chat.id),
+                badge,
+                muted,
+            ))
             .child(more_button(
                 More {
                     selector: more,
@@ -222,8 +300,16 @@ fn row_frame(selector: String, group: SharedString, cx: &App) -> Stateful<Div> {
 
 /// What a chat's row shows after its title: a pin, the branch icon and the
 /// badge of a turn running out of sight.
-fn chat_marks(chat: &ChatEntry, badge: Option<&'static str>, muted: gpui::Hsla) -> Vec<AnyElement> {
+fn chat_marks(
+    chat: &ChatEntry,
+    docs: usize,
+    badge: Option<&'static str>,
+    muted: gpui::Hsla,
+) -> Vec<AnyElement> {
     let mut marks = Vec::new();
+    if docs > 0 {
+        marks.push(doc_mark(docs, muted));
+    }
     if chat.pinned {
         marks.push(pin_mark(muted));
     }
@@ -241,6 +327,20 @@ fn chat_marks(chat: &ChatEntry, badge: Option<&'static str>, muted: gpui::Hsla) 
         );
     }
     marks
+}
+
+/// The small document glyph and the number of documents of a chat.
+fn doc_mark(docs: usize, muted: gpui::Hsla) -> AnyElement {
+    h_flex()
+        .id("chats-docs")
+        .debug_selector(|| "chats-docs".to_owned())
+        .gap_0p5()
+        .flex_none()
+        .text_xs()
+        .text_color(muted)
+        .child(Glyph::Doc.icon().xsmall().text_color(muted))
+        .child(docs.to_string())
+        .into_any_element()
 }
 
 /// The `N dirs` of a project with more than one directory.
@@ -380,6 +480,30 @@ fn with_heading(title: &'static str, element: AnyElement, cx: &App) -> AnyElemen
                 .text_xs()
                 .text_color(cx.theme().muted_foreground)
                 .child(title),
+        )
+        .child(element)
+        .into_any_element()
+}
+
+/// `element` under the heading `title`, with `action` at the right of it.
+fn with_heading_action(
+    title: &'static str,
+    action: AnyElement,
+    element: AnyElement,
+    cx: &App,
+) -> AnyElement {
+    v_flex()
+        .child(
+            h_flex()
+                .px_2()
+                .pt_2()
+                .pb_1()
+                .items_center()
+                .justify_between()
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(title)
+                .child(action),
         )
         .child(element)
         .into_any_element()

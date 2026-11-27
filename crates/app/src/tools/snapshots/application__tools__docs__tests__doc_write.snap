@@ -1,0 +1,30 @@
+---
+source: crates/app/src/tools/docs.rs
+expression: def
+---
+{
+  "name": "doc_write",
+  "description": "Creates a document in this chat, or replaces all of the one with the same title, with `markdown` as its full text. Prefer `doc_edit` for a change to an existing document. The user sees the diff and may need to approve it.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "title": {
+        "type": "string",
+        "description": "Title of the document. A document of this chat with this title is\nreplaced; otherwise a new one is created."
+      },
+      "markdown": {
+        "type": "string",
+        "description": "The whole markdown of the document."
+      }
+    },
+    "required": [
+      "title",
+      "markdown"
+    ],
+    "description": "Input of `doc_write`.",
+    "title": "DocWriteRequest",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  },
+  "cache": false
+}

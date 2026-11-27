@@ -13,7 +13,8 @@ use gpui::{
     Point, SharedString, StatefulInteractiveElement as _, Styled as _, Window, anchored, deferred,
     div, point, px,
 };
-use gpui_component::ActiveTheme as _;
+use gpui_component::tooltip::Tooltip;
+use gpui_component::{ActiveTheme as _, h_flex};
 
 /// How long the hint says "Copied" before it goes away.
 pub const COPIED_TTL: Duration = Duration::from_millis(1200);
@@ -58,17 +59,18 @@ impl CopyHint {
     }
 }
 
-/// The hint, floating above the timeline just below and right of the mouse.
-/// `on_click` copies.
-pub fn render_hint(
-    hint: &CopyHint,
+/// One chip of the hint bar: a label with a tooltip and a click handler.
+fn chip(
+    id: &'static str,
+    label: SharedString,
+    tip: &'static str,
     on_click: impl Fn(&mut Window, &mut App) + 'static,
     cx: &App,
-) -> AnyElement {
+) -> impl IntoElement {
     let theme = cx.theme();
-    let chip = div()
-        .id("copy-hint")
-        .debug_selector(|| "copy-hint".to_owned())
+    div()
+        .id(id)
+        .debug_selector(|| id.to_owned())
         .px_2()
         .py_0p5()
         .rounded_md()
@@ -79,20 +81,57 @@ pub fn render_hint(
         .text_xs()
         .shadow_md()
         .cursor_pointer()
-        .child(hint.label())
+        .tooltip(move |window, cx| Tooltip::new(tip).build(window, cx))
         // Keep the press from starting a new selection under the hint.
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         // Releasing here must not reopen the hint as "Copy" over the copy.
         .on_mouse_up(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .child(label)
         .on_click(move |_, window, cx| {
             cx.stop_propagation();
             on_click(window, cx);
-        });
+        })
+}
+
+/// The selection bar, floating above the timeline just below and right of
+/// the mouse: "Copy" and, unless it just copied, "Add to doc". `on_copy`
+/// copies; `on_add` opens (or closes) the document picker, which is `menu`
+/// when open.
+pub fn render_hint(
+    hint: &CopyHint,
+    on_copy: impl Fn(&mut Window, &mut App) + 'static,
+    on_add: impl Fn(&mut Window, &mut App) + 'static,
+    menu: Option<AnyElement>,
+    cx: &App,
+) -> AnyElement {
+    let bar = h_flex()
+        .id("selection-bar")
+        .debug_selector(|| "selection-bar".to_owned())
+        .gap_1()
+        .child(chip(
+            "copy-hint",
+            hint.label(),
+            "Copy the selected text",
+            on_copy,
+            cx,
+        ))
+        .children((!hint.copied).then(|| {
+            div()
+                .relative()
+                .child(chip(
+                    "add-to-doc-hint",
+                    "Add to doc ▾".into(),
+                    "Add the selected text to a document",
+                    on_add,
+                    cx,
+                ))
+                .children(menu)
+        }));
     deferred(
         anchored()
             .position(hint.at + point(px(8.), px(12.)))
             .snap_to_window_with_margin(px(8.))
-            .child(chip),
+            .child(bar),
     )
     .with_priority(1)
     .into_any_element()

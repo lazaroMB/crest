@@ -5,6 +5,7 @@
 pub(crate) mod chats;
 pub mod db;
 pub mod discovery;
+mod docs;
 pub mod graphflow;
 pub mod migrations;
 pub mod path;

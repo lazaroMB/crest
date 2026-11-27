@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use async_trait::async_trait;
 use domain::conversation::{ProjectId, SessionId, StopReason, Usage};
+use domain::doc::{Doc, DocId};
 use domain::project::{Project, ProjectError};
 use futures::channel::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use serde_json::Value;
@@ -24,8 +25,8 @@ use crate::ports::plugin::{
 };
 use crate::ports::projects::RecentWorkspace;
 use crate::ports::store::{
-    OrganizeStorePort, ProjectStorePort, SessionStorePort, SessionSummary, StoreError,
-    StoredSession,
+    DocStorePort, OrganizeStorePort, ProjectStorePort, SessionStorePort, SessionSummary,
+    StoreError, StoredSession,
 };
 use crate::ports::telemetry::{LlmCallRecord, SpanId, TelemetryPort, ToolCallRecord, TurnSpan};
 
@@ -356,6 +357,7 @@ mod approval_tests {
 pub struct InMemorySessionStore {
     sessions: Mutex<HashMap<SessionId, StoredSession>>,
     projects: Mutex<ProjectBook>,
+    docs: Mutex<Vec<Doc>>,
     fail_next: Mutex<Option<StoreError>>,
 }
 
@@ -509,6 +511,8 @@ impl SessionStorePort for InMemorySessionStore {
         self.check_failure()?;
         let mut sessions = lock(&self.sessions);
         sessions.remove(&id).ok_or(StoreError::NotFound(id))?;
+        // Like the foreign key of the SQLite store: the rows go, no file does.
+        lock(&self.docs).retain(|doc| doc.session_id != id);
         for other in sessions.values_mut() {
             if other.session.branched_from == Some(id) {
                 other.session.branched_from = None;
@@ -533,6 +537,103 @@ impl SessionStorePort for InMemorySessionStore {
         recent.sort_by(|a, b| b.updated_at.cmp(&a.updated_at).then(a.root.cmp(&b.root)));
         recent.truncate(limit);
         Ok(recent)
+    }
+}
+
+/// Docs newest first, with the same tie-break as the SQLite store.
+fn newest_first(mut docs: Vec<Doc>) -> Vec<Doc> {
+    docs.sort_by_key(|d| std::cmp::Reverse((d.updated_at, d.created_at, d.id.0)));
+    docs
+}
+
+impl InMemorySessionStore {
+    /// Applies `change` to the doc `id`, or `DocNotFound`.
+    fn edit_doc(&self, id: DocId, change: impl FnOnce(&mut Doc)) -> Result<(), StoreError> {
+        self.check_failure()?;
+        let mut docs = lock(&self.docs);
+        let doc = docs
+            .iter_mut()
+            .find(|d| d.id == id)
+            .ok_or(StoreError::DocNotFound(id))?;
+        change(doc);
+        Ok(())
+    }
+}
+
+#[async_trait]
+impl DocStorePort for InMemorySessionStore {
+    async fn docs(&self) -> Result<Vec<Doc>, StoreError> {
+        self.check_failure()?;
+        Ok(newest_first(lock(&self.docs).clone()))
+    }
+
+    async fn docs_of(&self, session: SessionId) -> Result<Vec<Doc>, StoreError> {
+        self.check_failure()?;
+        let of = lock(&self.docs)
+            .iter()
+            .filter(|d| d.session_id == session)
+            .cloned()
+            .collect();
+        Ok(newest_first(of))
+    }
+
+    async fn doc(&self, id: DocId) -> Result<Doc, StoreError> {
+        self.check_failure()?;
+        lock(&self.docs)
+            .iter()
+            .find(|d| d.id == id)
+            .cloned()
+            .ok_or(StoreError::DocNotFound(id))
+    }
+
+    async fn create_doc(&self, doc: Doc) -> Result<(), StoreError> {
+        self.check_failure()?;
+        if !lock(&self.sessions).contains_key(&doc.session_id) {
+            return Err(StoreError::Backend("FOREIGN KEY constraint failed".into()));
+        }
+        let mut docs = lock(&self.docs);
+        if docs.iter().any(|d| d.id == doc.id)
+            || docs
+                .iter()
+                .any(|d| d.dir == doc.dir && d.file_name == doc.file_name)
+        {
+            return Err(StoreError::Backend("UNIQUE constraint failed".into()));
+        }
+        docs.push(doc);
+        Ok(())
+    }
+
+    async fn rename_doc(
+        &self,
+        id: DocId,
+        title: &str,
+        file_name: &str,
+        now: u64,
+    ) -> Result<(), StoreError> {
+        self.edit_doc(id, |d| {
+            d.title = title.to_owned();
+            d.file_name = file_name.to_owned();
+            d.updated_at = now;
+        })
+    }
+
+    async fn touch_doc(&self, id: DocId, now: u64) -> Result<(), StoreError> {
+        self.edit_doc(id, |d| d.updated_at = now)
+    }
+
+    async fn delete_doc(&self, id: DocId) -> Result<(), StoreError> {
+        self.check_failure()?;
+        let mut docs = lock(&self.docs);
+        let before = docs.len();
+        docs.retain(|d| d.id != id);
+        if docs.len() == before {
+            return Err(StoreError::DocNotFound(id));
+        }
+        Ok(())
+    }
+
+    async fn set_doc_dir(&self, id: DocId, dir: &str) -> Result<(), StoreError> {
+        self.edit_doc(id, |d| dir.clone_into(&mut d.dir))
     }
 }
 
@@ -682,6 +783,35 @@ mod store_tests {
             .map(|r| (r.root.as_str(), r.updated_at))
             .collect();
         assert_eq!(roots, [("/a", 12), ("/b", 9)]);
+    }
+
+    #[tokio::test]
+    async fn docs_follow_their_chat_and_a_branch_has_none() {
+        let store = InMemorySessionStore::new();
+        let chat = stored("/ws", 1);
+        let id = chat.session.id;
+        store.save(chat).await.unwrap();
+        let doc = |file: &str, at: u64| Doc {
+            id: DocId::new(),
+            session_id: id,
+            title: file.into(),
+            file_name: file.into(),
+            dir: format!("/ws/.crest/docs/{id}"),
+            created_at: at,
+            updated_at: at,
+        };
+        let (a, b) = (doc("a.md", 1), doc("b.md", 2));
+        store.create_doc(a.clone()).await.unwrap();
+        store.create_doc(b.clone()).await.unwrap();
+        assert!(store.create_doc(doc("a.md", 3)).await.is_err());
+        assert_eq!(store.docs_of(id).await.unwrap(), [b.clone(), a.clone()]);
+        store.touch_doc(a.id, 9).await.unwrap();
+        assert_eq!(store.docs().await.unwrap()[0].id, a.id);
+        let branch = store.branch_session(id).await.unwrap();
+        assert!(store.docs_of(branch).await.unwrap().is_empty());
+        store.delete(id).await.unwrap();
+        assert!(store.docs().await.unwrap().is_empty());
+        assert_eq!(store.doc(a.id).await, Err(StoreError::DocNotFound(a.id)));
     }
 
     #[tokio::test]

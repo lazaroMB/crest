@@ -3,6 +3,7 @@
 //! refusal comes back as the store's message, which is fit to show.
 
 use application::ports::store::{SessionStorePort, StoreError};
+use application::usecases::docs::DocService;
 use application::usecases::organize::{
     ChatAction, ChatDone, ProjectAction, ProjectDone, chat_action, project_action, promote_chat,
 };
@@ -10,14 +11,16 @@ use domain::conversation::{ProjectId, SessionId};
 use domain::project::name_from_root;
 use ui::chats::{ChatOp, Organize, Organized, ProjectOp};
 
-/// Runs `change` on `store`.
+/// Runs `change` on `store`; a chat that moves takes its documents along
+/// when there is a `docs` service.
 pub(crate) async fn run(
     store: &dyn SessionStorePort,
+    docs: Option<&DocService>,
     change: Organize,
 ) -> Result<Organized, String> {
     match change {
-        Organize::Chat { id, op } => chat(store, &id, op).await,
-        Organize::Project { id, op } => project(store, &id, op).await,
+        Organize::Chat { id, op } => chat(store, docs, &id, op).await,
+        Organize::Project { id, op } => project(store, docs, &id, op).await,
     }
 }
 
@@ -47,17 +50,22 @@ fn action_of(op: ChatOp) -> Result<Option<ChatAction>, String> {
     }))
 }
 
-async fn chat(store: &dyn SessionStorePort, id: &str, op: ChatOp) -> Result<Organized, String> {
+async fn chat(
+    store: &dyn SessionStorePort,
+    docs: Option<&DocService>,
+    id: &str,
+    op: ChatOp,
+) -> Result<Organized, String> {
     let id = session_id(id)?;
     if let ChatOp::Promote(directory) = &op {
         let name = name_from_root(directory);
-        promote_chat(store, id, &name, directory)
+        promote_chat(store, docs, id, &name, directory)
             .await
             .map_err(shown)?;
         return Ok(Organized::Done);
     }
     let action = action_of(op)?.ok_or("nothing to do")?;
-    match chat_action(store, id, action).await.map_err(shown)? {
+    match chat_action(store, docs, id, action).await.map_err(shown)? {
         ChatDone::Changed => Ok(Organized::Done),
         ChatDone::Branched(branch) => {
             let stored = store.load(branch).await.map_err(shown)?;
@@ -71,6 +79,7 @@ async fn chat(store: &dyn SessionStorePort, id: &str, op: ChatOp) -> Result<Orga
 
 async fn project(
     store: &dyn SessionStorePort,
+    docs: Option<&DocService>,
     id: &str,
     op: ProjectOp,
 ) -> Result<Organized, String> {
@@ -86,7 +95,10 @@ async fn project(
         ProjectOp::Archive(archived) => ProjectAction::Archive(archived),
         ProjectOp::Delete => ProjectAction::Delete,
     };
-    match project_action(store, found, action).await.map_err(shown)? {
+    match project_action(store, docs, found, action)
+        .await
+        .map_err(shown)?
+    {
         ProjectDone::Updated(_) => Ok(Organized::Done),
         ProjectDone::Deleted { chats_freed } => Ok(Organized::Freed(chats_freed)),
     }
@@ -132,7 +144,7 @@ mod tests {
     async fn one_project() -> (InMemorySessionStore, String, String) {
         let (store, id) = one_chat().await;
         let promoted = chat(&id, ChatOp::Promote("/w/api".into()));
-        run(&store, promoted).await.unwrap();
+        run(&store, None, promoted).await.unwrap();
         let project = store.projects().await.unwrap()[0].id.to_string();
         (store, id, project)
     }
@@ -150,7 +162,7 @@ mod tests {
         let (store, id) = one_chat().await;
         let mut log = vec![state(&store).await];
         // New project from the chat: named after its directory.
-        let promoted = run(&store, chat(&id, ChatOp::Promote("/w/api".into()))).await;
+        let promoted = run(&store, None, chat(&id, ChatOp::Promote("/w/api".into()))).await;
         log.push(format!("{promoted:?} {}", state(&store).await));
         // Archive and restore; a branch lands in the same project.
         for op in [
@@ -158,18 +170,18 @@ mod tests {
             ChatOp::Archive(false),
             ChatOp::Pin(true),
         ] {
-            run(&store, chat(&id, op)).await.unwrap();
+            run(&store, None, chat(&id, op)).await.unwrap();
             log.push(state(&store).await);
         }
-        let Ok(Organized::Branch { root, .. }) = run(&store, chat(&id, ChatOp::Branch)).await
+        let Ok(Organized::Branch { root, .. }) = run(&store, None, chat(&id, ChatOp::Branch)).await
         else {
             panic!("a branch is reported");
         };
         log.push(format!("branch opens in {root}"));
         log.push(state(&store).await);
         // What cannot be done says why.
-        let unsaved = run(&store, chat("not an id", ChatOp::Branch)).await;
-        let gone = run(&store, chat(&id, ChatOp::Move(Some("nope".into())))).await;
+        let unsaved = run(&store, None, chat("not an id", ChatOp::Branch)).await;
+        let gone = run(&store, None, chat(&id, ChatOp::Move(Some("nope".into())))).await;
         log.extend([format!("{unsaved:?}"), format!("{gone:?}")]);
 
         assert_eq!(log.len(), 9);
@@ -206,7 +218,7 @@ mod tests {
             on(ProjectOp::Pin(true)),
         ];
         for step in steps {
-            let done = run(&store, step).await;
+            let done = run(&store, None, step).await;
             log.push(format!("{done:?} {}", state(&store).await));
         }
         assert_eq!(

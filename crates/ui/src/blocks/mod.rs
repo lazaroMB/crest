@@ -98,6 +98,21 @@ pub trait BlockView: Sync + 'static {
         Vec::new()
     }
 
+    /// The markdown "Add to doc" puts in a document for `kind`, or `None`
+    /// when the kind cannot be added (the entries are then not offered).
+    /// Defaults to [`domain::doc::block_markdown`] without a picture (a
+    /// chart goes in as its table here; [`doc_content`] pictures it),
+    /// and for the rich kinds the domain leaves out to the markdown of
+    /// their copy forms ([`markdown_from_formats`]); a kind with neither
+    /// is not offered.
+    fn doc_markdown(&self, kind: &BlockKind) -> Option<String> {
+        if is_chrome(kind) {
+            return None;
+        }
+        domain::doc::block_markdown(kind, None)
+            .or_else(|| markdown_from_formats(&self.copy_formats(kind)))
+    }
+
     /// Whether the kind has an alternate view (a chart's table, a
     /// document's source) toggled with `t`.
     fn has_alt_view(&self) -> bool {
@@ -107,6 +122,14 @@ pub trait BlockView: Sync + 'static {
     /// Whether a new block of this kind starts expanded.
     fn expanded_by_default(&self, _kind: &BlockKind) -> bool {
         true
+    }
+
+    /// How far from the block's right edge, in pixels, the timeline's copy
+    /// bar must sit so it does not cover a caption the block draws at the
+    /// right of its header (a chart's "bar chart · t: table"). Zero for
+    /// blocks without one.
+    fn bar_inset(&self, _entry: &TimelineEntry) -> f32 {
+        0.0
     }
 
     /// Whether the block draws its own copy buttons, so the timeline
@@ -168,6 +191,97 @@ pub static VIEWS: &[&dyn BlockView] = &[
 
 /// The kinds `timeline/render.rs` draws itself, so they have no view.
 pub const TIMELINE_DRAWN: &[BlockTag] = &[BlockTag::Text, BlockTag::ToolCall, BlockTag::Error];
+
+/// The markdown "Add to doc" adds for `kind`: its view's
+/// [`BlockView::doc_markdown`] (the domain's markdown, else the one built
+/// from its copy forms), or the domain's for the kinds the timeline draws
+/// itself (text, tool calls, errors). `None` for kinds that are not document
+/// content (thinking, tool calls, stage headers, forms, plugin blocks).
+pub fn doc_markdown(kind: &BlockKind) -> Option<String> {
+    if is_chrome(kind) {
+        return None;
+    }
+    match view(kind.tag()) {
+        Some(view) => view.doc_markdown(kind),
+        None => domain::doc::block_markdown(kind, None),
+    }
+}
+
+/// Width in px of the picture of a chart added to a doc.
+const DOC_CHART_WIDTH: f32 = 720.0;
+/// Device pixels per px of that picture.
+const DOC_CHART_SCALE: f32 = 2.0;
+
+/// The markdown of an "Add to doc" and the picture it refers to.
+pub type DocContent = (String, Option<(String, Vec<u8>)>);
+
+/// What "Add to doc" adds for block `id` of `kind`: its [`doc_markdown`]
+/// and the picture it refers to as `(file name, PNG bytes)`. A chart is its
+/// picture (`![title](assets/<slug>-<id>.png)`); when the picture cannot be
+/// drawn (a pie, an invalid chart) it goes in as its table, with no image.
+pub fn doc_content(kind: &BlockKind, id: domain::block::BlockId) -> Option<DocContent> {
+    if let BlockKind::Chart(spec) = kind
+        && let Ok(png) = chart::svg::to_png(spec, DOC_CHART_WIDTH, DOC_CHART_SCALE)
+    {
+        let title = if spec.title.trim().is_empty() {
+            "chart"
+        } else {
+            spec.title.trim()
+        };
+        let slug: String = domain::doc::file_stem(title).chars().take(40).collect();
+        let short: String = id
+            .to_string()
+            .chars()
+            .filter(|c| *c != '-')
+            .take(8)
+            .collect();
+        let name = format!("{}-{short}.png", slug.trim_end_matches('-'));
+        let markdown = domain::doc::block_markdown(kind, Some(&name))?;
+        return Some((markdown, Some((name, png))));
+    }
+    doc_markdown(kind).map(|markdown| (markdown, None))
+}
+
+/// The kinds that are conversation machinery, never document content.
+fn is_chrome(kind: &BlockKind) -> bool {
+    matches!(
+        kind,
+        BlockKind::Thinking { .. }
+            | BlockKind::ToolCall { .. }
+            | BlockKind::StageHeader { .. }
+            | BlockKind::Form(_)
+            | BlockKind::Custom { .. }
+    )
+}
+
+/// Markdown for a doc built from the copy forms of a block, the first that
+/// applies: `markdown` as is, `mermaid` and `dot` as fences of that name,
+/// `csv` and `tsv` as a markdown table, then the first other form as a
+/// fence whose info string is its key. `None` without forms.
+pub fn markdown_from_formats(formats: &[CopyFormat]) -> Option<String> {
+    let by_key = |key: &str| {
+        formats
+            .iter()
+            .find(|f| f.key == key && !f.text.trim().is_empty())
+    };
+    if let Some(f) = by_key("markdown") {
+        return Some(f.text.clone());
+    }
+    for key in ["mermaid", "dot"] {
+        if let Some(f) = by_key(key) {
+            return Some(domain::doc::fenced(f.text.trim_end_matches('\n'), key));
+        }
+    }
+    for (key, sep) in [("csv", ','), ("tsv", '\t')] {
+        let table =
+            by_key(key).and_then(|f| domain::doc::delimited_to_markdown_table(&f.text, sep));
+        if table.is_some() {
+            return table;
+        }
+    }
+    let f = formats.iter().find(|f| !f.text.trim().is_empty())?;
+    Some(domain::doc::fenced(f.text.trim_end_matches('\n'), f.key))
+}
 
 /// The view of the kind `tag`, or `None` for [`TIMELINE_DRAWN`] kinds.
 pub fn view(tag: BlockTag) -> Option<&'static dyn BlockView> {
@@ -400,6 +514,92 @@ mod tests {
             let drawn = TIMELINE_DRAWN.contains(&tag);
             assert_eq!(views + usize::from(drawn), 1, "{tag:?}");
         }
+    }
+
+    fn doc_md(kind: BlockKind) -> Option<String> {
+        doc_markdown(&kind)
+    }
+
+    #[test]
+    fn a_chart_is_added_as_its_picture_and_a_pie_as_its_table() {
+        use domain::block::{ChartKind, ChartSpec, Series};
+        let spec = |kind| ChartSpec {
+            title: "Lines by Crate!".into(),
+            kind,
+            labels: vec!["a".into(), "b".into()],
+            series: vec![Series {
+                name: "n".into(),
+                values: vec![1.0, 2.0],
+            }],
+        };
+        let id = domain::block::BlockId::new();
+        let (markdown, image) = doc_content(&BlockKind::Chart(spec(ChartKind::Bar)), id).unwrap();
+        let (name, png) = image.expect("a picture");
+        assert!(
+            name.starts_with("lines-by-crate-") && name.ends_with(".png"),
+            "{name}"
+        );
+        assert!(
+            name.chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '.')
+        );
+        assert_eq!(markdown, format!("![Lines by Crate!](assets/{name})"));
+        assert_eq!(&png[..4], b"\x89PNG");
+        let (markdown, image) = doc_content(&BlockKind::Chart(spec(ChartKind::Pie)), id).unwrap();
+        assert!(image.is_none());
+        assert!(markdown.contains("**Lines by Crate!**"), "{markdown}");
+    }
+
+    #[test]
+    fn rich_blocks_and_diagrams_can_be_added_to_a_doc() {
+        use domain::block::{MermaidSpec, ToolStatus};
+        let mermaid = doc_md(BlockKind::Mermaid(MermaidSpec {
+            source: "flowchart LR\n a-->b".into(),
+            title: None,
+        }))
+        .unwrap();
+        assert!(mermaid.starts_with("```mermaid\n"), "{mermaid}");
+
+        let formats = vec![
+            CopyFormat::new("json", "JSON", "{}".into()),
+            CopyFormat::new("csv", "CSV", "a,b\n1,\"x,y\"".into()),
+        ];
+        assert_eq!(
+            markdown_from_formats(&formats).as_deref(),
+            Some("| a | b |\n| ---: | --- |\n| 1 | x,y |")
+        );
+        let formats = vec![
+            CopyFormat::new("json", "JSON", "{}".into()),
+            CopyFormat::new("dot", "DOT", "digraph {}\n".into()),
+        ];
+        assert_eq!(
+            markdown_from_formats(&formats).as_deref(),
+            Some("```dot\ndigraph {}\n```")
+        );
+        let formats = vec![CopyFormat::new("json", "JSON", "{}".into())];
+        assert_eq!(
+            markdown_from_formats(&formats).as_deref(),
+            Some("```json\n{}\n```")
+        );
+        assert_eq!(markdown_from_formats(&[]), None);
+
+        // Every kind with a view and a copy form is offered, whichever view.
+        let tool = BlockKind::ToolCall {
+            tool_use_id: "t".into(),
+            name: "read".into(),
+            summary: "s".into(),
+            input: serde_json::Value::Null,
+            status: ToolStatus::Succeeded,
+            output: None,
+        };
+        assert_eq!(doc_md(tool), None);
+        assert_eq!(
+            doc_md(BlockKind::Thinking {
+                text: "hmm".into(),
+                collapsed: true,
+            }),
+            None
+        );
     }
 
     #[gpui::test]

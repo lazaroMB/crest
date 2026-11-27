@@ -17,6 +17,8 @@
 
 pub mod diagram;
 pub mod paint;
+pub mod raster;
+pub mod usecase;
 pub mod wrap;
 
 use std::cell::Cell;
@@ -41,6 +43,9 @@ use paint::Camera;
 /// Viewport height limits.
 const MIN_HEIGHT: f32 = 140.0;
 const MAX_HEIGHT: f32 = 640.0;
+/// Height limits of a diagram in a doc page (the mock caps it at 360 px).
+const PLAIN_MIN_HEIGHT: f32 = 60.0;
+const PLAIN_MAX_HEIGHT: f32 = 360.0;
 /// Zoom step of the keys, the buttons and one wheel notch.
 const ZOOM_STEP: f32 = 1.25;
 /// Characters of a source shown in the error view; garbage can be huge.
@@ -59,6 +64,9 @@ pub struct MermaidView {
     /// the default camera when it lands.
     reset_camera: bool,
     show_source: bool,
+    /// Only the drawing in a quiet box: no zoom controls, no pan or zoom
+    /// (the doc page).
+    plain: bool,
     camera: Camera,
     /// Last mouse position of a drag in progress.
     drag: Option<gpui::Point<Pixels>>,
@@ -77,6 +85,7 @@ impl MermaidView {
             layout: None,
             reset_camera: false,
             show_source: false,
+            plain: false,
             camera: Camera::default(),
             drag: None,
             bounds: Rc::default(),
@@ -308,6 +317,12 @@ impl MermaidView {
         } else {
             natural
         };
+        if self.plain {
+            // Never taller than the cap: a wide pane shrinks the drawing
+            // (see the zoom in `render_diagram`) instead of cutting it.
+            let fitted = fitted.min(PLAIN_MAX_HEIGHT);
+            return fitted.clamp(PLAIN_MIN_HEIGHT, PLAIN_MAX_HEIGHT);
+        }
         fitted.clamp(MIN_HEIGHT, MAX_HEIGHT)
     }
 
@@ -317,6 +332,7 @@ impl MermaidView {
         let family = theme.mono_font_family.clone();
         let radius = theme.radius;
         let (painted, bounds_cell, camera) = (diagram.clone(), self.bounds.clone(), self.camera);
+        let plain = self.plain;
         let surface = canvas(
             move |bounds, window, _| {
                 // The height follows the width: draw again when it changes.
@@ -325,10 +341,33 @@ impl MermaidView {
                 }
             },
             move |bounds, (), window, cx| {
+                let mut camera = camera;
+                if plain {
+                    // Fit the box in both directions, centered.
+                    let size = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+                    let fit = Camera::fit(&painted, size);
+                    let tall = size.1 / (painted.height + painted.padding * 2.0);
+                    camera.zoom = (tall / fit).min(1.0);
+                }
                 paint::paint(&painted, camera, bounds, &family, window, cx);
             },
         )
         .size_full();
+        if self.plain {
+            let (bg, border) = (cx.theme().muted, cx.theme().border);
+            return div()
+                .id("mermaid-viewport")
+                .relative()
+                .w_full()
+                .h(px(height))
+                .overflow_hidden()
+                .rounded(radius)
+                .bg(bg)
+                .border_1()
+                .border_color(border)
+                .child(surface)
+                .into_any_element();
+        }
         div()
             .id("mermaid-viewport")
             .track_focus(&self.focus)
@@ -454,6 +493,12 @@ impl BlockView for View {
         render(entry, window, cx)
     }
 
+    fn bar_inset(&self, entry: &TimelineEntry) -> f32 {
+        // The caption (text_xs, about 6.5 px a character), the frame's
+        // padding and a gap; a valid diagram's caption is the longest.
+        hint(false, entry.alt_view).chars().count() as f32 * 6.5 + 12. + 12.
+    }
+
     fn has_alt_view(&self) -> bool {
         true
     }
@@ -463,6 +508,15 @@ impl BlockView for View {
             return Vec::new();
         };
         vec![CopyFormat::new("source", "source", spec.source.clone())]
+    }
+}
+
+/// The caption at the right of the block's header.
+fn hint(invalid: bool, show_source: bool) -> &'static str {
+    match (invalid, show_source) {
+        (true, _) => "diagram · invalid",
+        (false, true) => "diagram · source · t: diagram",
+        (false, false) => "diagram · drag to pan · ctrl+wheel, +/- to zoom · t: source",
     }
 }
 
@@ -480,11 +534,7 @@ pub fn render_source(
     let view = source_view(id, source, show_source, rev, window, cx);
     let _theme = cx.theme();
     let state = view.read(cx);
-    let hint = match (state.error(), show_source) {
-        (Some(_), _) => "diagram · invalid",
-        (None, true) => "diagram · source · t: diagram",
-        (None, false) => "diagram · drag to pan · ctrl+wheel, +/- to zoom · t: source",
-    };
+    let hint = hint(state.error().is_some(), show_source);
     let title = title.filter(|t| !t.trim().is_empty()).unwrap_or("Mermaid");
     v_flex()
         .gap_1()

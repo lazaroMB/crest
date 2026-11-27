@@ -10,6 +10,7 @@ use gpui::{Context, Window};
 
 use super::{Session, SessionEvent, TurnEnd, TurnRequest};
 use crate::activity::WorkKind;
+use crate::input::DocChip;
 
 /// A prompt waiting for the session to be free.
 #[derive(Debug, Clone)]
@@ -17,6 +18,8 @@ pub(super) struct Queued {
     prompt: String,
     role: Option<ModelRole>,
     images: Vec<ImageAttachment>,
+    /// The documents the prompt names, sent as context.
+    chips: Vec<DocChip>,
 }
 
 impl Queued {
@@ -66,11 +69,25 @@ impl Session {
         images: Vec<ImageAttachment>,
         cx: &mut Context<Self>,
     ) {
+        self.submit_full(prompt, role, images, Vec::new(), cx);
+    }
+
+    /// [`Self::submit_with`] with the documents the prompt names (the chips
+    /// of `/doc use` and "Ask agent"), which go to the agent as context.
+    pub fn submit_full(
+        &mut self,
+        prompt: String,
+        role: Option<ModelRole>,
+        images: Vec<ImageAttachment>,
+        chips: Vec<DocChip>,
+        cx: &mut Context<Self>,
+    ) {
         if self.is_busy() {
             self.queue.push_back(Queued {
                 prompt,
                 role,
                 images,
+                chips,
             });
             self.sync_activity(cx);
             return;
@@ -83,6 +100,8 @@ impl Session {
             model_override: self.model_override.take(),
             role,
             cancel,
+            context: chips.iter().map(DocChip::context).collect(),
+            doc_title: chips.first().map(|chip| chip.title().to_owned()),
         });
         self.turn = Some(cx.spawn(async move |this, cx| {
             let end = turn.await;
@@ -119,7 +138,7 @@ impl Session {
         if !self.is_busy()
             && let Some(next) = self.queue.pop_front()
         {
-            self.submit_with(next.prompt, next.role, next.images, cx);
+            self.submit_full(next.prompt, next.role, next.images, next.chips, cx);
         }
         self.sync_activity(cx);
     }
@@ -158,6 +177,7 @@ impl Session {
         self.input.update(cx, |input, cx| {
             input.set_text(&queued.prompt, window, cx);
             input.restore_images(queued.images, cx);
+            input.restore_doc_chips(queued.chips, cx);
         });
         self.sync_activity(cx);
     }

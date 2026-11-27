@@ -44,6 +44,7 @@ use crate::chats::{
     Catalog, ChatsCommand, ChatsEvent, ChatsPanel, Organize, Organized, PickFor, SessionOpen,
     SidebarWidth,
 };
+use crate::docs::DocView;
 use crate::project_picker::{ProjectPickerEvent, ProjectPickerView};
 use crate::session::{Session, SessionEvent, SessionParts};
 
@@ -98,6 +99,12 @@ pub trait ProjectOpener: Send + Sync {
         let _ = change;
         futures::future::ready(Err("this window cannot change chats".into())).boxed()
     }
+
+    /// The chats' documents, over the store the sidebar uses; the default
+    /// has none.
+    fn docs(&self) -> Option<Arc<application_core::usecases::docs::DocService>> {
+        None
+    }
 }
 
 /// A session with its root view, shown or parked.
@@ -131,6 +138,14 @@ pub struct Workbench {
     back: Option<Live>,
     /// What the picker is open for, when a menu row asked for it.
     pending_pick: Option<PickFor>,
+    /// A document to open once its chat shows: the chat, the document and
+    /// the view (a click in the Docs section, `/doc open` of another chat).
+    pending_doc: Option<(String, String, DocView)>,
+    /// How the document panel showed last: the next chat opens its latest
+    /// document in it.
+    doc_view: DocView,
+    /// Reloads the sidebar when a document changes.
+    _docs: Option<gpui::Task<()>>,
     /// The sidebar, which holds its own width (`panel.chats` cycles it).
     chats: Entity<ChatsPanel>,
     focus_handle: FocusHandle,
@@ -158,6 +173,9 @@ impl Workbench {
             parked: HashMap::new(),
             back: None,
             pending_pick: None,
+            pending_doc: None,
+            doc_view: DocView::Hidden,
+            _docs: None,
             chats,
             focus_handle: cx.focus_handle(),
             _chats: subscription,
@@ -449,6 +467,9 @@ impl Workbench {
         let dir = parts.workspace_dir.clone().unwrap_or(dir);
         let (root, session) = crate::session::open(parts, window, cx);
         let subscription = cx.subscribe_in(&session, window, Self::on_session);
+        let view = self.doc_view;
+        session.update(cx, |session, cx| session.restore_doc_view(view, cx));
+        self.watch_docs(cx);
         self.show_live(
             Live {
                 root,
@@ -480,6 +501,7 @@ impl Workbench {
         self.chats
             .update(cx, |chats, cx| chats.set_current(root, project, id, cx));
         self.content = Content::Session(live);
+        self.open_pending_doc(cx);
         self.sync_banner(cx);
         cx.notify();
     }
@@ -550,6 +572,25 @@ impl Workbench {
                 }
             }
             SessionEvent::Tour => cx.notify(),
+            SessionEvent::DocView(view) => {
+                if self.session() == Some(session) {
+                    self.doc_view = *view;
+                    self.sync_doc_selection(cx);
+                }
+            }
+            SessionEvent::DocsChanged => {
+                self.reload_chats(cx);
+                self.sync_doc_selection(cx);
+            }
+            SessionEvent::OpenDoc {
+                session_id,
+                doc_id,
+                view,
+            } => {
+                if self.session() == Some(session) {
+                    self.open_doc_of(session_id.clone(), doc_id.clone(), *view, window, cx);
+                }
+            }
             SessionEvent::Mcp(summary) => {
                 // The dock follows the shown project's servers.
                 if self.session() == Some(session) {
@@ -597,6 +638,11 @@ impl Workbench {
                 self.organize(Organize::Project { id, op }, window, cx);
             }
             ChatsEvent::Pick(pick) => self.pick_directory(pick, window, cx),
+            ChatsEvent::NewDoc => {
+                if let Some(session) = self.session().cloned() {
+                    session.update(cx, |session, cx| session.new_doc_here(cx));
+                }
+            }
             ChatsEvent::Mcp => {
                 if let Some(session) = self.session().cloned() {
                     session.update(cx, |session, cx| {
@@ -607,6 +653,19 @@ impl Workbench {
             ChatsEvent::Dismissed => {
                 if let Some(session) = self.session().cloned() {
                     session.update(cx, |session, cx| session.focus_input(window, cx));
+                }
+            }
+            ChatsEvent::OpenDoc {
+                root,
+                chat_id,
+                doc_id,
+            } => {
+                // The sidebar keeps its state: only the chat and the doc change.
+                self.pending_doc = Some((chat_id.clone(), doc_id, DocView::Alone));
+                if open_id.as_deref() == Some(chat_id.as_str()) {
+                    self.open_pending_doc(cx);
+                } else {
+                    self.switch_chat(PathBuf::from(root), SessionOpen::Id(chat_id), window, cx);
                 }
             }
         }
@@ -668,6 +727,70 @@ impl Workbench {
             .update(cx, |session, cx| session.set_shown(false, window, cx));
         self.parked.insert(id, live);
         true
+    }
+
+    /// Opens the document `doc_id` of the chat `session_id` in `view`: now
+    /// when that chat is open, else after opening it.
+    fn open_doc_of(
+        &mut self,
+        session_id: String,
+        doc_id: String,
+        view: DocView,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.pending_doc = Some((session_id.clone(), doc_id, view));
+        if self.open_id().as_deref() == Some(session_id.as_str()) {
+            self.open_pending_doc(cx);
+            return;
+        }
+        let root = self.chats.read(cx).root_of(&session_id).unwrap_or_default();
+        self.switch_chat(PathBuf::from(root), SessionOpen::Id(session_id), window, cx);
+    }
+
+    /// Highlights in the sidebar the document the panel shows.
+    fn sync_doc_selection(&mut self, cx: &mut Context<Self>) {
+        let shown = self
+            .session()
+            .and_then(|session| session.read(cx).shown_doc_id(cx));
+        self.chats
+            .update(cx, |chats, cx| chats.set_current_doc(shown, cx));
+    }
+
+    /// Shows the pending document if its chat is the one on screen.
+    fn open_pending_doc(&mut self, cx: &mut Context<Self>) {
+        let Some((chat, _, _)) = &self.pending_doc else {
+            return;
+        };
+        if self.open_id().as_deref() != Some(chat.as_str()) {
+            return;
+        }
+        let Some((_, doc, view)) = self.pending_doc.take() else {
+            return;
+        };
+        if let Some(session) = self.session().cloned() {
+            session.update(cx, |session, cx| session.show_doc(&doc, view, cx));
+        }
+    }
+
+    /// Reloads the sidebar whenever a document changes, once the service
+    /// exists (its database is made with the first chat).
+    fn watch_docs(&mut self, cx: &mut Context<Self>) {
+        use futures::StreamExt as _;
+        if self._docs.is_some() {
+            return;
+        }
+        let Some(docs) = self.opener.docs() else {
+            return;
+        };
+        let mut changes = docs.changes();
+        self._docs = Some(cx.spawn(async move |this, cx| {
+            while changes.next().await.is_some() {
+                if this.update(cx, |this, cx| this.reload_chats(cx)).is_err() {
+                    break;
+                }
+            }
+        }));
     }
 
     fn reload_chats(&mut self, cx: &mut Context<Self>) {
@@ -841,6 +964,8 @@ mod tests {
         news: Mutex<usize>,
         /// Titles saved by `rename_chat`, by id.
         titles: Mutex<HashMap<String, String>>,
+        /// The documents the sidebar lists.
+        docs: Vec<crate::chats::DocEntry>,
     }
 
     impl ProjectOpener for Opener {
@@ -923,6 +1048,7 @@ mod tests {
                 }],
                 chats: Vec::new(),
                 archived: crate::chats::Archive::default(),
+                docs: self.docs.clone(),
             })
             .boxed()
         }
@@ -968,11 +1094,20 @@ mod tests {
     pub(super) fn workbench(
         cx: &mut TestAppContext,
     ) -> (Entity<Workbench>, &mut VisualTestContext) {
+        workbench_with_docs(Vec::new(), cx)
+    }
+
+    /// [`workbench`] whose sidebar lists `docs`.
+    fn workbench_with_docs(
+        docs: Vec<crate::chats::DocEntry>,
+        cx: &mut TestAppContext,
+    ) -> (Entity<Workbench>, &mut VisualTestContext) {
         cx.update(gpui_component::init);
         let opener = Arc::new(Opener {
             opened: Mutex::new(Vec::new()),
             news: Mutex::new(0),
             titles: Mutex::new(HashMap::new()),
+            docs,
         });
         let (view, cx) =
             cx.add_window_view(|window, cx| Workbench::picker(opener, None, window, cx));
@@ -1318,6 +1453,49 @@ mod tests {
         cx.update(|window, cx| crate::chats::list_has_focus(window, cx))
     }
 
+    #[gpui::test]
+    fn a_doc_in_the_sidebar_opens_its_chat_and_the_doc_without_moving_the_sidebar(
+        cx: &mut TestAppContext,
+    ) {
+        let doc_id = "7d444840-9dc0-41e0-8e0e-3a8a1f2f4c10";
+        let docs = vec![crate::chats::DocEntry {
+            id: doc_id.into(),
+            title: "Plan".into(),
+            chat_id: "second".into(),
+            chat_title: "second".into(),
+            updated_at: 5,
+        }];
+        let (view, cx) = workbench_with_docs(docs, cx);
+        open_full(&view, "/home/u/proj", cx);
+        assert_eq!(shown_id(&view, cx).as_deref(), Some("latest"));
+        draw(&view, cx);
+        assert!(cx.debug_bounds("chats-doc-0").is_some(), "the Docs section");
+        assert!(
+            cx.debug_bounds("chats-docs").is_some(),
+            "a count on the chat"
+        );
+        let width = |cx: &mut VisualTestContext| view.read_with(cx, |view, cx| view.sidebar(cx));
+        let before = width(cx);
+        let row = cx.debug_bounds("chats-doc-0").expect("the doc row");
+        cx.simulate_click(row.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        assert_eq!(shown_id(&view, cx).as_deref(), Some("second"));
+        assert_eq!(width(cx), before, "the sidebar keeps its state");
+        // The doc went to the new session (this one has no store to show it).
+        view.read_with(cx, |view, _| assert!(view.pending_doc.is_none()));
+        let session = shown(&view, cx);
+        session.read_with(cx, |s, cx| {
+            let notice = s
+                .status()
+                .read(cx)
+                .state()
+                .notice(std::time::Instant::now());
+            assert_eq!(
+                notice.map(|n| n.message.clone()).as_deref(),
+                Some("documents are not available in this window")
+            );
+        });
+    }
     #[gpui::test]
     fn the_chat_keys_switch_create_and_hide_chats(cx: &mut TestAppContext) {
         let (view, cx) = workbench(cx);
