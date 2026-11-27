@@ -39,6 +39,19 @@
     color: var(--accent);
   }
 
+  &__doc {
+    display: inline-flex;
+    align-items: center;
+    max-width: 240px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--muted-fg);
+
+    &:hover {
+      color: var(--accent);
+    }
+  }
+
   &__notice,
   &__git {
     overflow: hidden;

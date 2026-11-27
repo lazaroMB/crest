@@ -6,6 +6,7 @@ export const state = {
   chat: null, // { id, projectId, title, blocks }
   status: null, // { model, mode, cost, git, workspace }
   commands: [],
+  docs: [], // every doc, each owned by a chat (src/docs.js)
   notice: null, // { id, level, text } on the status bar, gone after 6 s
   notices: [], // errors and warnings kept until dismissed
   toast: null, // { id, level, text } in the corner, gone after 3 s
@@ -53,6 +54,17 @@ export const state = {
       results: {}, // server name -> { ok, text } of its last test or login
       revealed: {}, // "server/key" -> true when a secret value is shown
     },
+
+    // Docs (src/components/doc-panel/).
+    docView: "hidden", // hidden | split | doc: the panel off, beside the chat, or in its place (the prompt stays)
+    docId: null, // the doc in the panel; one of the open chat's docs
+    docEditing: false, // the panel shows the markdown source instead of the rendered doc
+    diagramEdit: null, // { mode: "edit", index } | { mode: "new", at }: the panel is the diagram editor (code and preview)
+    docSplit: 0.5, // the panel's share of the width in split view
+    docMenu: null, // "export" | "switch": the panel's open menu
+    blockMenu: null, // the block id whose copy menu is open
+    selectionBar: null, // { source: "chat" | "doc", text, x, y }: the floating bar over a text selection
+    promptContext: [], // [{ id, kind: "doc-selection", docId, text }]: passages passed to the agent with the next prompt
   },
 };
 

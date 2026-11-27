@@ -3,6 +3,7 @@
 
 import { h } from "../../lib/h.js";
 import { setUi } from "../../store.js";
+import { setDocView } from "../../doc-actions.js";
 import "./mock-bar.scss";
 
 const WIDTHS = ["fill", 1440, 1024, 720];
@@ -30,7 +31,10 @@ export function MockBar(state) {
       ["full", "strip", "hidden"].map((s) => toggle(s, ui.sidebar === s, () => setUi({ sidebar: s }))),
     ]),
     h("span", { class: "mockbar__group" }, "panels", [toggle("tree", ui.treeShown, () => setUi({ treeShown: !ui.treeShown }))]),
-    h("span", { class: "mockbar__hint" }, "try: fix the bug · rename add · /research … · is it faster · fail"),
+    h("span", { class: "mockbar__group" }, "doc", [
+      ["hidden", "split", "doc"].map((v) => toggle(v, ui.docView === v, () => setDocView(v))),
+    ]),
+    h("span", { class: "mockbar__hint" }, "try: fix the bug · rename add · /research … · is it faster · fail · write a doc summary"),
     h("button", { class: "mockbar__button", onClick: () => setUi({ mockBar: false }) }, "hide (Ctrl+Shift+M)"),
   );
 }

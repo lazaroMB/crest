@@ -31,6 +31,41 @@
     display: contents;
   }
 
+  &__context {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+
+    &:not(:empty) {
+      padding-top: 6px;
+    }
+  }
+
+  &__passage {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 100%;
+    height: 22px;
+    padding: 0 2px 0 8px;
+    border-radius: 11px;
+    font-size: var(--text-xs);
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+  }
+
+  &__passage-label {
+    flex: none;
+  }
+
+  &__passage-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-2);
+  }
+
   &__chip {
     flex: none;
     display: inline-flex;

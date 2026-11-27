@@ -5,7 +5,7 @@ import { Brand } from "../brand/brand.js";
 import "./welcome.scss";
 
 const KEYS = [
-  ["/", "commands: /research, /implement, /help…"],
+  ["/", "commands: /doc, /research, /implement, /help…"],
   ["!", "shell: ! cat ~/file"],
   ["<C-g>", "shortcuts: e tree · ff files · fg grep · m model · j/k blocks · h help"],
   ["<C-Tab>", "move the focus: prompt → timeline → tree"],

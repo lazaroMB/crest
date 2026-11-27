@@ -1,8 +1,8 @@
 // A bar chart, vertical ("bar") or horizontal ("hbar"), drawn with plain HTML
 // (crates/ui/src/blocks/chart/). `t` swaps it for the table behind it.
+// `view.menu` is its copy button (src/components/block-menu/), in the head.
 
 import { h } from "../../lib/h.js";
-import { copyChartImage } from "../../actions.js";
 import { Table } from "./table-block.js";
 import "./chart-block.scss";
 
@@ -100,11 +100,7 @@ export function ChartBlock(block, view) {
       h(
         "div",
         { class: "chart__actions" },
-        h(
-          "button",
-          { class: "chart__copy", title: "Copy chart as image", onClick: () => copyChartImage(root) },
-          "⧉ copy image",
-        ),
+        view.menu,
         h("span", { class: "chart__hint" }, hint),
       ),
     ),

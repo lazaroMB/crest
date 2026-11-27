@@ -5,6 +5,8 @@
 //   Ctrl+Tab / F6  move the focus: prompt → timeline → tree → chats
 //   Ctrl+G …       the leader: s sidebar full → strip → hidden · / search chats · n new chat
 //                  m chat mode (chat → research → deep) · e tree · O outline · p permission mode
+//                  d doc panel (hidden → split → doc only)
+//   /doc           the Docs commands: open, find, use, export…
 //   in the timeline: j/k ↑/↓ move · gg/G ends · o/Enter expand · t chart/table · y copy
 //   in an approval: y s p e n answer · ↑/↓ + Enter · Esc rejects
 //   Ctrl+G S       the MCP servers modal: ↑↓ server · Tab tabs · a e d t r l · Space on/off · Esc close
@@ -41,6 +43,7 @@ import {
   toggleMcpModal,
   toggleModeMenu,
 } from "./actions.js";
+import { closeDiagramEditor, cycleDocView, hideSelectionBar } from "./doc-actions.js";
 import { APPROVAL_OPTIONS } from "./components/approval-dialog/approval-dialog.js";
 import { setUi, state } from "./store.js";
 import { onKey } from "./visibility.js";
@@ -122,6 +125,7 @@ function onLeader(e) {
     m: cycleChatMode,
     n: () => newChat(null),
     S: toggleMcpModal,
+    d: cycleDocView,
   };
   (actions[e.key] ?? (() => notice("warning", `<C-g>${e.key} is not in the mock yet`)))();
 }
@@ -198,6 +202,9 @@ export function bindKeys(prompt) {
     }
 
     if (e.key === "Escape") {
+      if (state.ui.selectionBar) return hideSelectionBar();
+      if (state.ui.diagramEdit) return closeDiagramEditor();
+      if (state.ui.blockMenu || state.ui.docMenu) return setUi({ blockMenu: null, docMenu: null });
       if (state.ui.modeMenu) return toggleModeMenu(false);
       if (state.ui.infoOpen) return setUi({ infoOpen: false });
       if (state.ui.outlineOpen) return setUi({ outlineOpen: false });

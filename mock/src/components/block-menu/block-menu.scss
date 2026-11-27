@@ -1,0 +1,113 @@
+// A small floating menu: the block menu, the doc panel's menus.
+.popmenu {
+  position: absolute;
+  z-index: 8;
+  min-width: 220px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--popover-bg);
+  font-size: var(--text-sm);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.3);
+
+  &__label {
+    padding: 2px 6px;
+    font-size: var(--text-xs);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted-fg);
+  }
+
+  &__row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 4px 6px;
+    border-radius: var(--radius-sm);
+    text-align: left;
+    white-space: nowrap;
+    color: var(--foreground);
+
+    span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .icon {
+      color: var(--muted-fg);
+    }
+
+    &:hover {
+      background: var(--list-selected-bg);
+    }
+
+    &--on {
+      color: var(--accent);
+    }
+
+    &--danger {
+      color: var(--error);
+    }
+  }
+
+  &__sep {
+    margin: 4px 0;
+    border-top: 1px solid var(--border);
+  }
+}
+
+.block-menu {
+  position: relative;
+  display: inline-flex;
+  flex: none;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-xs);
+  color: var(--muted-fg);
+  background: var(--background);
+
+  &__main,
+  &__more {
+    display: flex;
+    align-items: center;
+    padding: 0 6px;
+    white-space: nowrap;
+
+    &:hover {
+      background: var(--muted-bg);
+      color: var(--foreground);
+    }
+  }
+
+  &__more {
+    padding: 0 3px;
+    border-left: 1px solid var(--border);
+  }
+
+  &--open &__more {
+    background: var(--muted-bg);
+    color: var(--foreground);
+  }
+
+  &__menu {
+    top: calc(100% + 4px);
+    right: 0;
+  }
+
+  // On blocks without a head of their own it floats at the top right, shown on hover.
+  &--overlay {
+    position: absolute;
+    top: 4px;
+    right: 8px;
+    z-index: 2;
+    visibility: hidden;
+  }
+}
+
+.tblock__inner:hover .block-menu--overlay,
+.tblock__inner--selected .block-menu--overlay,
+.block-menu--overlay.block-menu--open {
+  visibility: visible;
+}

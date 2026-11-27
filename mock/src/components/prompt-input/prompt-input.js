@@ -7,6 +7,9 @@
 // in research it sends "/research <text>", in deep research
 // "/research --deep <text>", the same lines a person can type. <C-g>m cycles it.
 //
+// A passage the person passed from the doc ("Ask agent") sits above the line
+// as a chip and goes with the next prompt.
+//
 // Enter sends, Shift+Enter adds a line, ↑ on an empty prompt brings back the
 // last one, and "/" opens the grouped command palette.
 //
@@ -15,6 +18,7 @@
 import { h } from "../../lib/h.js";
 import { runCommand, send, setChatMode, toggleModeMenu } from "../../actions.js";
 import { setUi } from "../../store.js";
+import { openDoc, referenceDoc, removePromptContext } from "../../doc-actions.js";
 import { palette } from "../../commands.js";
 import { CHAT_MODES, modeCommand, modeOf } from "../../modes.js";
 import { icon } from "../icons.js";
@@ -25,8 +29,13 @@ const KEYS_HINT = "  (/ for commands · <C-g>m mode · <C-g>ff files)";
 
 const MODE_ICON = { chat: "chat", research: "research", deep: "deep" };
 
-/** "/mode <ask|auto-edit|plan>" -> "/mode " ; "/clear" -> "/clear" */
-const completion = (usage) => usage.replace(/\s[<[].*$/, "").replace(/\s.*$/, "") + (/[<[]/.test(usage) ? " " : "");
+/** "/doc find <text>" -> "/doc find "; "/doc" -> "/doc"; "/open @<path>" -> "/open @". */
+const completion = (usage) => {
+  const at = usage.indexOf("@");
+  if (at !== -1) return usage.slice(0, at + 1);
+  const cut = usage.search(/\s[<[]/);
+  return cut === -1 ? usage : `${usage.slice(0, cut)} `;
+};
 
 export function mountPromptInput(root) {
   const plus = h("button", { class: "prompt__plus", title: "Mode and attachments", "aria-label": "Mode and attachments" }, icon("plus"));
@@ -35,10 +44,12 @@ export function mountPromptInput(root) {
   const textarea = h("textarea", { class: "prompt__text", rows: 1, spellcheck: "false" });
   const paletteSlot = h("div");
   const menuSlot = h("div");
+  const contextSlot = h("div", { class: "prompt__context" });
   root.classList.add("prompt");
-  root.append(menuSlot, paletteSlot, h("div", { class: "prompt__row" }, plus, chipSlot, glyph, textarea));
+  root.append(menuSlot, paletteSlot, contextSlot, h("div", { class: "prompt__row" }, plus, chipSlot, glyph, textarea));
 
   let commands = [];
+  let docs = [];
   let view = null;
   let openGroup = null;
   let selected = 0;
@@ -46,11 +57,13 @@ export function mountPromptInput(root) {
   let mode = "chat";
   let menuOpen = false;
   let menuIndex = 0;
+  let context = [];
   const history = [];
 
   const menuItems = () => [
     ...CHAT_MODES.map((m) => ({ kind: "mode", id: m.id, icon: MODE_ICON[m.id], label: m.label, hint: m.hint })),
     { kind: "insert", text: "@", icon: "file", label: "File from the workspace", hint: "@" },
+    { kind: "insert", text: "/doc", icon: "doc", label: "Document", hint: "/doc" },
     { kind: "insert", text: "/", icon: "slash", label: "Command", hint: "/" },
     { kind: "command", command: "/mcp", icon: "panel", label: "MCP servers", hint: "/mcp" },
   ];
@@ -61,7 +74,7 @@ export function mountPromptInput(root) {
   }
 
   function renderPalette() {
-    view = paletteHidden ? null : palette(commands, textarea.value, openGroup);
+    view = paletteHidden ? null : palette(commands, textarea.value, openGroup, docs);
     const count = view?.rows.length ?? 0;
     selected = Math.min(selected, Math.max(0, count - 1));
     paletteSlot.replaceChildren(view ? CommandPalette(view, selected, pick) : "");
@@ -111,9 +124,33 @@ export function mountPromptInput(root) {
     textarea.focus();
   }
 
+  /** The passages passed from the doc ("Ask agent"), each a chip the person can drop before sending. */
+  function renderContext(items) {
+    contextSlot.replaceChildren(
+      ...items.map((c) => {
+        const whole = c.kind === "doc";
+        const shown = (whole ? c.title : c.text).replace(/\s+/g, " ");
+        return h(
+          "span",
+          { class: "prompt__passage", title: whole ? c.title : c.text },
+          icon(whole ? "doc" : "agent", 12),
+          h("span", { class: "prompt__passage-label" }, whole ? "doc" : "from the doc"),
+          h("span", { class: "prompt__passage-text" }, whole ? shown : `“${shown.slice(0, 80)}${shown.length > 80 ? "…" : ""}”`),
+          h("button", { class: "prompt__chip-close", title: "Remove", "aria-label": "Remove", onClick: () => removePromptContext(c.id) }, icon("close", 10)),
+        );
+      }),
+    );
+    renderChip();
+  }
+
   function renderChip() {
     const m = modeOf(mode);
-    textarea.placeholder = m.placeholder + KEYS_HINT;
+    const asking = context.some((c) => c.kind === "doc-selection")
+      ? "What should the agent do with this passage? (e.g. make it shorter)"
+      : context.some((c) => c.kind === "doc")
+        ? "What should the agent do with this document?"
+        : "";
+    textarea.placeholder = asking || m.placeholder + KEYS_HINT;
     chipSlot.replaceChildren(
       mode === "chat"
         ? ""
@@ -138,7 +175,14 @@ export function mountPromptInput(root) {
       selected = 0;
       return renderPalette();
     }
-    const text = completion(view.rows[index].usage);
+    const row = view.rows[index];
+    if (row.inert) return;
+    if (row.docId) {
+      openGroup = null;
+      setValue("");
+      return row.docAction === "use" ? referenceDoc(row.docId) : openDoc(row.docId, "split");
+    }
+    const text = completion(row.usage);
     openGroup = null;
     if (text.endsWith(" ")) return setValue(text);
     setValue("");
@@ -210,9 +254,15 @@ export function mountPromptInput(root) {
     }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      if (paletteOpen && view.kind === "groups") return pick(selected);
-      const stillTyping = paletteOpen && textarea.value.trim() !== completion(view.rows[selected].usage).trim();
-      return stillTyping ? pick(selected) : submit();
+      if (!paletteOpen) return submit();
+      if (view.kind === "groups") return pick(selected);
+      const row = view.rows[selected];
+      if (row.docId || row.inert) return pick(selected);
+      const done = completion(row.usage).trim();
+      const typed = textarea.value.trim();
+      // An argument already started ("/doc new Notes") runs as typed. A shorter line completes.
+      const started = typed === done || typed.startsWith(`${done} `);
+      return started ? submit() : pick(selected);
     }
     if (e.key === "Backspace" && !textarea.value && mode !== "chat") {
       e.preventDefault();
@@ -235,6 +285,7 @@ export function mountPromptInput(root) {
     hasText: () => textarea.value.length > 0,
     update(state) {
       commands = state.commands;
+      docs = state.docs;
       glyph.classList.toggle("prompt__glyph--focused", state.ui.focus === "prompt");
       if (state.ui.chatMode !== mode) {
         mode = state.ui.chatMode;
@@ -243,6 +294,10 @@ export function mountPromptInput(root) {
       if (state.ui.modeMenu !== menuOpen) {
         menuOpen = state.ui.modeMenu;
         renderMenu();
+      }
+      if (state.ui.promptContext !== context) {
+        context = state.ui.promptContext;
+        renderContext(context);
       }
     },
   };

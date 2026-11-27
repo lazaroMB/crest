@@ -1,6 +1,9 @@
 // Scripted turns. A prompt picks one by its words (see pickScenario).
 //
 // Each scenario gets a `turn` with:
+//   prompt, context   what the person typed, and the doc passages sent with it
+//   doc()             the doc in the panel (else the chat's latest), or null
+//   writeDoc(doc)     create or change a doc of this chat; the panel follows it
 //   push(block)       add or replace a block in the timeline
 //   activity(...)     the line above the prompt ("⠋ Working · grep … · 3s")
 //   notice(level, s)  a status bar notice
@@ -9,6 +12,7 @@
 //   sleep(ms)         wait; throws Interrupted on Ctrl+C
 
 import { ADD_FIX_DIFF, EVIDENCE, FIX_REPLY, RENAME_DIFF, SLOWEST_TESTS, WELCH, diffBlock } from "./data.js";
+import { findSpan, titleFor } from "../src/docs.js";
 
 let seq = 0;
 const id = (prefix) => `${prefix}-${Date.now().toString(36)}-${seq++}`;
@@ -147,12 +151,72 @@ async function help(turn) {
   await think(turn, "This is the mock: list the scripted turns.");
   await say(
     turn,
-    "This is the **crest UI mock**: every turn is scripted by the mock server. A prompt picks a script by its words:\n\n- `fix`, `bug` or `negative`: grep, read, an edit to approve, tests and a chart.\n- `rename`: an edit to approve, then two more tools.\n- `/research <problem>`: five stages with their progress and a gate.\n- `faster`, `stats` or `t-test`: a computed card with its provenance.\n- `fail` or `error`: three retries in the status bar, then an error block.\n\n`Ctrl+C` interrupts any of them.",
+    "This is the **crest UI mock**: every turn is scripted by the mock server. A prompt picks a script by its words:\n\n- `fix`, `bug` or `negative`: grep, read, an edit to approve, tests and a chart.\n- `rename`: an edit to approve, then two more tools.\n- `/research <problem>`: five stages with their progress and a gate.\n- `faster`, `stats` or `t-test`: a computed card with its provenance.\n- `fail` or `error`: three retries in the status bar, then an error block.\n- `doc`, `document` or `summary`: the agent adds a section to the doc in the panel (or starts one). With a passage selected in the doc and sent to the agent, it rewrites that passage.\n\n`Ctrl+C` interrupts any of them.",
   );
 }
 
-export function pickScenario(prompt) {
+/** The scripted rewrite of a passage: shorter keeps the first sentence, otherwise sentences become a list. */
+function rewrite(text, prompt) {
+  const sentences = text.trim().split(/(?<=[.!?])\s+/).filter(Boolean);
+  if (/short|tight|concise|corto/.test(prompt)) return sentences[0];
+  if (sentences.length > 1) return sentences.map((s) => `- ${s.replace(/[.]$/, "")}`).join("\n");
+  return `**In short:** ${text.trim()}`;
+}
+
+/** Streams `markdown` into the doc a few words at a time, as `before + partial + after`. */
+async function streamIntoDoc(turn, doc, before, text, after) {
+  const words = text.split(/(?<=\s)/);
+  let shown = "";
+  for (let i = 0; i < words.length; i++) {
+    shown += words[i];
+    if (i % 4 === 0) {
+      turn.writeDoc({ id: doc.id, markdown: before + shown + after, agentEditing: true });
+      await turn.sleep(40);
+    }
+  }
+  return turn.writeDoc({ id: doc.id, markdown: before + text + after, agentEditing: false });
+}
+
+/** The agent edits the doc in the panel: the passage the person passed, or a new section at the end. */
+async function docEdit(turn) {
+  const prompt = turn.prompt;
+  const passage = turn.context.find((c) => c.kind === "doc-selection");
+  let doc = turn.doc();
+  if (!doc) {
+    const now = Date.now();
+    doc = turn.writeDoc({ id: `d-${now.toString(36)}`, chatId: turn.chatId, title: titleFor(turn.chatTitle), markdown: "", assets: {}, createdAt: now });
+  }
+  await think(turn, passage ? `Rewrite the passage the person selected in "${doc.title}".` : `Add a section to "${doc.title}".`);
+  await tool(turn, "read_doc", doc.title, 400);
+  const toolId = id("tool");
+  turn.activity("Working", `edit_doc ${doc.title}`);
+  turn.push({ id: toolId, kind: "tool", name: "edit_doc", summary: doc.title, status: "running" });
+
+  if (passage) {
+    const span = findSpan(doc.markdown, passage.text);
+    if (!span) {
+      turn.push({ id: toolId, kind: "tool", name: "edit_doc", summary: doc.title, status: "failed", output: "the passage is no longer in the doc" });
+      return say(turn, `I couldn't find that passage in **${doc.title}** anymore; it may have changed since you selected it.`);
+    }
+    const replacement = rewrite(passage.text, prompt.toLowerCase());
+    await streamIntoDoc(turn, doc, doc.markdown.slice(0, span[0]), replacement, doc.markdown.slice(span[1]));
+    turn.push({ id: toolId, kind: "tool", name: "edit_doc", summary: doc.title, status: "done" });
+    turn.spend(0.0042);
+    return say(turn, `Rewrote the selected passage in **${doc.title}**. Select it again and tell me if you want it shorter or as prose.`);
+  }
+
+  const section = `## Summary\n\nThis doc collects what came out of the chat "${turn.chatTitle}". The numbers above come from the tools that ran in it, and every chart is a copy of the one in the timeline.\n`;
+  const body = doc.markdown.trimEnd();
+  await streamIntoDoc(turn, doc, body ? `${body}\n\n` : "", section, "");
+  turn.push({ id: toolId, kind: "tool", name: "edit_doc", summary: doc.title, status: "done" });
+  turn.spend(0.0051);
+  return say(turn, `Added a **Summary** section at the end of **${doc.title}**.`);
+}
+
+export function pickScenario(prompt, turn = { context: [] }) {
   const p = prompt.toLowerCase();
+  if (turn.context.some((c) => c.kind === "doc-selection" || c.kind === "doc")) return docEdit;
+  if (/\bdocs?\b|document|summary|resumen/.test(p)) return docEdit;
   if (p.startsWith("/research")) return research;
   if (/rename/.test(p)) return rename;
   if (/\b(fail|error)/.test(p)) return failure;

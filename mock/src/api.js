@@ -26,6 +26,9 @@ export const api = {
   approve: (id, choice) => call("POST", `/api/approval/${id}`, { choice }),
   interrupt: (chatId) => call("POST", `/api/interrupt/${chatId}`),
   setStatus: (patch) => call("PATCH", "/api/status", patch),
+  newDoc: (body) => call("POST", "/api/docs", body),
+  patchDoc: (id, patch) => call("PATCH", `/api/docs/${id}`, patch),
+  deleteDoc: (id) => call("DELETE", `/api/docs/${id}`),
 
   mcpServers: () => call("GET", "/api/mcp"),
   mcpAdd: (spec) => call("POST", "/api/mcp", { spec }),
@@ -35,9 +38,9 @@ export const api = {
   /** test | restart | login | cancel | logout | trust | enable | disable */
   mcpAction: (name, action) => call("POST", `/api/mcp/${name}/${action}`),
 
-  /** Runs a turn; `onEvent` gets every event until `{ type: "done" }`. */
-  turn(chatId, prompt, onEvent) {
-    const query = new URLSearchParams({ chat: chatId, prompt });
+  /** Runs a turn; `onEvent` gets every event until `{ type: "done" }`. `docId` and `context` tell the agent what the person is looking at. */
+  turn(chatId, prompt, onEvent, { docId = null, context = [] } = {}) {
+    const query = new URLSearchParams({ chat: chatId, prompt, doc: docId ?? "", context: JSON.stringify(context) });
     const source = new EventSource(`/api/turn?${query}`);
     source.onmessage = (message) => {
       const event = JSON.parse(message.data);

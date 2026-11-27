@@ -1,0 +1,43 @@
+.selection-bar {
+  position: absolute;
+  z-index: 20;
+  display: flex;
+  gap: 2px;
+  padding: 3px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--popover-bg);
+  box-shadow: 0 6px 24px rgb(0 0 0 / 0.35);
+  font-size: var(--text-sm);
+  transform: translate(-50%, calc(-100% - 6px));
+
+  &--below {
+    transform: translate(-50%, 6px);
+  }
+
+  &__button {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 8px;
+    border-radius: var(--radius-sm);
+    white-space: nowrap;
+    color: var(--foreground);
+
+    .icon {
+      color: var(--muted-fg);
+    }
+
+    &:hover {
+      background: var(--list-selected-bg);
+    }
+
+    &--primary {
+      color: var(--accent);
+
+      .icon {
+        color: var(--accent);
+      }
+    }
+  }
+}
