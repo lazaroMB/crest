@@ -246,6 +246,7 @@ mod tests {
                 args: vec!["test".into(), "a b".into()],
                 cwd: "/ws".into(),
             },
+            origin: None,
         }
     }
 

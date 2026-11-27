@@ -341,6 +341,14 @@ pub enum PluginAction {
         /// Command name and arguments.
         command: String,
     },
+    /// Run the skill `name` with `args`, as the user's `/name args`.
+    Skill {
+        /// The skill's name.
+        name: String,
+        /// What was typed after it.
+        #[serde(default)]
+        args: String,
+    },
 }
 
 /// What a Lua function returned.

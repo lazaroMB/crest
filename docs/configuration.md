@@ -10,6 +10,8 @@ crest is configured with Lua files (`init.lua`). You may have none at all: witho
 | Plugins | `<global config dir>/plugins/<name>/init.lua` | Loaded in alphabetical order, followed by those listed in `app.plugins`. |
 | Workspace config | `<workspace>/.crest/init.lua` | Optional. It may ship with the repository. |
 | Key mappings without Lua | `<global config dir>/keymap.toml`, `<workspace>/.crest/keymap.toml` | Optional, next to each `init.lua`. See [`keymap.toml` and the leader](#keymaptoml-and-the-leader). |
+| Instructions and rules | `~/.claude/CLAUDE.md`, `<global config dir>/AGENTS.md`, `~/.claude/rules/`, `<global config dir>/rules/`; in the workspace `AGENTS.md`, `CLAUDE.md`, `CLAUDE.local.md`, `.claude/rules/`, `.crest/rules/` | The files Claude Code and other agents read. See [Project instructions](usage.md#project-instructions-agentsmd-and-claudemd) and [Rules](usage.md#rules-clauderules). |
+| Skills and custom commands | `~/.claude/skills/<name>/SKILL.md`, `<global config dir>/skills/<name>/SKILL.md`, `~/.claude/commands/*.md`, `<global config dir>/commands/*.md`; in the workspace `.claude/skills/`, `.crest/skills/`, `.claude/commands/`, `.crest/commands/` | Claude Code's layout. See [Skills and custom commands](usage.md#skills-and-custom-commands-claudeskills-claudecommands). |
 | Theme files | `<global config dir>/themes/<name>.lua` | One theme per file, picked with `app.opt.theme` or `/theme`. The installers copy the [example themes](../examples/themes/) and a commented `init.lua` here when they are missing. See [themes.md](themes.md). |
 | Database | `$XDG_DATA_HOME/crest/sessions.db`, or `~/.local/share/crest/sessions.db` (Windows: `%LOCALAPPDATA%\crest\sessions.db`) | SQLite. Stores the chat sessions and the workflow checkpoints. |
 | Approved MCP servers | `$XDG_DATA_HOME/crest/mcp-trust.json`, or `~/.local/share/crest/mcp-trust.json` (Windows: under `%LOCALAPPDATA%\crest\`) | Written with `0600` permissions (on Windows the folder's access list, private to the user, applies). |
@@ -581,7 +583,7 @@ Only a plugin whose capabilities were approved can read secrets, and only its ow
 | `XDG_CONFIG_HOME` | Base of the global config and the plugins (`$XDG_CONFIG_HOME/crest/`). Only used if absolute; also honoured on Windows, where the default is `%APPDATA%`. |
 | `XDG_DATA_HOME` | Base of `sessions.db`, `mcp-trust.json` and `plugin-trust.json` (`$XDG_DATA_HOME/crest/`). Only used if absolute; also honoured on Windows, where the default is `%LOCALAPPDATA%`. |
 | `CREST_PLUGIN_<PLUGIN>_<NAME>` | A plugin secret, read by `app.secret("<name>")` when the keyring has no entry (see [Plugin capabilities and secrets](#plugin-capabilities-and-secrets)). Never passed to the programs crest runs. |
-| `CREST_LOG` | Log filter in `tracing`'s `EnvFilter` syntax, for example `info`, `debug` or `warn,lua=info`. Defaults to `warn`. The log goes to stderr. |
+| `CREST_LOG` | Log filter in `tracing`'s `EnvFilter` syntax, for example `info`, `debug` or `warn,lua=info`. Defaults to `warn,rmcp::transport::worker=off` (the MCP transport's connection errors show in `/mcp` instead). The log goes to stderr. |
 | `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY` | Enable trace export to Langfuse, **only in a binary built with `--features langfuse`**. Both are needed: if one is missing, crest shows a notice and does not export. |
 | `LANGFUSE_HOST` | Langfuse instance. Defaults to `https://cloud.langfuse.com`. |
 | `ANTHROPIC_LIVE_TEST` | Development only: `make test-live` sets it to `1`. |

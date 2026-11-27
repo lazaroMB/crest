@@ -396,6 +396,28 @@ block_kinds! {
         #[serde(default)]
         truncated: bool,
     },
+    /// A subagent working in the background: what it was asked, what it
+    /// is doing, and its report once it ends.
+    Agent {
+        /// Its number in the session (`/agents stop 3`).
+        agent_id: u64,
+        /// A short title of the job.
+        name: String,
+        /// `explore` (read-only) or `general` (the chat's tools).
+        kind: String,
+        /// Who started it: `user` (`/agent`, `&`) or `model`.
+        origin: String,
+        /// What it was asked.
+        prompt: String,
+        /// Where it is.
+        status: AgentStatus,
+        /// Its latest tool calls, oldest first (`grep "foo" ✓`).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        activity: Vec<String>,
+        /// Its report, once it ended.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        report: Option<String>,
+    },
     /// Failure of the API or a tool.
     Error {
         /// What went wrong.
@@ -530,6 +552,39 @@ impl BlockKind {
             // Text-like inline kinds, and spec kinds (validated by
             // `Block::validate` before getting here).
             _ => Ok(()),
+        }
+    }
+}
+
+/// Lifecycle of a background agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentStatus {
+    /// Working.
+    Running,
+    /// Finished with a report.
+    Done,
+    /// Ended with an error.
+    Failed,
+    /// Stopped by the user (`/agents stop`) or the end of crest.
+    Cancelled,
+}
+
+impl AgentStatus {
+    /// Whether the agent has ended.
+    #[must_use]
+    pub fn is_terminal(self) -> bool {
+        self != Self::Running
+    }
+
+    /// The word shown for it.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Done => "done",
+            Self::Failed => "failed",
+            Self::Cancelled => "cancelled",
         }
     }
 }

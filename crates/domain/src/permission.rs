@@ -723,6 +723,12 @@ pub struct PermissionPolicy {
     /// Locked to reads regardless of `mode` and rules (subagents).
     #[serde(default)]
     pub read_only: bool,
+    /// "Allow" rules granted for the running turn only (a skill's
+    /// `allowed-tools`): never saved, and cleared when a turn starts or
+    /// ends.
+    #[serde(skip)]
+    #[schemars(skip)]
+    pub grants: Vec<PermissionRule>,
 }
 
 impl PermissionPolicy {
@@ -733,6 +739,7 @@ impl PermissionPolicy {
             mode,
             rules: Vec::new(),
             read_only: false,
+            grants: Vec::new(),
         }
     }
 
@@ -745,6 +752,7 @@ impl PermissionPolicy {
             mode: PermissionMode::Plan,
             rules: Vec::new(),
             read_only: true,
+            grants: Vec::new(),
         }
     }
 
@@ -754,6 +762,22 @@ impl PermissionPolicy {
         if !self.rules.contains(&rule) {
             self.rules.push(rule);
         }
+    }
+
+    /// Allows what `rules` cover until the turn ends (as "allow always"
+    /// rules would: deny rules and the mode's denials still win).
+    pub fn grant(&mut self, rules: impl IntoIterator<Item = PermissionRule>) {
+        for rule in rules {
+            let rule = rule.with_decision(RuleDecision::AllowAlways);
+            if !self.grants.contains(&rule) {
+                self.grants.push(rule);
+            }
+        }
+    }
+
+    /// Drops the rules of [`Self::grant`].
+    pub fn clear_grants(&mut self) {
+        self.grants.clear();
     }
 
     /// Advances to the next mode (`<leader>p`) and returns it. A
@@ -788,7 +812,10 @@ impl PermissionPolicy {
             };
         }
         match mode_decision(self.mode, request.effect) {
-            Decision::Ask if matching.any(|rule| rule.decision == RuleDecision::AllowAlways) => {
+            Decision::Ask
+                if matching.any(|rule| rule.decision == RuleDecision::AllowAlways)
+                    || self.grants.iter().any(|rule| rule.applies_to(request)) =>
+            {
                 Decision::Allow
             }
             decision => decision,
@@ -814,6 +841,28 @@ const fn mode_decision(mode: PermissionMode, effect: ToolEffect) -> Decision {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn grants_allow_for_the_turn_but_never_over_a_denial() {
+        let mut policy = PermissionPolicy::new(PermissionMode::Ask);
+        let request = ActionRequest::new("run_command", ToolEffect::Execute, "git diff")
+            .with_argv(vec!["git".into(), "diff".into()]);
+        assert_eq!(policy.decide(&request), Decision::Ask);
+        policy.grant([PermissionRule::parse(
+            "run_command(git diff *)",
+            RuleDecision::AllowAlways,
+            RuleScope::Session,
+        )
+        .unwrap()]);
+        assert_eq!(policy.decide(&request), Decision::Allow);
+        let saved = serde_json::to_value(&policy).unwrap();
+        assert!(saved.get("grants").is_none(), "grants are never saved");
+        policy.mode = PermissionMode::Plan;
+        assert!(matches!(policy.decide(&request), Decision::Deny { .. }));
+        policy.mode = PermissionMode::Ask;
+        policy.clear_grants();
+        assert_eq!(policy.decide(&request), Decision::Ask);
+    }
 
     #[test]
     fn mode_next_cycles_through_all_modes() {
@@ -1095,6 +1144,7 @@ mod tests {
                 mode,
                 rules: rules.clone(),
                 read_only: false,
+                grants: Vec::new(),
             };
             let request = ActionRequest::new(tool, effect, subject);
             assert_eq!(policy.decide(&request), expected, "{mode} / {request:?}");

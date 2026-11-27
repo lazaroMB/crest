@@ -143,6 +143,7 @@ impl ApprovalGate {
             effect: action.effect,
             subject: action.subject,
             preview,
+            origin: None,
         };
         match self.port.request(request).await {
             Ok(ApprovalResponse::Approve) => UserVerdict::Approved,

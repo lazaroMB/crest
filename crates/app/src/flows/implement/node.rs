@@ -20,6 +20,7 @@ pub use crate::flows::research::node::NodeError;
 use crate::flows::research::node::system_now_ms;
 use crate::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use crate::ports::fs::FileSystemPort;
+use crate::ports::instructions::InstructionsPort;
 use crate::ports::shell::ShellPort;
 use crate::tools::registry::ToolRegistry;
 use crate::usecases::permissions::ProjectRules;
@@ -68,6 +69,8 @@ pub struct AgentKit {
     pub permissions: SharedPermissions,
     /// Extra system prompt (project instructions), appended to the step's.
     pub system_prompt: String,
+    /// The project's `AGENTS.md` and `CLAUDE.md` files.
+    pub instructions: Option<Arc<dyn InstructionsPort>>,
     /// Limit of model calls per turn, if not the default.
     pub max_iterations: Option<u32>,
     /// Where "always in project" answers are written, shared with the
@@ -98,6 +101,7 @@ impl AgentKit {
             models,
             permissions,
             system_prompt: String::new(),
+            instructions: None,
             max_iterations: None,
             project_rules: None,
         }
@@ -121,6 +125,10 @@ impl AgentKit {
         .with_system_prompt(prompt);
         let service = match &self.project_rules {
             Some(project) => service.with_project_rules(project.clone()),
+            None => service,
+        };
+        let service = match &self.instructions {
+            Some(port) => service.with_instructions(Arc::clone(port)),
             None => service,
         };
         match self.max_iterations {

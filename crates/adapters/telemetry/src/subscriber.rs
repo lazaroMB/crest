@@ -35,11 +35,17 @@ pub struct SubscriberOptions {
     pub default_filter: String,
 }
 
+/// The filter when `CREST_LOG` says nothing: warnings and errors, but not
+/// those of rmcp's transport worker. It logs an `ERROR` when a connection
+/// ends (an HTTP server asking for a login says `AuthRequired`), which
+/// crest already turns into the server's state and its log in `/mcp`.
+pub const DEFAULT_FILTER: &str = "warn,rmcp::transport::worker=off";
+
 impl Default for SubscriberOptions {
     fn default() -> Self {
         Self {
             output: LogOutput::Stderr,
-            default_filter: "warn".into(),
+            default_filter: DEFAULT_FILTER.into(),
         }
     }
 }
@@ -198,6 +204,13 @@ mod tests {
             "warn"
         );
         assert_eq!(parse_filter(None, "info").unwrap().to_string(), "info");
+    }
+
+    #[test]
+    fn the_default_filter_parses_and_hides_the_rmcp_worker() {
+        let filter = parse_filter(None, DEFAULT_FILTER).unwrap().to_string();
+        assert!(filter.contains("rmcp::transport::worker=off"), "{filter}");
+        assert!(filter.contains("warn"), "{filter}");
     }
 
     #[test]

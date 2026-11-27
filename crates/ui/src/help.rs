@@ -70,6 +70,19 @@ impl CommandRow {
         row
     }
 
+    /// The row of a skill (`.claude/skills`, a custom command) from
+    /// `source` (`user`, `project`).
+    #[must_use]
+    pub fn of_skill(source: &str, name: &str, usage: &str, description: &str) -> Self {
+        Self {
+            name: name.into(),
+            usage: usage.into(),
+            description: description.into(),
+            source: format!("skill ({source})"),
+            group: "Skills".into(),
+        }
+    }
+
     /// A command a plugin registered: it is listed under `Plugin · <plugin>`.
     pub fn of_plugin(plugin: &str, name: &str, usage: &str, description: &str) -> Self {
         Self {

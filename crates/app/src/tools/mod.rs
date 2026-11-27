@@ -14,4 +14,5 @@ pub mod ghs;
 pub mod mcp;
 pub mod plugin;
 pub mod simulate;
+pub mod skill;
 pub mod task;

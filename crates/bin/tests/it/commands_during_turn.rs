@@ -44,6 +44,7 @@ fn request(prompt: &str, cancel: CancelToken) -> TurnRequest {
         cancel,
         context: Vec::new(),
         doc_title: None,
+        skill: None,
     }
 }
 

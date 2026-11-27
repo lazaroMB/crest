@@ -52,6 +52,7 @@ use application::flows::research::session::{
     ResearchSession, StartOptions, describe_reply, describe_status,
 };
 use application::flows::research::usage::StageUsage;
+use application::ports::instructions::InstructionsPort;
 use application::ports::llm::LlmPort;
 use application::tools::registry::ToolRegistry;
 use application::usecases::permissions::ProjectRules;
@@ -84,6 +85,8 @@ pub struct ResearchParts {
     pub workspace: ResearchWorkspace,
     /// System prompt of the acting nodes' agent (the chat's).
     pub system_prompt: String,
+    /// The project's `AGENTS.md` and `CLAUDE.md` files.
+    pub instructions: Arc<dyn InstructionsPort>,
     /// The workspace root.
     pub root: WorkspaceRoot,
     /// The flow checkpoints (the chat's database).
@@ -191,6 +194,7 @@ pub fn build(parts: ResearchParts) -> anyhow::Result<Research> {
         mut explore,
         workspace,
         system_prompt,
+        instructions,
         root,
         storage,
         decider,
@@ -217,6 +221,7 @@ pub fn build(parts: ResearchParts) -> anyhow::Result<Research> {
             permissions,
         )
         .with_system_prompt(system_prompt)
+        .with_instructions(instructions)
         .with_project_rules(project_rules),
     );
     let root = root.as_path().display().to_string();

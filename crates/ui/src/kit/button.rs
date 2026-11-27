@@ -39,6 +39,23 @@ pub fn quiet_button(
         .text_color(theme.secondary_foreground)
 }
 
+/// A toolbar button in the danger colors, for the action that destroys
+/// something (the confirmation of a delete); `id` doubles as its debug
+/// selector.
+pub fn danger_button(
+    id: &'static str,
+    label: impl Into<SharedString>,
+    cx: &App,
+) -> Stateful<gpui::Div> {
+    let theme = cx.theme();
+    let hover = theme.danger_hover;
+    base(id, label, cx)
+        .bg(theme.danger)
+        .hover(move |style| style.bg(hover))
+        .text_color(theme.danger_foreground)
+        .font_weight(FontWeight::SEMIBOLD)
+}
+
 fn base(id: &'static str, label: impl Into<SharedString>, cx: &App) -> Stateful<gpui::Div> {
     div()
         .id(id)

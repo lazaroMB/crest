@@ -65,6 +65,10 @@ pub struct ApprovalRequest {
     pub subject: String,
     /// The exact change or command to show.
     pub preview: ApprovalPreview,
+    /// Who asks when it is not the chat's agent: a background agent
+    /// (`agent #3 · Find permission checks`), shown in the dialog.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
 }
 
 impl ApprovalRequest {
@@ -176,6 +180,7 @@ mod tests {
                 args: vec!["test".into()],
                 cwd: ".".into(),
             },
+            origin: None,
         };
         let json = serde_json::to_string(&req).unwrap();
         let back: ApprovalRequest = serde_json::from_str(&json).unwrap();

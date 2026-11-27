@@ -4,11 +4,13 @@
 //! dependency tree again, which dominated the build time of `cargo test`.
 //! Add a new test file here as a module.
 
+mod agents;
 mod chat_places;
 mod commands_during_turn;
 mod headless_demo;
 mod help_snapshot;
 mod implement_demo;
+mod instructions;
 mod mcp_servers;
 mod model_selection;
 mod plugin_caps;
@@ -16,5 +18,6 @@ mod plugin_modal;
 mod research_demo;
 mod resume;
 mod simulate_demo;
+mod skills;
 mod ui_session;
 mod web_research;

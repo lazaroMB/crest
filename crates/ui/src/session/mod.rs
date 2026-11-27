@@ -82,7 +82,7 @@ use application_core::usecases::cancel::CancelToken;
 use application_core::usecases::commands::Command;
 use application_core::usecases::mcp_servers::{McpAction, McpDraft, McpListing};
 use application_core::usecases::permissions::RuleListing;
-use domain::block::Block;
+use domain::block::{Block, BlockKind};
 use domain::conversation::{ImageAttachment, StopReason};
 use domain::git::GitStatus;
 use domain::model::{Account, ModelId, ModelRole};
@@ -175,6 +175,9 @@ pub struct TurnRequest {
     /// Title of the document the message names (a `/doc use` chip), shown
     /// as `↳ <title>` under the prompt in the timeline.
     pub doc_title: Option<String>,
+    /// The skill the user ran (`/name args`), loaded before the model
+    /// answers.
+    pub skill: Option<application_core::usecases::run_turn::SkillCall>,
 }
 
 /// How a turn sent from the UI ended.
@@ -307,6 +310,14 @@ pub trait SessionController: Send + Sync {
 
     /// Starts a new, empty session. Only called with no turn running.
     fn new_session(&self) -> BoxFuture<'static, ()>;
+
+    /// Starts a turn for the reports background agents left (their
+    /// blocks ended while the chat was idle). Ends at once when no report
+    /// is waiting. The default does nothing.
+    fn wake(&self, cancel: CancelToken) -> BoxFuture<'static, TurnEnd> {
+        let _ = cancel;
+        futures::future::ready(TurnEnd::Finished(StopReason::EndTurn)).boxed()
+    }
 
     /// Continues the turn a restart cut while `ask_user` waited: asks the
     /// form again and goes on once it is answered. The default does
@@ -643,6 +654,9 @@ pub struct Session {
     /// `/clear` was asked during a turn: the turn was interrupted and the
     /// session resets once it has ended.
     pending_clear: bool,
+    /// A background agent ended: once nothing runs, a turn reads its
+    /// report.
+    wake_pending: bool,
     /// Whether the session is on screen. Parked (its chat left while a
     /// turn ran) it keeps running but takes no keys and no focus.
     shown: bool,
@@ -896,6 +910,7 @@ impl Session {
             commands: Vec::new(),
             turn: None,
             pending_clear: false,
+            wake_pending: false,
             shown: true,
             last_activity: None,
             queue: VecDeque::new(),
@@ -921,7 +936,7 @@ impl Session {
         };
         this._mcp_changes = Some(this.watch_mcp(cx));
         this.wire_docs(window, cx);
-        this.load_commands(window, cx);
+        this.load_commands(cx);
         this.refresh_git(cx);
         if resume_pending {
             this.resume(cx);
@@ -951,9 +966,12 @@ impl Session {
     }
 
     /// Gives the `/` palette every command the help knows.
-    fn load_commands(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Gives the input the commands of the palette: the built-in ones,
+    /// the plugins' and the skills'. Called again after each turn, so a
+    /// skill added meanwhile is offered.
+    pub(super) fn load_commands(&mut self, cx: &mut Context<Self>) {
         let snapshot = self.controller.help();
-        cx.spawn_in(window, async move |this, cx| {
+        cx.spawn(async move |this, cx| {
             let snapshot = snapshot.await;
             this.update(cx, |this, cx| {
                 let keymap = this.input.read(cx).keymap().clone();
@@ -1213,9 +1231,20 @@ impl Session {
                 activity.apply(event, cx);
             }
         });
+        let agent_ended = events.iter().any(|event| {
+            matches!(
+                event,
+                DomainEvent::BlockUpdated { block }
+                    if matches!(block.kind, BlockKind::Agent { status, .. } if status.is_terminal())
+            )
+        });
         self.timeline
             .update(cx, |timeline, cx| timeline.apply_all(events, cx));
         self.refresh_doc_strip(cx);
+        if agent_ended {
+            self.wake_pending = true;
+            self.try_wake(cx);
+        }
     }
 
     fn notice(&mut self, level: NoticeLevel, message: impl Into<String>, cx: &mut Context<Self>) {

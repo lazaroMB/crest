@@ -134,6 +134,7 @@ impl TaskScope {
                     files.join(", ")
                 ),
             }),
+            origin: None,
         };
         let verdict = match self.approval.request(request).await {
             // "All edits" turns off the mode's questions, not the task's

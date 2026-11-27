@@ -30,6 +30,7 @@ pub(super) fn command_request(id: u64) -> ApprovalRequest {
             args: vec!["test".into()],
             cwd: ".".into(),
         },
+        origin: None,
     }
 }
 
@@ -131,6 +132,7 @@ fn diff_request(id: u64) -> ApprovalRequest {
             unified: "@@ -1 +1 @@\n-a\n+b\n".into(),
             approval: Some(domain::block::ApprovalState::Pending),
         }),
+        origin: None,
     }
 }
 

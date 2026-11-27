@@ -13,7 +13,7 @@ every number comes from an engine, and three commands take a problem from resear
 ![Rust](https://img.shields.io/badge/rust-1.99%2B-orange?logo=rust)
 ![Platforms](https://img.shields.io/badge/platforms-Linux%20%7C%20macOS%20%7C%20Windows-lightgrey)
 ![Models](https://img.shields.io/badge/models-Claude%20%7C%20OpenCode-8a63d2)
-![Release](https://img.shields.io/badge/release-v0.18.0-d9604a)
+![Release](https://img.shields.io/badge/release-v0.20.0-d9604a)
 ![Status](https://img.shields.io/badge/status-work%20in%20progress-yellow)
 
 <img src="assets/screenshots/hero.png" alt="crest finding a bug, fixing it, running the tests and charting their timings" width="900">
@@ -63,7 +63,7 @@ You can also download `crest-<version>-x86_64-pc-windows-msvc-setup.exe` from th
 curl -fsSL https://raw.githubusercontent.com/lazaroMB/crest/main/scripts/install.sh | sh
 ```
 
-It downloads the [latest release](https://github.com/lazaroMB/crest/releases/latest), checks its checksum and installs crest as an app: in the app menu on Linux (GNOME, KDE and other XDG desktops), in `~/Applications` on macOS (Launchpad, Spotlight, Dock), plus the `crest` command in `~/.local/bin`. `sh -s -- --version v0.18.0` picks a release, `--uninstall` removes it. The release tarballs carry the same script: extract one and run `./install.sh`.
+It downloads the [latest release](https://github.com/lazaroMB/crest/releases/latest), checks its checksum and installs crest as an app: in the app menu on Linux (GNOME, KDE and other XDG desktops), in `~/Applications` on macOS (Launchpad, Spotlight, Dock), plus the `crest` command in `~/.local/bin`. `sh -s -- --version v0.20.0` picks a release, `--uninstall` removes it. The release tarballs carry the same script: extract one and run `./install.sh`.
 
 Opened from the app menu or the Dock, crest gets the environment of your login shell (`~/.zprofile`, `~/.profile`), not the one of `~/.zshrc`: keep the API key in the keyring (below).
 
@@ -105,19 +105,15 @@ crest --headless --research "add() returns the difference for negative numbers"
 
 Opening crest again in the same directory resumes the last chat of that project; the sidebar opens any other, and `crest --new` starts a fresh one. Every flag is in [the command line](docs/usage.md#command-line).
 
-## New since v0.18.0
+## New in v0.20.0
 
-What landed on `main` after the last release, each with its section below:
+What changed since v0.19.0, each with its section below:
 
-- A **welcome tour** on the first start, replayed with `/tour` → [Quick start](#quick-start).
-- A **chats and projects sidebar** in three widths, projects with several directories, **Wild Chats** without a directory, chat menus (pin, rename, move, archive, delete) and **branching** a chat from any point → [Your chats and your projects](#your-chats-and-your-projects).
-- The prompt's **`+` menu** (Chat, Research, Deep research, inserts), the **information mark** that keeps errors and warnings, a **grouped command palette** with a which-key popup, **pickers with a preview** of images and 3D models, and overlays that all close with `Esc`, a click outside or `✕` → [A timeline, not a transcript](#a-timeline-not-a-transcript).
-- Permission rules **by pattern**, the `e` answer and the `Tab` ladder in the approval dialog, sensitive paths a workspace can only tighten → [You approve every change](#you-approve-every-change).
-- The **discovery research engine**, `/research --quick`, per-stage time and cost, retries that never trap the chat, spikes in a git worktree → [From a problem to a Spec to commits](#from-a-problem-to-a-spec-to-commits).
-- **Faster**: up to eight read-only tool calls at once, a concurrent startup and render caches → [Smart routing, smaller bills](#smart-routing-smaller-bills).
-- **`keymap.toml`** without Lua, a leader that moves the builtin mappings too, `app.opt.shell`, `CREST_LOG`, and a **design system** behind every view → [Make it yours](#make-it-yours).
+- crest follows your project's **`AGENTS.md`, `CLAUDE.md` and `CLAUDE.local.md`**, your own `~/.claude/CLAUDE.md`, `@path` imports and the files of subdirectories, live as you edit them and kept through compaction; **`/init`** writes a first `AGENTS.md` → [Your AGENTS.md, rules and skills, as they are](#your-agentsmd-rules-and-skills-as-they-are).
+- Claude Code's **rules** (`.claude/rules/`, always or by `paths` globs) and **skills and custom commands** (`.claude/skills/`, `.claude/commands/`), loaded by the model with the `skill` tool or run by you as `/name` → [Your AGENTS.md, rules and skills, as they are](#your-agentsmd-rules-and-skills-as-they-are).
+- **Background agents**: `& <job>` or `/agent` sends work to a subagent while you keep chatting, its block follows what it does and its report reaches the main agent; `/agents` lists and stops them → [Your AGENTS.md, rules and skills, as they are](#your-agentsmd-rules-and-skills-as-they-are).
 
-**Contents**: [Why crest](#why-crest) · [Your chats and your projects](#your-chats-and-your-projects) · [A timeline, not a transcript](#a-timeline-not-a-transcript) · [Blocks for technical work](#blocks-for-technical-work) · [Numbers you can verify](#numbers-you-can-verify) · [From a problem to a Spec to commits](#from-a-problem-to-a-spec-to-commits) · [You approve every change](#you-approve-every-change) · [Open anything](#open-anything) · [Smart routing, smaller bills](#smart-routing-smaller-bills) · [Connect any MCP server](#connect-any-mcp-server) · [Make it yours](#make-it-yours) · [Claude and OpenCode](#claude-and-opencode) · [Everything in one place](#everything-in-one-place) · [Documentation](#documentation) · [Built with](#built-with) · [Vision and roadmap](#vision-and-roadmap) · [Status and license](#status-and-license)
+**Contents**: [Why crest](#why-crest) · [Your chats and your projects](#your-chats-and-your-projects) · [Your AGENTS.md, rules and skills](#your-agentsmd-rules-and-skills-as-they-are) · [A timeline, not a transcript](#a-timeline-not-a-transcript) · [Blocks for technical work](#blocks-for-technical-work) · [Numbers you can verify](#numbers-you-can-verify) · [From a problem to a Spec to commits](#from-a-problem-to-a-spec-to-commits) · [You approve every change](#you-approve-every-change) · [Open anything](#open-anything) · [Smart routing, smaller bills](#smart-routing-smaller-bills) · [Connect any MCP server](#connect-any-mcp-server) · [Make it yours](#make-it-yours) · [Claude and OpenCode](#claude-and-opencode) · [Everything in one place](#everything-in-one-place) · [Documentation](#documentation) · [Built with](#built-with) · [Vision and roadmap](#vision-and-roadmap) · [Status and license](#status-and-license)
 
 ## Why crest
 
@@ -135,6 +131,14 @@ Each row has a menu: **pin** it to the top, **rename** it, **move** it to anothe
 <td width="50%"><img src="assets/screenshots/tour.png" alt="The welcome tour pointing at the sidebar"></td>
 </tr>
 </table>
+
+## Your AGENTS.md, rules and skills, as they are
+
+crest reads the instructions your project already keeps for agents: `AGENTS.md`, `CLAUDE.md` and `CLAUDE.local.md` at the root, your own `~/.claude/CLAUDE.md` and `~/.config/crest/AGENTS.md`, `@path` imports, and the files of subdirectories, which are attached the first time the agent works in them. An edited file applies on the next request, compaction never drops them, and `/init` has the agent write a first `AGENTS.md` for you. A repository set up for Claude Code, Cursor or Codex works the same here. [Project instructions](docs/usage.md#project-instructions-agentsmd-and-claudemd).
+
+Claude Code's rules and skills work too. A rule in `.claude/rules/` applies everywhere, or only to the files its `paths` globs match. A skill in `.claude/skills/<name>/SKILL.md` (or a custom command in `.claude/commands/`) is loaded by the model when a request matches its description, or run by you as `/name [arguments]`. Skills keep their `$ARGUMENTS`, their `` !`command` `` lines (checked like any command), their `allowed-tools`, their `model` and `context: fork`. [Rules](docs/usage.md#rules-clauderules) · [Skills](docs/usage.md#skills-and-custom-commands-claudeskills-claudecommands).
+
+Send work to a background agent with `& <what to do>` (or `/agent`) and keep chatting: its block follows what it does, and its report reaches the main agent when it ends. The model can do the same with `task` and forked skills. [Background agents](docs/usage.md#background-agents-agent-and-).
 
 ## A timeline, not a transcript
 
@@ -266,6 +270,7 @@ app.mcp.add("context7", { url = "https://mcp.context7.com/mcp", headers = { Auth
 app.mcp.add("linear", { url = "https://mcp.linear.app/mcp" })
 ```
 
+- Or skip the Lua: `/mcp` (`Ctrl+G S`) opens the **MCP servers manager**, a window that adds, edits, tests, logs in, turns on or off and removes servers while crest runs, saving them in `~/.config/crest/mcp.json` or `<workspace>/.crest/mcp.json`. [The manager](docs/usage.md#mcp-servers-mcp).
 - `/mcp` shows every server, its state and the next step; `/mcp tools <name>` lists what the model sees, `/mcp login <name>` signs in through the browser and keeps the tokens in the system keyring, and `restart`, `enable`, `disable` and `logout` do what they say.
 - Their tools go through the same approvals as the builtin ones: `effect = "read"` lets a server run without asking.
 - Servers declared in a workspace's `.crest/init.lua` do not start until you approve them with `/mcp trust <name>` (or `crest --trust-mcp <name>`), which starts them right away, and ask again if their command or URL changes.
@@ -447,7 +452,7 @@ flowchart TB
 
 ## Vision and roadmap
 
-crest is the workspace where a coding agent **shows its work, verifies it, and leaves you in control**. Next, in review: a visual **MCP servers manager** (the `/mcp` window, `Ctrl+G S`) that adds, edits, tests and removes servers live, backed by an `mcp.json` next to `init.lua`. Then come **your project and your sessions** (`AGENTS.md` and `CLAUDE.md` loaded into the prompt, session tabs as in tmux, context and cost you can see, a definition of done that runs your checks before a turn ends), **pipelines written in Lua**, **any model** including local ones, **memory that survives compaction**, and **review and trust** (a review panel with `/undo`, sandboxed commands, workspace trust). Signed and notarized macOS builds are already here. Read the [vision and roadmap](docs/vision.md).
+crest is the workspace where a coding agent **shows its work, verifies it, and leaves you in control**. Next come **your project and your sessions** (session tabs as in tmux, context and cost you can see, a definition of done that runs your checks before a turn ends), **pipelines written in Lua**, **any model** including local ones, **memory that survives compaction**, and **review and trust** (a review panel with `/undo`, sandboxed commands, workspace trust). Signed and notarized macOS builds are already here. Read the [vision and roadmap](docs/vision.md).
 
 ## Status and license
 

@@ -1,6 +1,6 @@
 # Spec 0002: projects with several directories, standalone chats, a three-width sidebar, a prompt mode control, and grouped commands
 
-Status: **implemented** (PR #56, on `main` after v0.18.0: the sidebar, projects, menus, Wild Chats, the prompt mode control and the grouped palette). Source: Specky3 discovery `CREST-SIDEBAR` (`Organization of chats, projects
+Status: **implemented** (PR #56, released in v0.19.0: the sidebar, projects, menus, Wild Chats, the prompt mode control and the grouped palette). Source: Specky3 discovery `CREST-SIDEBAR` (`Organization of chats, projects
 and chat modes in the crest sidebar`), section `## Solution proposal` and spikes `S01`, `S02`, `S03`,
 `S05`, `S06` (`.aos/journal/CREST-SIDEBAR/person/01-discovery.md`, `agent/spikes/`). Prototyped, not
 yet built, in `mock/` (see `mock/src/organization.js`, `mock/src/commands.js`, `mock/src/modes.js`).

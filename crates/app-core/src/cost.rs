@@ -352,6 +352,7 @@ impl CostTracker {
             preview: ApprovalPreview::Text {
                 text: reached.question(),
             },
+            origin: None,
         }
     }
 }

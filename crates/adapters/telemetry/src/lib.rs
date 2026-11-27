@@ -27,5 +27,6 @@ mod subscriber;
 pub use langfuse::{DEFAULT_HOST, LangfuseConfig, LangfuseError, LangfuseExporter, init_langfuse};
 pub use spans::{TARGET, TracingTelemetry};
 pub use subscriber::{
-    LOG_ENV, LogOutput, SubscriberError, SubscriberOptions, init_subscriber, init_subscriber_with,
+    DEFAULT_FILTER, LOG_ENV, LogOutput, SubscriberError, SubscriberOptions, init_subscriber,
+    init_subscriber_with,
 };

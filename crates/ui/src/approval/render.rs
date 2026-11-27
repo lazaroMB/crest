@@ -22,7 +22,10 @@ impl Render for ApprovalView {
             return div().id("approval").into_any_element();
         };
         let request = shown.pending.request();
-        let title = format!("Allow {}?", request.tool);
+        let title = match &request.origin {
+            Some(origin) => format!("{origin} · Allow {}?", request.tool),
+            None => format!("Allow {}?", request.tool),
+        };
         let subject = request.subject.clone();
         let preview = Self::render_preview(&request.preview, cx);
         let rows: Vec<_> = self

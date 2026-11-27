@@ -13,10 +13,12 @@ use application::ports::events::EventSink;
 use application::ports::form::FormPort;
 use application::ports::formats::FormatsPort;
 use application::ports::fs::FileSystemPort;
+use application::ports::instructions::InstructionsPort;
 use application::ports::llm::LlmPort;
 use application::ports::plugin::{PluginHostPort, PluginToolSpec};
 use application::ports::search::FileSearchPort;
 use application::ports::shell::{CommandRewritePort, ShellPort};
+use application::ports::skills::SkillsPort;
 use application::ports::telemetry::TelemetryPort;
 use application::privacy::Redactor;
 use application::tools::components::register_component_tools;
@@ -29,11 +31,15 @@ use application::tools::ghs::ShowGhsTool;
 use application::tools::plugin::PluginTool;
 use application::tools::registry::ToolRegistry;
 use application::tools::simulate::SimulateTool;
+use application::tools::skill::{SkillDeps, SkillToolSource};
 use application::tools::task::{TaskPorts, TaskTool};
 use application::tools::web::WebTools;
+use application::usecases::background::AgentRunner;
 use application::usecases::docs::DocService;
+use application::usecases::run_turn::SharedPermissions;
 use application::usecases::simulate::{SimulateDeps, Simulator};
 use domain::model::ModelPolicy;
+use std::sync::OnceLock;
 
 use super::now_ms;
 
@@ -72,11 +78,21 @@ pub(super) struct ToolInputs<'a> {
     pub(super) plugin_tools: &'a [PluginToolSpec],
     /// The chats' documents; their tools register only with a store.
     pub(super) docs: Option<Arc<DocService>>,
+    /// The `AGENTS.md` and `CLAUDE.md` files, for the `task` subagent.
+    pub(super) instructions: Arc<dyn InstructionsPort>,
+    /// The skills, for the `skill` tool.
+    pub(super) skills: Arc<dyn SkillsPort>,
+    /// The chat's permissions, which skills' `allowed-tools` add to.
+    pub(super) permissions: SharedPermissions,
+    /// The subagents of `task` and forked skills, set once they exist.
+    pub(super) runner: Arc<OnceLock<Arc<AgentRunner>>>,
 }
 
 /// The registry and the ports built on the way that the app keeps.
 pub(super) struct Tools {
     pub(super) tools: ToolRegistry,
+    /// The read-only subagent of background `explore` jobs.
+    pub(super) explore: Arc<TaskTool>,
     pub(super) compute: ComputeToolPorts,
     pub(super) formats: Arc<dyn FormatsPort>,
     pub(super) simulator: Simulator,
@@ -110,6 +126,10 @@ pub(super) async fn register_tools(
         events,
         plugin_tools,
         docs,
+        instructions,
+        skills,
+        permissions,
+        runner,
     } = inputs;
     let mut tools = ToolRegistry::new().with_redactor(redactor);
     register_file_tools(
@@ -167,20 +187,28 @@ pub(super) async fn register_tools(
             .register_typed(ShowGhsTool::new(Arc::clone(&web.web), now_ms))
             .context("tool registration")?;
     }
-    let task = TaskTool::new(
-        TaskPorts {
-            llm: Arc::clone(&llm),
-            telemetry: Arc::clone(&telemetry),
-            models: policy.clone(),
-            file_search: search.clone(),
-            content_search: search,
-            fs: Arc::clone(&fs),
-            web: web.clone(),
-        },
-        tools.budget(),
-    )
-    .context("tool registration")?;
+    let task_ports = TaskPorts {
+        llm: Arc::clone(&llm),
+        telemetry: Arc::clone(&telemetry),
+        models: policy.clone(),
+        file_search: search.clone(),
+        content_search: search,
+        fs: Arc::clone(&fs),
+        web: web.clone(),
+        instructions: Some(instructions),
+    };
+    let task = TaskTool::new(task_ports.clone(), tools.budget())
+        .context("tool registration")?
+        .with_runner(Arc::clone(&runner));
     tools.register_typed(task).context("tool registration")?;
+    let explore = Arc::new(TaskTool::new(task_ports, tools.budget()).context("tool registration")?);
+    tools.add_source(Arc::new(SkillToolSource::new(SkillDeps {
+        skills,
+        permissions,
+        shell: Arc::clone(&shell),
+        runner,
+        budget: tools.budget(),
+    })));
     let simulator = Simulator::new(SimulateDeps {
         llm: Arc::clone(&llm),
         models: policy.clone(),
@@ -203,6 +231,7 @@ pub(super) async fn register_tools(
     }
     Ok(Tools {
         tools,
+        explore,
         compute,
         formats,
         simulator,

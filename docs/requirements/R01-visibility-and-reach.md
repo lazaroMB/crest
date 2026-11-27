@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Implemented in `crates/ui` (the information mark and the outline arrows; on `main` after v0.18.0); the technical plan is [0001-visibility-and-reach.md](../specs/0001-visibility-and-reach.md). |
+| **Status** | Implemented in `crates/ui` (the information mark and the outline arrows; released in v0.19.0); the technical plan is [0001-visibility-and-reach.md](../specs/0001-visibility-and-reach.md). |
 | **Author** | AI (Cursor), from a Specky3 discovery |
 | **Approver** | The crest maintainers |
 | **Date** | 2026-11-01 |

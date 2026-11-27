@@ -5,15 +5,18 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use application::decide::Decider;
 use application::keymap::layers::{GLOBAL_TOML, WORKSPACE_TOML, source_label};
 use application::keymap::{Action, KeymapEntry, parse_keys};
+use application::ports::instructions::InstructionsPort;
 use application::ports::mcp::{McpServerState, McpServerStatus, parse_qualified_name};
 use application::ports::plugin::{
     AppOptions, CommandSpec, ConfigOrigin, ConfigSources, HookKind, HookSpec, KeyAction,
     KeymapSpec, McpServerSpec, McpTransport, PluginCapabilities, PluginToolSpec,
 };
+use application::ports::skills::SkillsPort;
 use application::tools::registry::ToolRegistry;
 use application::usecases::commands::{Handler, commands_of};
 use clap::CommandFactory as _;
@@ -52,6 +55,11 @@ pub struct HelpSource {
     mcp_specs: Vec<McpServerSpec>,
     config_errors: Vec<String>,
     warnings: Vec<String>,
+    /// The `AGENTS.md` and `CLAUDE.md` files, read again when the help
+    /// opens (`/init` may have written one).
+    instructions: Option<Arc<dyn InstructionsPort>>,
+    /// The skills, read again when the help opens.
+    skills: Option<Arc<dyn SkillsPort>>,
 }
 
 impl HelpSource {
@@ -77,6 +85,8 @@ impl HelpSource {
             plugin_capabilities: app.plugin_capabilities.clone(),
             config_sources: app.config_sources.clone(),
             tools: app.service.tools().clone(),
+            instructions: app.service.instructions().cloned(),
+            skills: app.service.skills().cloned(),
             models: app.model_policy().clone(),
             decider: app.decider.clone(),
             turn_override: app.turn_options.turn_override.clone(),
@@ -442,7 +452,78 @@ fn command_rows(source: &HelpSource) -> Vec<CommandRow> {
             c.description.as_deref().unwrap_or_default(),
         )
     }));
+    if let Some(skills) = &source.skills {
+        commands.extend(
+            skills
+                .list()
+                .iter()
+                .filter(|skill| skill.user_invocable)
+                .map(|skill| {
+                    let usage = match &skill.argument_hint {
+                        Some(hint) => format!("/{} {hint}", skill.name),
+                        None => format!("/{}", skill.name),
+                    };
+                    CommandRow::of_skill(
+                        skill.scope.label(),
+                        &skill.name,
+                        &usage,
+                        &skill.description,
+                    )
+                }),
+        );
+    }
     commands
+}
+
+/// The rows of the skills: one per skill, or one that says where they
+/// would go.
+fn skill_rows(port: Option<&dyn SkillsPort>) -> Vec<PathRow> {
+    let skills = port.map(SkillsPort::list).unwrap_or_default();
+    if skills.is_empty() {
+        return vec![PathRow {
+            label: "skills".into(),
+            value: "none (.claude/skills/<name>/SKILL.md or .claude/commands/<name>.md)".into(),
+        }];
+    }
+    skills
+        .iter()
+        .map(|skill| PathRow {
+            label: format!("skill ({})", skill.scope.label()),
+            value: format!("/{} {}", skill.name, skill.path),
+        })
+        .collect()
+}
+
+/// The rows of the instructions files the agent follows: one per file,
+/// or one that says where they would go.
+fn instruction_rows(port: Option<&dyn InstructionsPort>) -> Vec<PathRow> {
+    let files = port.map(InstructionsPort::loaded).unwrap_or_default();
+    if files.is_empty() {
+        return vec![PathRow {
+            label: "instructions".into(),
+            value: "none (AGENTS.md or CLAUDE.md at the workspace root; /init writes one)".into(),
+        }];
+    }
+    files
+        .into_iter()
+        .map(|file| {
+            let mut value = file.path;
+            if !file.paths.is_empty() {
+                value.push_str(&format!(" (for {})", file.paths.join(", ")));
+            }
+            if !file.imports.is_empty() {
+                value.push_str(&format!(" (imports {})", file.imports.join(", ")));
+            }
+            PathRow {
+                label: if file.paths.is_empty() {
+                    format!("instructions ({})", file.scope.label())
+                } else {
+                    format!("rule ({})", file.scope.label())
+                },
+                value,
+            }
+        })
+        .collect()
 }
 
 /// The help's snapshot of `source`; `statuses` are the MCP servers' states
@@ -542,7 +623,7 @@ pub fn snapshot(
         label: label.into(),
         value,
     };
-    let paths = vec![
+    let mut paths = vec![
         path("workspace", source.workspace.display().to_string()),
         path("global config", path_text(sources.global.as_deref())),
         path("workspace config", path_text(sources.workspace.as_deref())),
@@ -556,11 +637,13 @@ pub fn snapshot(
             "approved plugins",
             path_text(source.plugin_trust_path.as_deref()),
         ),
-        path(
-            "documentation",
-            "docs/usage.md, docs/configuration.md, docs/plugins.md (crest repository)".into(),
-        ),
     ];
+    paths.extend(instruction_rows(source.instructions.as_deref()));
+    paths.extend(skill_rows(source.skills.as_deref()));
+    paths.extend([path(
+        "documentation",
+        "docs/usage.md, docs/configuration.md, docs/plugins.md (crest repository)".into(),
+    )]);
 
     HelpSnapshot {
         commands,
@@ -571,12 +654,24 @@ pub fn snapshot(
         models,
         cli: cli_rows(),
         paths,
-        diagnostics: source
-            .config_errors
-            .iter()
-            .chain(&source.warnings)
-            .cloned()
-            .collect(),
+        diagnostics: {
+            // The skills' problems now (a file may have changed), without
+            // repeating those of the startup.
+            let mut seen = std::collections::BTreeSet::new();
+            let live = source
+                .skills
+                .as_ref()
+                .map(|skills| skills.warnings())
+                .unwrap_or_default();
+            source
+                .config_errors
+                .iter()
+                .chain(&source.warnings)
+                .cloned()
+                .chain(live)
+                .filter(|line| seen.insert(line.clone()))
+                .collect()
+        },
     }
 }
 

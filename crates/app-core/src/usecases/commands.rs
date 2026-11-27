@@ -112,6 +112,13 @@ pub enum Command {
     Open(String),
     /// `/doc ...`: the chat's documents, see [`DocCommand`].
     Doc(DocCommand),
+    /// `/init [focus]`: what was typed after it.
+    Init(String),
+    /// `/agent [explore|plan] <prompt>` (also `& <prompt>`): a background
+    /// agent for the job.
+    Agent(String),
+    /// `/agents [stop <n>|stop all]`: the background agents.
+    Agents(String),
     /// Any other name: a command of `init.lua`, or a builtin action
     /// (`/picker.files`).
     Other {
@@ -136,6 +143,8 @@ impl Command {
         match name {
             "q" | "quit" | "qa" => Self::Quit,
             "help" | "h" => Self::Help(arg.to_owned()),
+            // The help, filtered to the skills and custom commands.
+            "skills" => Self::Help("skill".to_owned()),
             "tour" => Self::Tour,
             "model" => Self::Model(ModelCommand::parse(arg)),
             "theme" => Self::Theme(ThemeCommand::parse(arg)),
@@ -160,6 +169,9 @@ impl Command {
             "plugin" => Self::Plugin(PluginCommand::parse(arg)),
             "open" => Self::Open(arg.to_owned()),
             "doc" => Self::Doc(DocCommand::parse(arg)),
+            "init" => Self::Init(arg.to_owned()),
+            "agent" => Self::Agent(arg.to_owned()),
+            "agents" => Self::Agents(arg.to_owned()),
             _ => Self::Other {
                 name: name.to_owned(),
                 arg: arg.to_owned(),
@@ -426,6 +438,26 @@ pub trait CommandHandler {
     fn plugin(&self, command: PluginCommand) -> ReplyFuture;
     /// `/open @path`.
     fn open(&self, arg: String) -> ReplyFuture;
+    /// `/agent [explore|plan] <prompt>`: starts a background agent. The
+    /// default says it is not available.
+    fn agent(&self, arg: String) -> ReplyFuture {
+        let _ = arg;
+        futures::future::ready(Reply::Notice(
+            NoticeLevel::Warning,
+            "background agents are not available here".into(),
+        ))
+        .boxed()
+    }
+    /// `/agents [stop <n>|stop all]`: lists or stops the background agents.
+    /// The default says there are none.
+    fn agents(&self, arg: String) -> ReplyFuture {
+        let _ = arg;
+        futures::future::ready(Reply::Notice(
+            NoticeLevel::Info,
+            "no background agents here".into(),
+        ))
+        .boxed()
+    }
     /// Any other command: the one of `init.lua` called `name`, if there is
     /// one; `None` otherwise.
     fn callback(&self, name: &str, arg: String) -> Option<ReplyFuture>;
@@ -450,6 +482,14 @@ pub fn dispatch<H: CommandHandler + ?Sized>(handler: &H, command: Command) -> Op
         Command::Mcp(command) => handler.mcp(command),
         Command::Plugin(command) => handler.plugin(command),
         Command::Open(arg) => handler.open(arg),
+        Command::Init(focus) => futures::future::ready(Reply::Actions(vec![PluginAction::Send {
+            text: init_prompt(&focus),
+            role: None,
+        }]))
+        .boxed(),
+        Command::Agent(prompt) if prompt.trim().is_empty() => usage(AGENT_USAGE),
+        Command::Agent(prompt) => handler.agent(prompt.trim().to_owned()),
+        Command::Agents(arg) => handler.agents(arg.trim().to_owned()),
         Command::Other { name, arg } => return handler.callback(&name, arg),
         Command::Quit
         | Command::Help(_)
@@ -466,6 +506,41 @@ pub fn dispatch<H: CommandHandler + ?Sized>(handler: &H, command: Command) -> Op
         | Command::Doc(_)
         | Command::Modal(_) => return None,
     })
+}
+
+/// How `/agent` is typed.
+pub const AGENT_USAGE: &str =
+    "usage: /agent [explore|plan] <what to do> (or & <what to do>): a background agent";
+
+/// What `/init` asks the agent.
+pub const INIT_PROMPT: &str = "\
+Write the AGENTS.md of this workspace: the instructions coding agents (you, and other \
+tools that read AGENTS.md) need to work here. Survey the repository first: the README, \
+the build and package files (Makefile, Cargo.toml, package.json, pyproject.toml...), the \
+CI configuration, the existing CLAUDE.md, .claude/rules, .cursorrules, .cursor/rules or \
+.github/copilot-instructions.md, and the layout of the source and the tests.
+
+Then write a concise AGENTS.md at the workspace root with:
+- the commands to build, test (all and a single test), lint and format;
+- the architecture in a few lines: the main directories and how they depend on each other;
+- the conventions that are not obvious from the code (style, naming, error handling, \
+commits), and what to avoid.
+
+Only facts you checked in the repository: no generic advice, no lists of every file. \
+If AGENTS.md already exists, improve it instead of starting over. If a CLAUDE.md holds \
+the instructions, move them into AGENTS.md and leave CLAUDE.md with the single line \
+`@AGENTS.md`, so both kinds of tools read the same file. A directory that needs rules of \
+its own can have its own AGENTS.md.";
+
+/// The prompt of `/init`, with what the user asked to focus on.
+#[must_use]
+pub fn init_prompt(focus: &str) -> String {
+    let focus = focus.trim();
+    if focus.is_empty() {
+        INIT_PROMPT.to_owned()
+    } else {
+        format!("{INIT_PROMPT}\n\nThe user also asks: {focus}")
+    }
 }
 
 #[cfg(test)]
