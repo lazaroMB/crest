@@ -17,6 +17,7 @@
 # Specky3 worktrees
 /.worktrees/
 /.cursor
+/.claude
 /.aos
 AGENTS.md
 evals/

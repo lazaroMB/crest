@@ -98,7 +98,7 @@ test-install: ## Tests for scripts/install.sh and the app bundle of scripts/pack
 	$(BASH) tests/install/run.sh
 
 .PHONY: check
-check: fmt-check lint test arch test-arch test-deps test-install ## What must pass to close a phase
+check: fmt-check lint test arch test-arch test-deps test-install tidy ## What must pass to close a phase (ends with tidy)
 
 .PHONY: ci
 ci: doctor check ## doctor + check
@@ -142,8 +142,33 @@ SWEEP_DAYS ?= 14
 .PHONY: sweep
 sweep: ## Delete build artifacts unused for SWEEP_DAYS days (needs cargo-sweep)
 	@if $(CARGO) sweep --version >/dev/null 2>&1; then \
+		$(CARGO) sweep --installed; \
 		$(CARGO) sweep --time $(SWEEP_DAYS); \
 	else \
 		echo "cargo-sweep is not installed: cargo install cargo-sweep" >&2; \
 		exit 1; \
+	fi
+
+# Keeps target/ from growing without bound: `make check` ends here. Every
+# feature set (clippy --all-targets, langfuse, the UI examples, gpui's
+# test-support) leaves its own artifacts, and every Cargo.lock or toolchain
+# change leaves the old ones behind, so target/ reached hundreds of GiB.
+# With cargo-sweep this is `make sweep`. Without it, target/ is deleted
+# (`cargo clean`) once it passes TARGET_MAX_GB; below that it is left alone.
+TARGET_MAX_GB ?= 60
+
+.PHONY: tidy
+tidy: ## Sweep target/, or cargo clean when it is over TARGET_MAX_GB and cargo-sweep is missing
+	@if $(CARGO) sweep --version >/dev/null 2>&1; then \
+		$(CARGO) sweep --installed; \
+		$(CARGO) sweep --time $(SWEEP_DAYS); \
+	elif [ -d target ]; then \
+		kb="$$(du -sk target 2>/dev/null | cut -f1)"; \
+		gb=$$(( $${kb:-0} / 1048576 )); \
+		if [ "$$gb" -ge "$(TARGET_MAX_GB)" ]; then \
+			echo "target/ is $${gb} GiB (limit $(TARGET_MAX_GB)): cargo clean. Install cargo-sweep to keep the recent artifacts." >&2; \
+			$(CARGO) clean; \
+		else \
+			echo "target/ is $${gb} GiB (limit $(TARGET_MAX_GB)); cargo install cargo-sweep to trim it incrementally" >&2; \
+		fi; \
 	fi
