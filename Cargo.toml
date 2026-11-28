@@ -1,5 +1,6 @@
 [workspace]
 resolver = "3"
+exclude = ["vendor/zorite-editor"]
 members = [
     "crates/domain",
     "crates/app-core",
@@ -211,6 +212,9 @@ gpui-base = "=0.7.3"
 # Serves the icon SVGs `gpui_component::IconName` paths name (`icons/plus.svg`);
 # without an asset source registered every `Icon` paints nothing.
 gpui-kit-assets = "=0.7.3"
+# The WYSIWYG markdown editor of the doc panel page (0.11.3 compiles against
+# gpui-pre 0.3.9, the one gpui-component resolves: one GPUI in the graph).
+zorite-editor = "=0.11.3"
 # Dates of the form block's date picker (gpui-component already resolves
 # chrono 0.4; no new crate in the tree).
 chrono = { version = "0.4", default-features = false, features = ["std"] }
@@ -254,6 +258,10 @@ hyper-util = { version = "0.1.21", features = ["tokio"] }
 insta = { version = "1.49.0", features = ["json"] }
 tempfile = "3.27.0"
 wiremock = "0.6.5"
+
+# zorite-editor 0.11.3 vendored with local table fixes (vendor/zorite-editor/CREST-VENDOR.md).
+[patch.crates-io]
+zorite-editor = { path = "vendor/zorite-editor" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

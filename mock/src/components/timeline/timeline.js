@@ -6,17 +6,23 @@
 
 import { h } from "../../lib/h.js";
 import { select, syncSelected, toggleAltView, toggleExpanded } from "../../actions.js";
+import { canAddToDoc } from "../../docs.js";
+import { BlockMenu } from "../block-menu/block-menu.js";
 import { isWide, renderBlock } from "../blocks/index.js";
 import { Outline } from "./outline.js";
 import { Welcome } from "./welcome.js";
 import "./timeline.scss";
 
+/** Every block a doc can take gets a copy menu: in the chart's head, floating at the top right elsewhere. */
 function BlockRow(block, state) {
+  const inHead = block.kind === "chart";
+  const menu = canAddToDoc(block) && BlockMenu(block, state, { overlay: !inHead });
   const view = {
     expanded: !!state.ui.expanded[block.id],
     altView: !!state.ui.altView[block.id],
     toggle: () => toggleExpanded(block.id),
     toggleAlt: () => toggleAltView(block.id),
+    menu: inHead ? menu : null,
   };
   const selected = state.ui.selected === block.id;
   return h(
@@ -29,6 +35,7 @@ function BlockRow(block, state) {
         onMousedown: () => select(block.id),
       },
       renderBlock(block, view),
+      !inHead && menu,
     ),
   );
 }
@@ -76,6 +83,14 @@ export function mountTimeline(root) {
     });
   });
 
+  // When only the selected block moved, the rows stay and only their class
+  // changes: rebuilding them would drop a text selection the person is making.
+  let lastContent = null;
+  function moveHighlight(selected) {
+    for (const inner of scroll.querySelectorAll(".tblock__inner--selected")) inner.classList.remove("tblock__inner--selected");
+    scroll.querySelector(`[data-id="${selected}"] .tblock__inner`)?.classList.add("tblock__inner--selected");
+  }
+
   function update(state) {
     const blocks = state.chat?.blocks ?? [];
     const switched = state.chat?.id !== lastChatId;
@@ -83,15 +98,21 @@ export function mountTimeline(root) {
     const top = scroll.scrollTop;
 
     root.classList.toggle("timeline--focused", state.ui.focus === "timeline");
-    const from = state.chat?.branchedFrom;
-    const banner = from && h("div", { class: "timeline__branch" }, `Branched from "${from.title}" after ${from.atBlock} block${from.atBlock === 1 ? "" : "s"}. The original chat is unchanged.`);
-    scroll.replaceChildren(blocks.length ? h("div", { class: "timeline__list" }, banner, blocks.map((b) => BlockRow(b, state))) : Welcome());
+    const content = JSON.stringify([state.chat, state.ui.expanded, state.ui.altView, state.ui.outlineOpen, state.ui.blockMenu, state.ui.docId, state.docs.map((d) => [d.id, d.title, d.chatId])]);
+    const highlightOnly = content === lastContent && !switched;
+    lastContent = content;
+    if (highlightOnly) moveHighlight(state.ui.selected);
+    else {
+      const from = state.chat?.branchedFrom;
+      const banner = from && h("div", { class: "timeline__branch" }, `Branched from "${from.title}" after ${from.atBlock} block${from.atBlock === 1 ? "" : "s"}. The original chat is unchanged.`);
+      scroll.replaceChildren(blocks.length ? h("div", { class: "timeline__list" }, banner, blocks.map((b) => BlockRow(b, state))) : Welcome());
+      scroll.scrollTop = switched || atBottom ? scroll.scrollHeight : top;
+    }
     overlay.replaceChildren(Outline(state) ?? "");
-
-    scroll.scrollTop = switched || atBottom ? scroll.scrollHeight : top;
     lastChatId = state.chat?.id;
 
-    if (state.ui.selected) {
+    const selecting = !window.getSelection()?.isCollapsed;
+    if (state.ui.selected && !selecting) {
       const el = scroll.querySelector(`[data-id="${state.ui.selected}"]`);
       if (el) {
         suppressSync = true;

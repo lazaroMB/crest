@@ -66,6 +66,8 @@ thiserror.workspace = true
 usvg.workspace = true
 uuid.workspace = true
 wgpu.workspace = true
+# The page of the doc panel (WYSIWYG markdown).
+zorite-editor.workspace = true
 
 [dev-dependencies]
 # Session and picker tests drive the file tools (application keeps them).

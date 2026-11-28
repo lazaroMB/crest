@@ -112,6 +112,32 @@ button {
   min-width: 0;
 }
 
+// The chat and its doc side by side, above the activity line.
+.main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.panes {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+
+  &[data-doc-view="hidden"] .doc-panel,
+  &[data-doc-view="doc"] .session {
+    display: none;
+  }
+}
+
+// Only the doc, with the sidebar closed: its head starts after the logo, as the timeline does.
+.workbench__body:has(.sidebar-hover-zone) .panes[data-doc-view="doc"] .doc-panel__head {
+  padding-left: 44px;
+}
+
 .session {
   display: flex;
   flex-direction: column;

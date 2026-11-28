@@ -321,6 +321,20 @@ export const projects = [
   { id: "p-site", name: "twocrest-site", path: "~/dev/twocrest-site", chats: [summary("c-site-1"), summary("c-site-2")] },
 ];
 
+/** Docs, each owned by one chat (src/docs.js). The release chat starts with one. */
+export const docs = {
+  "d-release": {
+    id: "d-release",
+    chatId: "c-release",
+    title: "v0.6.0 release notes",
+    markdown:
+      "# v0.6.0 release notes\n\n**v0.6.0 in numbers**: 42 commits, 3 features, 1 fix.\n\n## Highlights\n\n- Research mode streams its stages into the timeline.\n- Charts can be copied as images.\n- The sidebar groups chats by project.\n\n## How a change ships\n\n```mermaid\nflowchart LR\n  research[Research] --> notes[Release notes]\n  notes --> web[Web]\n  notes --> pdf[PDF]\n```\n\n## What changed\n\nThe parser rewrite landed behind a flag in v0.5.0 and is now the default. It cuts the time to the first token on large workspaces, and the old path is kept for one more release in case a regression shows up.\n",
+    assets: {},
+    createdAt: Date.now() - 86_400_000,
+    updatedAt: Date.now() - 3_600_000,
+  },
+};
+
 export const status = {
   model: "claude-sonnet-5-5",
   mode: "ask",
@@ -349,6 +363,16 @@ export const commands = [
   { usage: "/retry", description: "Run the failed stage of the research flow again" },
   { usage: "/abort", description: "Stop the active flow for good (its journal is kept)" },
   { usage: "/aside [question]", description: "Chat aside while a flow waits at a gate" },
+  { usage: "/doc", description: "Open this chat's document in the editor" },
+  { usage: "/doc new [title]", description: "New document, and open the editor" },
+  { usage: "/doc find <text>", description: "Search documents by title and open one" },
+  { usage: "/doc use [title]", description: "Reference a document on the next message" },
+  { usage: "/doc add", description: "Add the selected chat block to the document" },
+  { usage: "/doc split", description: "Chat and document side by side" },
+  { usage: "/doc only", description: "Document only; the prompt stays" },
+  { usage: "/doc close", description: "Hide the doc panel" },
+  { usage: "/doc source", description: "Show the markdown, or go back to the document" },
+  { usage: "/doc export [md|html|pdf|copy]", description: "Export the open document" },
   { usage: "/flow [answer]", description: "Back to the waiting flow: answers it" },
   { usage: "/permissions", description: "List and remove the permission rules" },
   { usage: "/theme", description: "Pick a theme, previewed in the window" },

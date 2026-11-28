@@ -10,6 +10,7 @@ pub mod dataset;
 pub mod decision;
 pub mod devops;
 pub mod discovery;
+pub mod doc;
 pub mod engineering;
 pub mod form;
 pub mod gantt;

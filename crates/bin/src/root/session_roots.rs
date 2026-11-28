@@ -11,6 +11,7 @@ use std::sync::{Arc, Mutex};
 
 use adapter_fs::guard::canonical_root;
 use application::ports::store::{SessionStorePort, StoreError};
+use application::usecases::docs::DocService;
 use application::usecases::sidebar::project_for_directory;
 use domain::conversation::{ProjectId, Session};
 use domain::permission::PermissionPolicy;
@@ -37,6 +38,7 @@ pub(super) struct Opened {
 /// Opens the session of this run in `root` and the directories it has.
 pub(super) async fn open_session(
     store: Option<&Arc<dyn SessionStorePort>>,
+    docs: Option<&DocService>,
     config: &Config,
     root: &WorkspaceRoot,
     timeline: &Mutex<TimelineState>,
@@ -49,7 +51,7 @@ pub(super) async fn open_session(
         WorkspaceRoots::default()
     } else {
         if let Some(store) = store
-            && let Err(warning) = join_project(store, config, &mut resumed).await
+            && let Err(warning) = join_project(store, docs, config, &mut resumed).await
         {
             warnings.push(warning);
         }
@@ -69,6 +71,7 @@ pub(super) async fn open_session(
 /// that fails is the warning to show, and leaves the session as it is.
 async fn join_project(
     store: &Arc<dyn SessionStorePort>,
+    docs: Option<&DocService>,
     config: &Config,
     opened: &mut Resumed,
 ) -> Result<(), String> {
@@ -83,9 +86,17 @@ async fn join_project(
         .map_err(|err| format!("the chat's project was not read: {err}"))?;
     opened.session.project_id = Some(project.id);
     if opened.resumed {
-        let moved = store
-            .move_session(opened.session.id, Some(project.id))
-            .await;
+        // The chat's documents, if it has any, follow it into the project.
+        let moved = match docs {
+            Some(docs) => docs
+                .move_session(opened.session.id, Some(project.id))
+                .await
+                .map_err(|err| err.to_string()),
+            None => store
+                .move_session(opened.session.id, Some(project.id))
+                .await
+                .map_err(|err| err.to_string()),
+        };
         moved.map_err(|err| format!("the chat was not put in its project: {err}"))?;
     }
     Ok(())

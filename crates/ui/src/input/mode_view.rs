@@ -32,7 +32,7 @@ const _: () = assert!(BUTTON_PX + GAP_PX + CHIP_MAX_PX <= CONTROL_MAX_PX && CLOS
 /// The row of the menu where the inserts start.
 const INSERTS_AT: usize = 3;
 /// The row of the menu where the manager is.
-const MANAGE_AT: usize = 5;
+const MANAGE_AT: usize = 6;
 
 impl InputView {
     /// The round button and, outside chat, the chip. Together they never

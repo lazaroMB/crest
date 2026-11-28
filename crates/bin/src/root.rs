@@ -44,6 +44,7 @@ use application::ports::telemetry::TelemetryPort;
 use application::ports::web::WebPort;
 use application::tools::components::COMPONENT_TOOLS_PROMPT;
 use application::tools::compute::{COMPUTE_TOOLS_PROMPT, ComputeToolPorts};
+use application::tools::docs::DOC_TOOLS_PROMPT;
 use application::tools::form::FORM_TOOL_PROMPT;
 use application::tools::formats::FORMAT_TOOLS_PROMPT;
 use application::tools::ghs::GHS_TOOL_PROMPT;
@@ -52,6 +53,7 @@ use application::usecases::agents::AgentInbox;
 use application::usecases::approval::lock_permissions;
 use application::usecases::background::{AgentRunner, GeneralKit};
 use application::usecases::compact::CompactionPolicy;
+use application::usecases::docs::DocService;
 use application::usecases::run_turn::{AgentDeps, AgentService, SharedPermissions, TurnOptions};
 use application::usecases::simulate::Simulator;
 use domain::block::Block;
@@ -71,6 +73,7 @@ use crate::research;
 use crate::startup::{self};
 
 pub(crate) mod chat_home;
+pub(crate) mod docs;
 mod llm_ports;
 mod session_roots;
 mod stores;
@@ -320,6 +323,9 @@ pub struct App {
     timeline: Arc<Mutex<TimelineState>>,
     prompt_history: SharedPromptHistory,
     store: Option<Arc<dyn SessionStorePort>>,
+    /// The chats' documents, when a store opened: the agent's `doc_*` tools
+    /// and the window's panel share it.
+    pub docs: Option<Arc<DocService>>,
     implement: ImplementDeps,
     flow_storage: Option<Arc<SqliteFlowStorage>>,
     /// The research flow of the workspace (`/research`), when the flow
@@ -706,7 +712,14 @@ pub async fn build_app(
     // A project session opens with all the directories its project has now;
     // a project that gains or loses one later reaches the sessions already
     // open the next time they open.
-    let opened = open_session(store.as_ref(), config, &root, &timeline).await;
+    let db_path = overrides
+        .db_path
+        .clone()
+        .or_else(adapter_store::path::default_db_path);
+    let docs = store.as_ref().map(|store| {
+        docs::doc_service(Arc::clone(store), db_path.as_deref(), Some(root.as_path()))
+    });
+    let opened = open_session(store.as_ref(), docs.as_deref(), config, &root, &timeline).await;
     warnings.extend(opened.warnings);
     let permissions = opened.permissions;
     let Resumed {
@@ -773,6 +786,7 @@ pub async fn build_app(
             file_search: Arc::clone(&file_search),
             events: Arc::clone(&events),
             plugin_tools: &loaded.tools,
+            docs: docs.clone(),
             instructions: Arc::clone(&instructions),
             skills: Arc::clone(&skills),
             permissions: Arc::clone(&permissions),
@@ -894,6 +908,10 @@ pub async fn build_app(
         prompt.push_str("\n\n");
         prompt.push_str(GHS_TOOL_PROMPT);
     }
+    if docs.is_some() {
+        prompt.push_str("\n\n");
+        prompt.push_str(DOC_TOOLS_PROMPT);
+    }
     let prompt_history = Arc::new(Mutex::new(prompt_history));
     // Subagents: `task` and forked skills wait on them or send them to the
     // background, as `/agent` does; their reports reach the chat through
@@ -984,10 +1002,7 @@ pub async fn build_app(
         plugin_tools: loaded.tools,
         hooks: loaded.hooks,
         config_sources,
-        db_path: overrides
-            .db_path
-            .clone()
-            .or_else(adapter_store::path::default_db_path),
+        db_path,
         decider,
         default_provider,
         preferences_path,
@@ -997,6 +1012,7 @@ pub async fn build_app(
         timeline,
         prompt_history,
         store,
+        docs,
         implement,
         flow_storage,
         research,

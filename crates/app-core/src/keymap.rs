@@ -703,6 +703,11 @@ const DEFAULTS: &[(&str, &str, &str)] = &[
     ("<leader>h", "help.open", "Open the help"),
     ("<leader>e", "panel.tree", "Show or hide the workspace tree"),
     ("<leader>s", "panel.chats", "Show or hide the chats sidebar"),
+    (
+        "<leader>d",
+        "panel.doc",
+        "Show the document beside the chat, alone, or hide it",
+    ),
     ("<leader>ff", "picker.files", "Find a file by name"),
     ("<leader>fg", "picker.grep", "Search text in the workspace"),
     (
@@ -803,6 +808,43 @@ const DEFAULTS: &[(&str, &str, &str)] = &[
     ),
 ];
 
+/// Builtin actions with no default keys (a person may map them): action and
+/// what it does. The document panel's own buttons and the selection bar's
+/// "Add to doc" have one each, so every control is reachable by key.
+const UNBOUND: &[(&str, &str)] = &[
+    ("doc.new", "Start a new document in this chat"),
+    (
+        "doc.source",
+        "Switch the open document between the page and its source",
+    ),
+    ("doc.export", "Open the export menu of the open document"),
+    ("doc.rename", "Rename the open document"),
+    ("doc.delete", "Ask to delete the open document"),
+    (
+        "doc.switch",
+        "Open the menu of this chat's documents (when it has more than one)",
+    ),
+    ("doc.bold", "Make the document's selection bold"),
+    ("doc.italic", "Make the document's selection italic"),
+    ("doc.heading", "Turn the document's line into a heading"),
+    ("doc.list", "Turn the document's lines into a list"),
+    ("doc.quote", "Turn the document's lines into a quote"),
+    ("doc.code", "Make the document's selection code"),
+    ("doc.link", "Link the document's selection to an address"),
+    ("doc.image", "Insert a picture into the document"),
+    ("doc.diagram", "Start a new diagram in the document"),
+    ("doc.table", "Insert a table into the document"),
+    ("diagram.save", "Save the diagram and close its editor"),
+    ("diagram.cancel", "Close the diagram editor without saving"),
+    ("diagram.zoom_in", "Zoom the diagram in"),
+    ("diagram.zoom_out", "Zoom the diagram out"),
+    ("diagram.zoom_fit", "Fit the diagram to its pane"),
+    (
+        "selection.add_to_doc",
+        "Add the text selected in the chat to the chat's document",
+    ),
+];
+
 /// Builtin mappings of one platform: platform, keys and action (its
 /// description is the one in [`DEFAULTS`]).
 const PLATFORM_DEFAULTS: &[(Platform, &str, &str)] = &[
@@ -819,12 +861,23 @@ pub fn action_description(name: &str) -> Option<&'static str> {
         .iter()
         .find(|(_, action, _)| *action == name)
         .map(|(_, _, description)| *description)
+        .or_else(|| {
+            UNBOUND
+                .iter()
+                .find(|(action, _)| *action == name)
+                .map(|(_, description)| *description)
+        })
 }
 
 /// Names of every builtin action, in table order, without repeats.
 pub fn builtin_actions() -> Vec<&'static str> {
     let mut names: Vec<&'static str> = Vec::new();
     for (_, action, _) in DEFAULTS {
+        if !names.contains(action) {
+            names.push(action);
+        }
+    }
+    for (action, _) in UNBOUND {
         if !names.contains(action) {
             names.push(action);
         }
@@ -1195,6 +1248,44 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_document_actions_have_a_key_or_a_name_to_map() {
+        let keymap = default_keymap_with(DEFAULT_LEADER, Platform::Other);
+        let keys = parse_keys("<leader>d", DEFAULT_LEADER).unwrap();
+        assert_eq!(
+            keymap.lookup(&keys).exact,
+            Some(&Action::builtin("panel.doc"))
+        );
+        let actions = builtin_actions();
+        for name in [
+            "panel.doc",
+            "doc.new",
+            "doc.source",
+            "doc.export",
+            "doc.rename",
+            "doc.delete",
+            "doc.switch",
+            "doc.bold",
+            "doc.italic",
+            "doc.heading",
+            "doc.list",
+            "doc.quote",
+            "doc.code",
+            "doc.link",
+            "doc.image",
+            "doc.diagram",
+            "doc.table",
+            "diagram.save",
+            "diagram.cancel",
+            "diagram.zoom_in",
+            "diagram.zoom_out",
+            "diagram.zoom_fit",
+            "selection.add_to_doc",
+        ] {
+            assert!(actions.contains(&name), "{name}");
+            assert!(action_description(name).is_some(), "{name}");
+        }
+    }
     #[test]
     fn default_table_parses() {
         for (notation, _, _) in DEFAULTS {

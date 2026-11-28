@@ -44,6 +44,7 @@
   padding: 0 var(--gutter);
 
   &__inner {
+    position: relative;
     width: 100%;
     max-width: var(--prose-width);
     min-width: 0;

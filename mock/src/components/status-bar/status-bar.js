@@ -6,6 +6,9 @@ import { cycleMode } from "../../actions.js";
 import { Brand } from "../brand/brand.js";
 import { workspaceLabel } from "../chats-panel/chats-panel.js";
 import { chatRoots } from "../../organization.js";
+import { setDocView } from "../../doc-actions.js";
+import { docsOfChat } from "../../docs.js";
+import { icon } from "../icons.js";
 import "./status-bar.scss";
 
 function gitText(git) {
@@ -26,6 +29,18 @@ function gitTone(git) {
 }
 
 const bar = () => h("span", { class: "sep" }, "│");
+
+/** "▤ v0.6.0 release notes" when the open chat has a doc and the panel is hidden: a click shows it beside the chat. */
+function DocToggle(state) {
+  const docs = docsOfChat(state.docs, state.chat?.id);
+  if (!docs.length || state.ui.docView !== "hidden") return null;
+  const doc = docs.find((d) => d.id === state.ui.docId) ?? docs[0];
+  const more = docs.length > 1 ? ` +${docs.length - 1}` : "";
+  return [
+    h("button", { class: "status__doc", title: "Show the doc beside the chat (<C-g>d)", onClick: () => setDocView("split") }, icon("doc", 12), ` ${doc.title}${more}`),
+    bar(),
+  ];
+}
 
 export function StatusBar(state) {
   const { status, notice, turn } = state;
@@ -51,6 +66,7 @@ export function StatusBar(state) {
       "div",
       { class: "status__side status__side--right" },
       notice && [h("span", { class: `status__notice status__notice--${notice.level}` }, notice.text), bar()],
+      DocToggle(state),
       h("span", { class: `status__git status__git--${gitTone(status.git)}` }, gitText(status.git)),
       bar(),
       h("span", { class: "muted", title: chatRoots(state.organization, state.openChatId).join("\n") || "This chat has no directory" }, workspaceLabel(state)),

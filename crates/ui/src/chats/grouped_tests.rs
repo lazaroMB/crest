@@ -43,6 +43,7 @@ fn panel<'a>(
         projects: vec![project("api", 3, &["a1", "a2"]), project("web", 1, &[])],
         chats: loose.iter().copied().map(chat).collect(),
         archived: Archive::default(),
+        docs: Vec::new(),
     };
     let (view, cx) = cx.add_window_view(move |_, cx| {
         let mut panel = ChatsPanel::new("/w/api".into(), Some("a1".into()), cx);
@@ -244,6 +245,7 @@ fn the_open_project_and_chat_stay_on_the_list() {
         projects: vec![project("a", 1, &["x"])],
         chats: vec![chat("loose")],
         archived: Archive::default(),
+        docs: Vec::new(),
     };
     // (case, whether the catalog has `a` and a chat in none, the open chat,
     // what the list shows)

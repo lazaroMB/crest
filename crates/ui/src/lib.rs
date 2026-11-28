@@ -8,6 +8,7 @@ pub mod blocks;
 pub mod brand;
 pub mod chats;
 pub mod commands;
+pub mod docs;
 pub mod form;
 pub mod help;
 pub mod info;

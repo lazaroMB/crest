@@ -38,10 +38,10 @@ mod rows;
 mod search;
 mod subject;
 
-pub use catalog::{Archive, ArchivedProject, Branch, Catalog, ChatEntry, ProjectChats};
+pub use catalog::{Archive, ArchivedProject, Branch, Catalog, ChatEntry, DocEntry, ProjectChats};
 pub use menu::{ChatOp, PickFor, ProjectOp};
 use menu::{Menu, Page};
-use model::{CurrentChat, listed_with, visible_chats, visible_projects};
+use model::{CurrentChat, listed_with, visible_chats, visible_docs, visible_projects};
 pub use model::{MARK_BAND, STRIP_WIDTH, SidebarWidth};
 pub use organize::{Organize, Organized};
 use subject::Subject;
@@ -122,6 +122,18 @@ pub enum ChatsEvent {
     Dismissed,
     /// The dock at the bottom: open the MCP servers manager.
     Mcp,
+    /// The "+" of the Docs heading: a new document for the open chat.
+    NewDoc,
+    /// A document of the Docs section: open its chat, then the document
+    /// alone over it. The sidebar keeps its width.
+    OpenDoc {
+        /// Workspace root of the chat.
+        root: String,
+        /// Session id of the chat.
+        chat_id: String,
+        /// Document id.
+        doc_id: String,
+    },
 }
 
 /// What a key asks the window to do with the chats (the keymap's `chat.*`
@@ -175,6 +187,8 @@ pub enum ChatRow {
         /// Session id.
         id: String,
     },
+    /// The document `id` of the Docs section.
+    Doc(String),
     /// The heading of the Archived section.
     Archived,
     /// An archived project.
@@ -253,6 +267,8 @@ pub struct ChatsPanel {
     current_root: String,
     current_project: Option<String>,
     current_id: Option<String>,
+    /// The document shown in the doc panel, highlighted in the Docs section.
+    current_doc: Option<String>,
     /// Chats with a turn running, by id: whether they wait on the user.
     activity: HashMap<String, bool>,
     /// The MCP servers in a few words, for the dock at the bottom.
@@ -311,6 +327,7 @@ impl ChatsPanel {
             current_root,
             current_project: None,
             current_id,
+            current_doc: None,
             activity: HashMap::new(),
             mcp: crate::mcp::McpSummary::default(),
             action: None,
@@ -343,6 +360,12 @@ impl ChatsPanel {
             project: None,
             id: chat.id.clone(),
         }));
+        rows.extend(
+            self.visible
+                .docs
+                .iter()
+                .map(|doc| ChatRow::Doc(doc.id.clone())),
+        );
         rows.extend(self.archived_rows());
         rows
     }
@@ -554,6 +577,18 @@ impl ChatsPanel {
                     cx.emit(ChatsEvent::Open { root, id });
                 }
             }
+            ("enter", ChatRow::Doc(doc_id)) => {
+                self.clear_action(cx);
+                if let Some(doc) = self.visible.docs.iter().find(|doc| doc.id == doc_id) {
+                    let chat_id = doc.chat_id.clone();
+                    let root = self.root_of(&chat_id).unwrap_or_default();
+                    cx.emit(ChatsEvent::OpenDoc {
+                        root,
+                        chat_id,
+                        doc_id,
+                    });
+                }
+            }
             ("f2" | "r", row @ (ChatRow::Chat { .. } | ChatRow::Project(_))) => {
                 self.menu_on_row(&row, Page::Rename, window, cx);
             }
@@ -575,6 +610,15 @@ impl ChatsPanel {
     pub fn forget_title(&mut self, id: &str, cx: &mut Context<Self>) {
         if self.pending_titles.remove(id).is_some() {
             self.rebuild();
+            cx.notify();
+        }
+    }
+
+    /// Marks the document `id` as the one the doc panel shows (none when
+    /// the panel is hidden).
+    pub fn set_current_doc(&mut self, id: Option<String>, cx: &mut Context<Self>) {
+        if self.current_doc != id {
+            self.current_doc = id;
             cx.notify();
         }
     }
@@ -679,6 +723,7 @@ impl ChatsPanel {
         self.visible = Catalog {
             projects: visible_projects(&self.listed.projects, &self.query),
             chats: visible_chats(&self.listed.chats, &self.query),
+            docs: visible_docs(&self.listed.docs, &self.query),
             ..Catalog::default()
         };
         if self.selected_index().is_none() {
@@ -1183,6 +1228,56 @@ mod tests {
     }
 
     #[gpui::test]
+    fn the_strip_has_a_docs_button_that_opens_the_chat_doc_and_counts_them(
+        cx: &mut TestAppContext,
+    ) {
+        let docs = vec![
+            doc_entry("d1", "Plan", "b", 10),
+            doc_entry("d2", "Notes", "a", 5),
+            doc_entry("d3", "Older", "a", 1),
+        ];
+        let (view, cx) = panel_with_docs(docs, cx);
+        let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let sink = std::rc::Rc::clone(&events);
+        cx.update(|_, cx| {
+            cx.subscribe(&view, move |_, event: &ChatsEvent, _| {
+                sink.borrow_mut().push(event.clone());
+            })
+            .detach();
+        });
+        view.update(cx, |panel, cx| panel.set_width(SidebarWidth::Strip, cx));
+        assert!(cx.debug_bounds("sidebar-docs").is_some());
+        assert!(
+            cx.debug_bounds("sidebar-docs-count").is_some(),
+            "a count when there are docs"
+        );
+        click("sidebar-docs", cx);
+        // The open chat is `a` (see `panel_with_docs`): its newest doc.
+        let last = events.borrow().last().cloned();
+        assert!(
+            matches!(last, Some(ChatsEvent::OpenDoc { ref chat_id, ref doc_id, .. }) if chat_id == "a" && doc_id == "d2"),
+            "{last:?}"
+        );
+    }
+
+    #[gpui::test]
+    fn the_docs_button_makes_a_doc_when_there_is_none(cx: &mut TestAppContext) {
+        let (view, cx) = panel_with_docs(Vec::new(), cx);
+        let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let sink = std::rc::Rc::clone(&events);
+        cx.update(|_, cx| {
+            cx.subscribe(&view, move |_, event: &ChatsEvent, _| {
+                sink.borrow_mut().push(event.clone());
+            })
+            .detach();
+        });
+        view.update(cx, |panel, cx| panel.set_width(SidebarWidth::Strip, cx));
+        assert!(cx.debug_bounds("sidebar-docs-count").is_none());
+        click("sidebar-docs", cx);
+        assert_eq!(events.borrow().last(), Some(&ChatsEvent::NewDoc));
+    }
+
+    #[gpui::test]
     fn the_strip_and_the_hidden_rows_reach_the_same_actions(cx: &mut TestAppContext) {
         let (view, cx) = panel(vec![project("/work/crest", &["a"])], Some("a"), cx);
         let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
@@ -1220,6 +1315,7 @@ mod tests {
             projects,
             chats: Vec::new(),
             archived: Archive::default(),
+            docs: Vec::new(),
         }
     }
 
@@ -1251,5 +1347,119 @@ mod tests {
         assert_eq!(next_chat_id(&chats, "new"), Some("old"));
         assert_eq!(next_chat_id(&chats, "missing"), Some("new"));
         assert!(next_chat_id(&chats[..1], "new").is_none());
+    }
+
+    fn doc_entry(id: &str, title: &str, chat: &str, at: u64) -> DocEntry {
+        DocEntry {
+            id: id.into(),
+            title: title.into(),
+            chat_id: chat.into(),
+            chat_title: chat.into(),
+            updated_at: at,
+        }
+    }
+
+    /// A panel over a catalog with docs, the full list shown.
+    fn panel_with_docs(
+        docs: Vec<DocEntry>,
+        cx: &mut TestAppContext,
+    ) -> (Entity<ChatsPanel>, &mut VisualTestContext) {
+        let (view, cx) = panel(vec![project("/work/crest", &["a", "b"])], Some("a"), cx);
+        view.update(cx, |panel, cx| {
+            panel.set_catalog(
+                Catalog {
+                    docs,
+                    ..catalog(vec![project("/work/crest", &["a", "b"])])
+                },
+                cx,
+            );
+        });
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        (view, cx)
+    }
+
+    #[gpui::test]
+    fn the_docs_section_lists_every_doc_newest_first_with_a_count_on_its_chat(
+        cx: &mut TestAppContext,
+    ) {
+        let docs = vec![
+            doc_entry("d1", "Plan", "b", 10),
+            doc_entry("d2", "Release notes", "a", 30),
+            doc_entry("d3", "Ideas", "a", 20),
+        ];
+        let (view, cx) = panel_with_docs(docs, cx);
+        let rows = view.read_with(cx, |panel, _| panel.rows());
+        let docs: Vec<&ChatRow> = rows
+            .iter()
+            .filter(|row| matches!(row, ChatRow::Doc(_)))
+            .collect();
+        assert_eq!(
+            docs,
+            [
+                &ChatRow::Doc("d2".into()),
+                &ChatRow::Doc("d3".into()),
+                &ChatRow::Doc("d1".into())
+            ],
+            "newest first, after the chats"
+        );
+        assert!(cx.debug_bounds("chats-doc-0").is_some());
+        assert!(cx.debug_bounds("chats-doc-2").is_some());
+        // Chat `a` has two docs and `b` one: a glyph and a count on each row.
+        assert!(cx.debug_bounds("chats-docs").is_some());
+        view.read_with(cx, |panel, _| {
+            assert_eq!(panel.listed.docs_of("a"), 2);
+            assert_eq!(panel.listed.docs_of("b"), 1);
+        });
+    }
+
+    #[gpui::test]
+    fn a_doc_row_opens_its_chat_with_the_doc_by_click_and_by_enter(cx: &mut TestAppContext) {
+        let (view, cx) = panel_with_docs(vec![doc_entry("d1", "Plan", "b", 10)], cx);
+        let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let sink = std::rc::Rc::clone(&events);
+        cx.update(|_, cx| {
+            cx.subscribe(&view, move |_, event: &ChatsEvent, _| {
+                sink.borrow_mut().push(event.clone());
+            })
+            .detach();
+        });
+        let open = ChatsEvent::OpenDoc {
+            root: "/work/crest".into(),
+            chat_id: "b".into(),
+            doc_id: "d1".into(),
+        };
+        click("chats-doc-0", cx);
+        assert_eq!(events.borrow().as_slice(), std::slice::from_ref(&open));
+        // The keyboard reaches the row like a chat row, and the width stays.
+        view.update_in(cx, |panel, window, cx| {
+            panel.focus(window, cx);
+            panel.selected = Some(ChatRow::Doc("d1".into()));
+            panel.row_key("enter", ChatRow::Doc("d1".into()), window, cx);
+        });
+        assert_eq!(*events.borrow(), [open.clone(), open]);
+        assert_eq!(
+            view.read_with(cx, |panel, _| panel.width()),
+            SidebarWidth::Full
+        );
+    }
+
+    #[gpui::test]
+    fn the_sidebar_search_filters_the_docs(cx: &mut TestAppContext) {
+        let docs = vec![
+            doc_entry("d1", "Plan", "b", 10),
+            doc_entry("d2", "Release notes", "a", 30),
+        ];
+        let (view, cx) = panel_with_docs(docs, cx);
+        view.update_in(cx, |panel, window, cx| panel.open_search(window, cx));
+        cx.run_until_parked();
+        cx.simulate_input("rel");
+        cx.run_until_parked();
+        let rows = view.read_with(cx, |panel, _| panel.rows());
+        let docs: Vec<&ChatRow> = rows
+            .iter()
+            .filter(|row| matches!(row, ChatRow::Doc(_)))
+            .collect();
+        assert_eq!(docs, [&ChatRow::Doc("d2".into())]);
     }
 }

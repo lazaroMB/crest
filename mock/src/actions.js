@@ -1,7 +1,8 @@
 // Everything the UI can do. Components call these; they talk to the mock server and update the state.
 
-import { toBlob } from "html-to-image";
 import { api } from "./api.js";
+import { docCommand, docForChat, setDocView, upsertDoc } from "./doc-actions.js";
+import { docsOfChat, placeOf } from "./docs.js";
 import { setState, setTurn, setUi, state } from "./store.js";
 import { NOTICE_TTL_MS, SHOW_AFTER_MS, recordStep } from "./visibility.js";
 import { nextMode, nextSidebar } from "./modes.js";
@@ -52,7 +53,8 @@ export function toggleInfo() {
 /**
  * Loads the workbench. The URL can pick the starting point:
  *   ?chat=c-release  ?chat=new  ?theme=twocrest-light  ?width=1024  ?prompt=fix the bug
- *   ?sidebar=strip|hidden  ?mode=research|deep  ?mcp  ?mcp=add  ?mcp=github&tab=tools
+ *   ?sidebar=strip|hidden  ?mode=research|deep  ?doc=split|doc
+ *   ?mcp  ?mcp=add  ?mcp=github&tab=tools
  */
 export async function init() {
   const params = new URLSearchParams(location.search);
@@ -75,6 +77,7 @@ export async function init() {
   if (chat === "new") await newChat();
   else await openChat(chat ?? workbench.openChatId);
 
+  if (params.get("doc")) setDocView(params.get("doc"));
   if (params.get("prompt")) send(params.get("prompt"));
 }
 
@@ -100,6 +103,7 @@ export async function openChat(id) {
   setState({ chat, openChatId: id, notice: null, notices: [], toast: null });
   setTurn({ steps: [] });
   setUi({ selected: null, menu: null, outlineOpen: false, infoOpen: false, focus: "prompt" });
+  docForChat(id);
   if (id === "c-kitchen") showVisibility();
 }
 
@@ -120,6 +124,7 @@ export async function newChat(projectId = null) {
   await refreshProjects();
   setState({ chat, openChatId: chat.id });
   setUi({ selected: null, focus: "prompt", menu: null });
+  docForChat(chat.id);
 }
 
 export async function renameChat(id, title) {
@@ -140,12 +145,20 @@ export async function deleteChat(id) {
   }
 }
 
-/** Promotes a chat into a project, or takes it out with `null`. The chat keeps its history. */
+/** Where a chat's docs live now, for the notice after the chat changes project. */
+function docsWhere(chatId) {
+  const docs = docsOfChat(state.docs, chatId);
+  if (!docs.length) return "";
+  const { dir } = placeOf(docs[0], state.organization);
+  return docs.length === 1 ? ` · its doc now in ${dir}` : ` · ${docs.length} docs now in ${dir}`;
+}
+
+/** Promotes a chat into a project, or takes it out with `null`. The chat keeps its history; its docs follow it. */
 export async function moveChat(chatId, projectId) {
   if (await organize(() => api.moveChat(chatId, projectId))) {
     if (state.chat?.id === chatId) state.chat.projectId = projectId;
     const name = state.organization.projects.find((p) => p.id === projectId)?.name;
-    notice("info", projectId ? `moved to ${name}` : "now a standalone chat");
+    notice("info", `${projectId ? `moved to ${name}` : "now a standalone chat"}${docsWhere(chatId)}`);
     setUi({ menu: null });
   }
 }
@@ -154,7 +167,7 @@ export async function moveChat(chatId, projectId) {
 export async function createProject(name, root, chatId) {
   if (await organize(() => api.createProject({ name, roots: [root], chatId }))) {
     if (chatId && state.chat?.id === chatId) state.chat.projectId = state.organization.chats.find((c) => c.id === chatId)?.projectId;
-    notice("info", `project ${name} created`);
+    notice("info", `project ${name} created${chatId ? docsWhere(chatId) : ""}`);
     setUi({ menu: null });
   }
 }
@@ -163,7 +176,15 @@ export async function addProjectRoot(projectId, root) {
   if (await organize(() => api.patchProject(projectId, { addRoot: root }))) setUi({ menu: { projectId, mode: "menu" } });
 }
 
-export const removeProjectRoot = (projectId, root) => organize(() => api.patchProject(projectId, { removeRoot: root }));
+/** Dropping the first directory moves every doc of the project to the new first one. */
+export async function removeProjectRoot(projectId, root) {
+  const before = state.organization.projects.find((p) => p.id === projectId)?.roots[0];
+  if (!(await organize(() => api.patchProject(projectId, { removeRoot: root })))) return;
+  const after = state.organization.projects.find((p) => p.id === projectId)?.roots[0];
+  if (!before || !after || before === after) return;
+  const n = state.organization.chats.filter((c) => c.projectId === projectId).reduce((sum, c) => sum + docsOfChat(state.docs, c.id).length, 0);
+  if (n) notice("info", `${n} doc${n === 1 ? "" : "s"} now in ${after}/.crest/docs`);
+}
 
 export async function renameProject(projectId, name) {
   if (await organize(() => api.patchProject(projectId, { name }))) setUi({ menu: null });
@@ -193,6 +214,7 @@ export async function branchChat(chatId) {
   await refreshProjects();
   setState({ chat, openChatId: chat.id });
   setUi({ selected: null, focus: "prompt", menu: null });
+  docForChat(chat.id);
   notice("info", `branched from "${chat.branchedFrom?.title ?? "chat"}"`);
 }
 
@@ -243,11 +265,15 @@ export function send(prompt) {
   startTurn(prompt);
 }
 
+/** The turn sees the doc in the panel and the passages passed with the prompt, which the prompt then drops. */
 function startTurn(prompt) {
   const chatId = state.chat.id;
+  const context = state.ui.promptContext;
+  const referenced = [...context].reverse().find((c) => c.kind === "doc");
   setTurn({ chatId, busy: true, activity: { verb: "Working", startedAt: Date.now() } });
+  if (context.length) setUi({ promptContext: [] });
   markChat(chatId, "running");
-  api.turn(chatId, prompt, (event) => onTurnEvent(chatId, event));
+  api.turn(chatId, prompt, (event) => onTurnEvent(chatId, event), { docId: referenced?.docId ?? state.ui.docId, context });
 }
 
 function onTurnEvent(chatId, event) {
@@ -272,6 +298,12 @@ function onTurnEvent(chatId, event) {
       return setState({ status: { ...state.status, ...event.status } });
     case "notice":
       return notice(event.notice.level, event.notice.text);
+    case "doc": {
+      upsertDoc(event.doc);
+      if (here && event.doc.chatId === chatId && state.ui.docId !== event.doc.id) setUi({ docId: event.doc.id });
+      if (here && event.doc.chatId === chatId && state.ui.docView === "hidden") setUi({ docView: "split" });
+      return;
+    }
     case "chat":
       if (here) state.chat.title = event.title;
       return refreshProjects();
@@ -324,6 +356,9 @@ export function runCommand(text) {
       return true;
     case "/research":
       return false;
+    case "/doc":
+      docCommand(args);
+      return true;
     case "/mcp":
       mcpCommand(args);
       return true;
@@ -407,35 +442,6 @@ export function copySelected() {
   const text = block.markdown ?? block.text ?? JSON.stringify(block, null, 2);
   navigator.clipboard?.writeText(text);
   notice("info", "copied");
-}
-
-/** Rasterizes `node` (a chart block) and puts it on the clipboard as a PNG. */
-export async function copyChartImage(node) {
-  if (!node) return;
-  node.classList.add("chart--capturing");
-  try {
-    // `--background` lives on `.window[data-theme]`, not `:root`, but custom
-    // properties inherit down from any ancestor so reading it off the node works.
-    const bg = getComputedStyle(node).getPropertyValue("--background").trim();
-    const blob = await toBlob(node, { pixelRatio: 2, backgroundColor: bg || undefined });
-    if (!blob) throw new Error("rendering failed");
-    if (window.ClipboardItem && navigator.clipboard?.write) {
-      await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
-      notice("info", "chart copied as image");
-    } else {
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = "chart.png";
-      link.click();
-      URL.revokeObjectURL(url);
-      notice("warning", "clipboard images unsupported here · downloaded instead");
-    }
-  } catch (err) {
-    notice("error", `couldn't copy chart image: ${err.message}`);
-  } finally {
-    node.classList.remove("chart--capturing");
-  }
 }
 
 // MCP servers: the manager modal (components/mcp-manager). Every change is live,

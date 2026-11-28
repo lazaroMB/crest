@@ -571,6 +571,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
+ "similar 3.2.0",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -2518,6 +2519,7 @@ dependencies = [
 name = "domain"
 version = "0.20.0"
 dependencies = [
+ "base64 0.23.1",
  "insta",
  "schemars",
  "serde",
@@ -3585,6 +3587,16 @@ dependencies = [
  "unicode-segmentation",
  "web-time",
  "windows 0.58.0",
+]
+
+[[package]]
+name = "gpui-bidi"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "12ca465817de1670c6c1a830c0f4a0a665434e4d02c30a7ffc6362e0194f9cc9"
+dependencies = [
+ "gpui-pre",
+ "unicode-bidi",
 ]
 
 [[package]]
@@ -10427,6 +10439,7 @@ dependencies = [
  "usvg 0.46.0",
  "uuid",
  "wgpu",
+ "zorite-editor",
 ]
 
 [[package]]
@@ -12363,6 +12376,22 @@ name = "zmij"
 version = "1.0.23"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
+
+[[package]]
+name = "zorite-editor"
+version = "0.11.3"
+dependencies = [
+ "gpui-bidi",
+ "gpui-pre",
+ "unicode-segmentation",
+ "zorite-markdown",
+]
+
+[[package]]
+name = "zorite-markdown"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "59383128cff3700ff49464f1974e3c6969b5d5efe4cc2ee37bb41dcdb5feac44"
 
 [[package]]
 name = "zstd"

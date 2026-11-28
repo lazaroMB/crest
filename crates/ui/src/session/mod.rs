@@ -111,6 +111,7 @@ use crate::timeline::TimelineView;
 use crate::tree::{TreePanel, TreePanelEvent};
 
 mod commands;
+mod docs;
 mod keys;
 mod login;
 mod model;
@@ -168,6 +169,12 @@ pub struct TurnRequest {
     pub role: Option<ModelRole>,
     /// Cancelled by `Ctrl+C`.
     pub cancel: CancelToken,
+    /// Text the UI adds before the prompt the model gets: a document
+    /// reference or the passage selected in a document.
+    pub context: Vec<String>,
+    /// Title of the document the message names (a `/doc use` chip), shown
+    /// as `↳ <title>` under the prompt in the timeline.
+    pub doc_title: Option<String>,
     /// The skill the user ran (`/name args`), loaded before the model
     /// answers.
     pub skill: Option<application_core::usecases::run_turn::SkillCall>,
@@ -327,6 +334,20 @@ pub trait SessionController: Send + Sync {
         futures::future::ready(Err("this session cannot rename its chat".into())).boxed()
     }
 
+    /// Saves the open chat now, so the store knows it: a document needs the
+    /// chat's row to exist. The default does nothing.
+    fn ensure_saved(&self) -> BoxFuture<'static, Result<(), String>> {
+        futures::future::ready(Ok(())).boxed()
+    }
+
+    /// Runs `job` where the controller's adapters can run (the store and the
+    /// document files use tokio, which GPUI's executors are not part of).
+    /// Returns the job when it has no runtime of its own: the session then
+    /// polls it itself.
+    fn run_on_runtime(&self, job: BoxFuture<'static, ()>) -> Option<BoxFuture<'static, ()>> {
+        Some(job)
+    }
+
     /// Runs the Lua function `id` of a mapping with `args`.
     fn run_callback(&self, id: u64, args: serde_json::Value) -> BoxFuture<'static, Reply> {
         let _ = (id, args);
@@ -455,6 +476,18 @@ pub trait SessionController: Send + Sync {
 /// The block that shows a prompt sent by the user in the timeline.
 pub use application_core::usecases::user_blocks::prompt_block;
 
+/// [`prompt_block`] for a message that names a document: its last line is
+/// `↳ <title>`.
+#[must_use]
+pub fn prompt_block_for(prompt: &str, doc_title: Option<&str>) -> Block {
+    let mut block = prompt_block(prompt);
+    if let (Some(title), domain::block::BlockKind::Text { markdown }) = (doc_title, &mut block.kind)
+    {
+        markdown.push_str(&format!("\n↳ {title}\n"));
+    }
+    block
+}
+
 /// What `@` reference a file chosen in the tree or a picker inserts.
 /// A path with spaces is quoted: `@"My Docs/a.rs":12 `.
 pub fn file_reference(path: &WorkspacePath, line: Option<u64>) -> String {
@@ -519,6 +552,9 @@ pub struct SessionParts {
     /// once this session is clear of login, model picking and other modals.
     /// Tests and examples set [`crate::tour::VERSION`] so it stays closed.
     pub tutorial_seen: Option<u32>,
+    /// The chats' documents, shared with the agent's `doc_*` tools so a
+    /// change the agent writes reaches the panel; `None` without a store.
+    pub docs: Option<Arc<application_core::usecases::docs::DocService>>,
 }
 
 impl SessionParts {
@@ -552,6 +588,7 @@ impl SessionParts {
             project_id: None,
             resume_pending: false,
             tutorial_seen: Some(crate::tour::VERSION),
+            docs: None,
         }
     }
 }
@@ -579,6 +616,21 @@ pub enum SessionEvent {
     Tour,
     /// The MCP servers changed: the sidebar's dock shows this summary.
     Mcp(crate::mcp::McpSummary),
+    /// Open the document `doc_id` of the chat `session_id` in `view`: the
+    /// window opens that chat first (when it is not this one).
+    OpenDoc {
+        /// Session id of the document's chat.
+        session_id: String,
+        /// Document id.
+        doc_id: String,
+        /// How to show it.
+        view: crate::docs::DocView,
+    },
+    /// The document panel changed view; the window keeps it for the next
+    /// chat it opens.
+    DocView(crate::docs::DocView),
+    /// A document changed: the sidebar lists the documents again.
+    DocsChanged,
 }
 
 /// The session: owns the views of the main window and the turn in flight.
@@ -637,6 +689,8 @@ pub struct Session {
     tour_saved_prompt: Option<String>,
     /// Version already stored, so a later close does not write again.
     tutorial_seen: Option<u32>,
+    /// The chat's documents and the panel that shows one.
+    docs: docs::DocState,
     _git_timer: Task<()>,
     _events: Task<()>,
     _forms: Option<Task<()>>,
@@ -657,6 +711,7 @@ pub fn open(
     let session = cx.new(|cx| Session::new(parts, root.downgrade(), window, cx));
     let s = session.read(cx);
     let login = s.login.clone();
+    let doc_panel = s.docs.panel.clone();
     let (timeline, input, status, activity, tree, picker, approval, modal) = (
         s.timeline.clone(),
         s.input.clone(),
@@ -672,6 +727,7 @@ pub fn open(
         root.set_activity(activity, cx);
         root.set_input(input.clone(), cx);
         root.set_status(status, cx);
+        root.set_doc_panel(doc_panel, cx);
         let panel = tree.clone();
         root.set_side_panel(tree, move |cx| panel.read(cx).width(), cx);
         root.push_overlay(picker, cx);
@@ -714,6 +770,8 @@ impl Session {
             needs_model,
             resume_pending,
             tutorial_seen,
+            session_id,
+            docs,
             ..
         } = parts;
         let timeline = cx.new(|cx| {
@@ -767,6 +825,11 @@ impl Session {
             modal
         });
         let login = cx.new(|cx| LoginView::new(window, cx));
+        let doc_panel = cx.new(|cx| crate::docs::DocPanel::new(window, cx));
+        let doc_root = workspace_dir
+            .as_ref()
+            .map(|dir| dir.display().to_string())
+            .unwrap_or_default();
 
         if let Some(dir) = &workspace_dir {
             tree.update(cx, |tree, cx| tree.watch_dir(dir, cx));
@@ -864,6 +927,7 @@ impl Session {
             tour: None,
             tour_saved_prompt: None,
             tutorial_seen,
+            docs: docs::DocState::new(docs, session_id.as_deref(), doc_root, doc_panel),
             _git_timer: Self::git_timer(cx),
             _events: Self::consume(events, cx),
             _forms: forms.map(|forms| Self::listen_forms(forms, window, cx)),
@@ -871,6 +935,7 @@ impl Session {
             _subscriptions: subscriptions,
         };
         this._mcp_changes = Some(this.watch_mcp(cx));
+        this.wire_docs(window, cx);
         this.load_commands(cx);
         this.refresh_git(cx);
         if resume_pending {
@@ -1175,6 +1240,7 @@ impl Session {
         });
         self.timeline
             .update(cx, |timeline, cx| timeline.apply_all(events, cx));
+        self.refresh_doc_strip(cx);
         if agent_ended {
             self.wake_pending = true;
             self.try_wake(cx);

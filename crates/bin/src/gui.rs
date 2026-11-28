@@ -715,9 +715,16 @@ pub fn plugin_reply(result: Result<PluginOutput, PluginError>) -> Reply {
     }
 }
 
-/// Shows the prompt and the images pasted with it in the timeline.
-fn emit_user_blocks(app: &App, prompt: &str, images: &[ImageAttachment]) {
-    for block in user_blocks(prompt, images) {
+/// Shows the prompt and the images pasted with it in the timeline; a prompt
+/// that names a document ends with `↳ <title>`.
+fn emit_user_blocks(app: &App, prompt: &str, images: &[ImageAttachment], doc_title: Option<&str>) {
+    let mut blocks = user_blocks(prompt, images);
+    if let (Some(title), Some(first)) = (doc_title, blocks.first_mut())
+        && !prompt.trim().is_empty()
+    {
+        *first = ui::session::prompt_block_for(prompt, Some(title));
+    }
+    for block in blocks {
         app.emit(DomainEvent::BlockAdded { block });
     }
 }
@@ -733,7 +740,12 @@ pub async fn run_turn(app: &mut App, request: TurnRequest) -> TurnEnd {
 /// [`run_turn`] with `context` (the gate of a side chat) before the prompt
 /// the model gets, after the output of the `/!` commands.
 pub async fn run_turn_in(app: &mut App, request: TurnRequest, context: Option<String>) -> TurnEnd {
-    emit_user_blocks(app, &request.prompt, &request.images);
+    emit_user_blocks(
+        app,
+        &request.prompt,
+        &request.images,
+        request.doc_title.as_deref(),
+    );
     let images = request.images;
     let mut prompt = request.prompt;
     let mut before = std::mem::take(
@@ -742,6 +754,7 @@ pub async fn run_turn_in(app: &mut App, request: TurnRequest, context: Option<St
             .lock()
             .unwrap_or_else(PoisonError::into_inner),
     );
+    before.extend(request.context);
     before.extend(context);
     if !before.is_empty() {
         let mut context = before.join("\n\n");
@@ -921,7 +934,7 @@ async fn post_images(
     images: Vec<ImageAttachment>,
 ) -> Reply {
     let app = app.lock().await;
-    emit_user_blocks(&app, &caption, &images);
+    emit_user_blocks(&app, &caption, &images, None);
     if let Err(err) = app.save().await {
         app.warn(format!("could not save the session: {err}"));
     }
@@ -1167,6 +1180,8 @@ pub fn command_turn(prompt: &str) -> TurnRequest {
         model_override: None,
         role: None,
         cancel: CancelToken::new(),
+        context: Vec::new(),
+        doc_title: None,
         skill: None,
     }
 }
@@ -1411,6 +1426,20 @@ impl SessionController for UiController {
                 guard.session.title = Some(title);
                 guard.save().await.map_err(|err| err.to_string())
             })
+            .map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
+            .boxed()
+    }
+
+    fn run_on_runtime(&self, job: BoxFuture<'static, ()>) -> Option<BoxFuture<'static, ()>> {
+        self.handle.spawn(job);
+        None
+    }
+
+    fn ensure_saved(&self) -> BoxFuture<'static, Result<(), String>> {
+        let app = Arc::clone(&self.app);
+        // A running turn holds the app until it ends and saves: this waits.
+        self.handle
+            .spawn(async move { app.lock().await.save().await.map_err(|err| err.to_string()) })
             .map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
             .boxed()
     }
@@ -1897,6 +1926,7 @@ pub fn session_parts(
             let session_id = app.session.id.to_string();
             let project_id = app.session.project_id.map(|id| id.to_string());
             let resume_pending = !app.session.pending_tool_uses().is_empty();
+            let docs = app.docs.clone();
             let controller = Arc::new(
                 UiController::new(app, handle.clone()).with_api_keys(Arc::clone(&api_keys)),
             );
@@ -1919,6 +1949,7 @@ pub fn session_parts(
             parts.session_id = Some(session_id);
             parts.project_id = project_id;
             parts.resume_pending = resume_pending;
+            parts.docs = docs;
             (parts, workspace)
         }
         Err(err) => {
@@ -2078,6 +2109,8 @@ pub struct Launcher {
     overrides: Overrides,
     handle: Handle,
     browser: Arc<dyn ProjectBrowserPort>,
+    /// The documents service over the session database, once it exists.
+    docs: Mutex<Option<Arc<application::usecases::docs::DocService>>>,
 }
 
 impl Launcher {
@@ -2093,7 +2126,21 @@ impl Launcher {
             overrides,
             handle,
             browser,
+            docs: Mutex::new(None),
         }
+    }
+
+    /// The documents service over the session database, built on first use
+    /// (the file may not exist yet) and shared by the sidebar's actions.
+    fn docs_service(&self) -> Option<Arc<application::usecases::docs::DocService>> {
+        let mut docs = self.docs.lock().unwrap_or_else(PoisonError::into_inner);
+        if docs.is_none() {
+            let path = self.session_db().filter(|path| path.exists())?;
+            let store = adapter_store::SqliteSessionStore::open(&path).ok()?;
+            let store: Arc<dyn application::ports::store::SessionStorePort> = Arc::new(store);
+            *docs = Some(crate::root::docs::doc_service(store, Some(&path), None));
+        }
+        docs.clone()
     }
 
     /// The session database, when its path is known.
@@ -2180,7 +2227,11 @@ impl ProjectOpener for Launcher {
             let listed = application::usecases::sidebar::sidebar(&store).await;
             let archived = application::usecases::sidebar::archived(&store).await;
             match (listed, archived) {
-                (Ok(listed), Ok(archived)) => crate::catalog::catalog_of(listed, archived),
+                (Ok(listed), Ok(archived)) => {
+                    let mut catalog = crate::catalog::catalog_of(listed, archived);
+                    catalog.docs = catalog_docs(&store, &catalog).await;
+                    catalog
+                }
                 _ => Catalog::default(),
             }
         })
@@ -2221,13 +2272,18 @@ impl ProjectOpener for Launcher {
 
     fn organize(&self, change: Organize) -> BoxFuture<'static, Result<Organized, String>> {
         let path = self.session_db();
+        let docs = self.docs_service();
         self.handle
             .spawn(async move {
                 let store = open_session_store(path)?;
-                crate::organize::run(&store, change).await
+                crate::organize::run(&store, docs.as_deref(), change).await
             })
             .map(|joined| joined.unwrap_or_else(|err| Err(err.to_string())))
             .boxed()
+    }
+
+    fn docs(&self) -> Option<Arc<application::usecases::docs::DocService>> {
+        self.docs_service()
     }
 
     fn recent(&self) -> BoxFuture<'static, Vec<RecentWorkspace>> {
@@ -2307,6 +2363,31 @@ fn theme_choices(
                 name: entry.name,
                 origin: origin.to_owned(),
                 theme: resolved.theme,
+            })
+        })
+        .collect()
+}
+
+/// The documents the sidebar lists, newest first: those of the chats it
+/// shows (an archived chat's stay out), each with its chat's title.
+async fn catalog_docs(
+    store: &adapter_store::SqliteSessionStore,
+    catalog: &Catalog,
+) -> Vec<ui::chats::DocEntry> {
+    use application::ports::store::DocStorePort as _;
+    let Ok(docs) = store.docs().await else {
+        return Vec::new();
+    };
+    docs.into_iter()
+        .filter_map(|doc| {
+            let chat_id = doc.session_id.to_string();
+            let chat_title = catalog.chat(&chat_id)?.title.clone();
+            Some(ui::chats::DocEntry {
+                id: doc.id.to_string(),
+                title: doc.title,
+                chat_id,
+                chat_title,
+                updated_at: doc.updated_at,
             })
         })
         .collect()
@@ -2548,6 +2629,8 @@ mod tests {
             model_override: None,
             role: None,
             cancel: CancelToken::new(),
+            context: Vec::new(),
+            doc_title: None,
             skill: None,
         }));
         assert_eq!(end, TurnEnd::Unavailable("the API key is missing".into()));

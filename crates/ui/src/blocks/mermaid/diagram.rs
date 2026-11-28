@@ -166,6 +166,44 @@ fn color(color: domain::theme::Color) -> Color {
     Color::rgba(color.r, color.g, color.b, color.a)
 }
 
+/// rusty-mermaid paints an xychart with its own fixed colors: a pale plot
+/// box and a Tableau palette. They become the theme's: no plot box (the
+/// page shows through) and the chart colors the chart blocks use.
+/// `None` drops the primitive.
+fn xychart_recolor(primitive: &Primitive, colors: &ColorTheme) -> Option<Primitive> {
+    const PLOT_BOX: Color = Color::rgba(245, 245, 250, 200);
+    const PALETTE: [Color; 8] = [
+        Color::rgb(78, 121, 167),
+        Color::rgb(242, 142, 44),
+        Color::rgb(225, 87, 89),
+        Color::rgb(118, 183, 178),
+        Color::rgb(89, 161, 79),
+        Color::rgb(237, 201, 73),
+        Color::rgb(175, 122, 161),
+        Color::rgb(255, 157, 167),
+    ];
+    let themed = |c: Color| {
+        PALETTE
+            .iter()
+            .position(|p| (p.r, p.g, p.b) == (c.r, c.g, c.b))
+            .map(|ix| color(colors.color(&format!("chart.{}", ix % 5 + 1))))
+    };
+    let mut out = primitive.clone();
+    match &mut out {
+        Primitive::Rect { style, .. } => match style.fill {
+            Some(c) if c == PLOT_BOX => return None,
+            Some(c) => style.fill = themed(c).or(style.fill),
+            None => {}
+        },
+        Primitive::Path { style, .. } | Primitive::Circle { style, .. } => {
+            style.stroke = style.stroke.and_then(|c| themed(c).or(Some(c)));
+            style.fill = style.fill.and_then(|c| themed(c).or(Some(c)));
+        }
+        _ => {}
+    }
+    Some(out)
+}
+
 /// Parses and lays out `source` in the built-in dark theme.
 ///
 /// # Errors
@@ -183,7 +221,10 @@ pub fn parse(source: &str) -> Result<Diagram, String> {
 /// understands, when it panics, or when the result is empty.
 pub fn parse_with(source: &str, colors: &ColorTheme) -> Result<Diagram, String> {
     let theme = crest_theme(colors);
-    let source = wrap::wrap_labels(source, wrap::LABEL_COLUMNS);
+    // `usecase-beta` is not drawn by rusty-mermaid: a flowchart stands in.
+    let source = super::usecase::to_flowchart(source)
+        .map_or(std::borrow::Cow::Borrowed(source), std::borrow::Cow::Owned);
+    let source = wrap::wrap_labels(&source, wrap::LABEL_COLUMNS);
     let scene = catch_unwind(AssertUnwindSafe(|| rusty_mermaid::render(&source, &theme)))
         .map_err(|_| "the Mermaid parser crashed on this input".to_owned())?
         .map_err(|err| format!("cannot parse the diagram: {err}"))?;
@@ -191,7 +232,18 @@ pub fn parse_with(source: &str, colors: &ColorTheme) -> Result<Diagram, String> 
         theme: &theme,
         shapes: Vec::new(),
     };
+    let is_xy = source
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty() && !l.starts_with("%%"))
+        .is_some_and(|l| l.starts_with("xychart"));
     for element in scene.elements() {
+        if is_xy {
+            if let Some(primitive) = xychart_recolor(&element.primitive, colors) {
+                flattener.primitive(&primitive, Affine::IDENTITY);
+            }
+            continue;
+        }
         flattener.primitive(&element.primitive, Affine::IDENTITY);
     }
     if flattener.shapes.is_empty() {

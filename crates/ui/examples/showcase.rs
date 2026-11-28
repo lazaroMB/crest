@@ -18,7 +18,8 @@
 //! modal), `model` (a 3D model opened with `/open`), `modal` (a plugin
 //! modal with rich content), `blocks` (a chart and tables), `routing` (how
 //! a prompt is routed) and `technical` (a statistics card with its
-//! provenance, a trace waterfall and a form that waits for an answer). Each
+//! provenance, a trace waterfall and a form that waits for an answer). The `doc-*` scenes show a chat's document: `doc-split`, `doc-alone`,
+//! `doc-source`, `doc-page`, `doc-diagram`, `doc-new-diagram`, `doc-usecase`, `doc-bar`, `doc-rail`, `doc-block-menu` and `doc-commands`. Each
 //! one prints `showcase: ready <w>x<h> scale <s> bounds <x>,<y>,<w>,<h>` once
 //! it is on screen and stays open; `scripts/screenshots.sh` captures the
 //! window then.
@@ -37,6 +38,7 @@ use application_core::ports::events::{DomainEvent, EventSink, NoticeLevel};
 use application_core::ports::form::{FormPort as _, FormRequest, FormRequestId};
 use application_core::ports::projects::{ProjectBrowserPort, RecentWorkspace};
 use application_core::usecases::commands::{Command, ResearchCommand};
+use application_core::usecases::docs::DocService;
 use application_core::usecases::permissions::RuleListing;
 use application_testing::fs::InMemoryFs;
 use application_testing::projects::InMemoryDirs;
@@ -68,7 +70,10 @@ use futures::future::BoxFuture;
 use gpui::{App, Entity, Window};
 use serde_json::json;
 use ui::approval::UiApproval;
-use ui::chats::{Archive, ArchivedProject, Branch, Catalog, ChatEntry, ProjectChats, SidebarWidth};
+use ui::chats::{
+    Archive, ArchivedProject, Branch, Catalog, ChatEntry, DocEntry, ProjectChats, SidebarWidth,
+};
+use ui::docs::DocView;
 use ui::form::UiForm;
 use ui::help::{CommandRow, HelpSnapshot, PluginRow, ToolRow, ToolSource};
 use ui::session::{
@@ -1050,6 +1055,7 @@ impl SessionController for Fake {
 /// The projects and chats the sidebar lists.
 struct Opener {
     catalog: Catalog,
+    docs: Arc<DocService>,
 }
 
 impl ProjectOpener for Opener {
@@ -1068,6 +1074,10 @@ impl ProjectOpener for Opener {
     fn catalog(&self) -> BoxFuture<'static, Catalog> {
         futures::future::ready(self.catalog.clone()).boxed()
     }
+
+    fn docs(&self) -> Option<Arc<DocService>> {
+        Some(self.docs.clone())
+    }
 }
 
 /// Two projects (one pinned, one with a branched chat), two Wild Chats and
@@ -1085,7 +1095,7 @@ fn catalog() -> Catalog {
                 chats: vec![
                     ChatEntry {
                         pinned: true,
-                        ..chat("latest", "add() and negative numbers")
+                        ..chat(LATEST, "add() and negative numbers")
                     },
                     ChatEntry {
                         branch: Some(Branch {
@@ -1094,7 +1104,7 @@ fn catalog() -> Catalog {
                         }),
                         ..chat("branch", "try the checked_add route instead")
                     },
-                    chat("c3", "release notes for v0.18"),
+                    chat(NOTES_CHAT, "release notes for v0.18"),
                     chat("c4", "why is the board slow on Intel?"),
                 ],
             },
@@ -1125,7 +1135,174 @@ fn catalog() -> Catalog {
             }],
             chats: vec![chat("old1", "first prototype of the board")],
         },
+        docs: vec![
+            DocEntry {
+                id: NOTES_DOC.into(),
+                title: "v0.18 release notes".into(),
+                chat_id: LATEST.into(),
+                chat_title: "add() and negative numbers".into(),
+                updated_at: 2_000,
+            },
+            DocEntry {
+                id: PLAN_DOC.into(),
+                title: "Plan: negative numbers".into(),
+                chat_id: NOTES_CHAT.into(),
+                chat_title: "release notes for v0.18".into(),
+                updated_at: 1_000,
+            },
+        ],
     }
+}
+
+/// The open chat of the showcase (a uuid: documents belong to chats by it).
+const LATEST: &str = "5d1c0a52-0000-4000-8000-000000000001";
+/// A second chat, so the Docs section lists one document per chat.
+const NOTES_CHAT: &str = "5d1c0a52-0000-4000-8000-000000000002";
+/// The release notes of the open chat.
+const NOTES_DOC: &str = "d0c00000-0000-4000-8000-000000000001";
+/// Two more documents of the open chat, so the block menu names three.
+const LOG_DOC: &str = "d0c00000-0000-4000-8000-000000000003";
+const QUESTIONS_DOC: &str = "d0c00000-0000-4000-8000-000000000004";
+/// The plan of the second chat.
+const PLAN_DOC: &str = "d0c00000-0000-4000-8000-000000000002";
+
+const NOTES_MD: &str = "# v0.18 release notes
+
+**v0.18 in numbers**: 42 commits, 3 features, 1 fix.
+
+## Highlights
+
+- Research mode streams its stages into the timeline.
+- Charts can be copied as images.
+- The sidebar groups chats by project.
+
+## What changed
+
+| feature | crate | tests |
+| --- | --- | ---: |
+| 3D models in /open | ui | 31 |
+| decision model | app | 27 |
+| prompt history | ui | 9 |
+
+## How a turn flows
+
+```mermaid
+flowchart LR
+  prompt[Prompt] --> route{Route}
+  route --> chat[Chat]
+  route --> research[Research]
+  chat --> answer[Answer]
+  research --> answer
+```
+
+The parser rewrite landed behind a flag in v0.17 and is now the default.
+
+```mermaid
+sequenceDiagram
+  User->>Agent: add() is wrong for negatives
+  Agent->>Repo: grep fn add
+  Repo-->>Agent: src/math.rs:2
+  Agent-->>User: fixed, tests pass
+```
+";
+
+const PLAN_MD: &str = "# Plan: negative numbers
+
+Fix `add()` first, then chart the slowest tests.
+
+- reproduce with a failing test
+- change the sign handling
+- run the suite
+";
+
+/// A document service over the in-memory store and files, seeded with the
+/// two documents of the Docs section (one per chat).
+fn doc_service() -> Arc<DocService> {
+    use application_core::ports::docs::{DocBases, DocFilesPort as _};
+    use application_core::ports::store::{DocStorePort as _, SessionStorePort as _, StoredSession};
+    use application_testing::docs::InMemoryDocFiles;
+    use application_testing::system::InMemorySessionStore;
+    use domain::conversation::Session;
+    use domain::doc::{Doc, DocId};
+
+    let bases = DocBases {
+        roots: vec!["/workspace".into()],
+        data_dir: Some("/data".into()),
+    };
+    let store = Arc::new(InMemorySessionStore::new());
+    let files = Arc::new(InMemoryDocFiles::new(bases));
+    let seeds = [
+        (
+            NOTES_DOC,
+            LATEST,
+            "v0.18 release notes",
+            "release-notes.md",
+            NOTES_MD,
+            2_000,
+        ),
+        (
+            LOG_DOC,
+            LATEST,
+            "Benchmark log",
+            "benchmark-log.md",
+            "# Benchmark log\n",
+            1_800,
+        ),
+        (
+            QUESTIONS_DOC,
+            LATEST,
+            "Open questions",
+            "open-questions.md",
+            "# Open questions\n",
+            1_500,
+        ),
+        (
+            PLAN_DOC,
+            NOTES_CHAT,
+            "Plan: negative numbers",
+            "plan.md",
+            PLAN_MD,
+            1_000,
+        ),
+    ];
+    futures::executor::block_on(async {
+        for (id, chat, title, file, text, at) in seeds {
+            let id = DocId::parse(id).unwrap_or_else(|| panic!("bad doc id {id}"));
+            let session_id = SessionId::parse(chat).unwrap_or_else(|| panic!("bad chat id {chat}"));
+            let dir = format!("/workspace/.crest/docs/{chat}");
+            let mut session = Session::new("/workspace", at);
+            session.id = session_id;
+            store
+                .save(StoredSession {
+                    session,
+                    timeline: Vec::new(),
+                    permission_rules: Vec::new(),
+                    prompt_history: Vec::new(),
+                })
+                .await
+                .unwrap_or_else(|err| panic!("{err}"));
+            let doc = Doc {
+                id,
+                session_id,
+                title: title.into(),
+                file_name: file.into(),
+                dir: dir.clone(),
+                created_at: at,
+                updated_at: at,
+            };
+            store
+                .create_doc(doc)
+                .await
+                .unwrap_or_else(|err| panic!("{err}"));
+            files
+                .write(&dir, file, text)
+                .await
+                .unwrap_or_else(|err| panic!("{err}"));
+        }
+    });
+    Arc::new(DocService::new(store, files, Some("/data".into()), || {
+        3_000
+    }))
 }
 
 fn tool(name: &str, description: &str, source: ToolSource, effect: &str) -> ToolRow {
@@ -1205,7 +1382,9 @@ fn help_snapshot() -> HelpSnapshot {
 /// The window of `scene`, in logical pixels: wider for the full sidebar.
 fn window_size(scene: &str) -> (f32, f32) {
     match scene {
-        "sidebar" | "tour" => (1600.0, 1000.0),
+        "sidebar" | "tour" | "doc-split" | "doc-alone" | "doc-source" | "doc-page"
+        | "doc-added" | "doc-wide-table" | "doc-diagram" | "doc-new-diagram" | "doc-usecase"
+        | "doc-bar" | "doc-commands" | "doc-block-menu" | "doc-mermaid-menu" => (1600.0, 1000.0),
         _ => (1280.0, 960.0),
     }
 }
@@ -1213,7 +1392,9 @@ fn window_size(scene: &str) -> (f32, f32) {
 /// How wide the sidebar opens in `scene`.
 fn sidebar_width(scene: &str) -> SidebarWidth {
     match scene {
-        "sidebar" | "tour" => SidebarWidth::Full,
+        "sidebar" | "tour" | "doc-split" | "doc-alone" | "doc-source" | "doc-page"
+        | "doc-added" | "doc-wide-table" | "doc-diagram" | "doc-new-diagram" | "doc-usecase"
+        | "doc-bar" | "doc-commands" | "doc-block-menu" | "doc-mermaid-menu" => SidebarWidth::Full,
         _ => SidebarWidth::Strip,
     }
 }
@@ -1289,15 +1470,20 @@ fn main() {
             form: Arc::new(form),
             mode: Mutex::new(PermissionMode::Ask),
         });
+        let docs = doc_service();
         let mut parts = SessionParts::new(controller, events, approvals, fs.clone(), fs.clone());
         parts.fs = Some(fs);
         parts.forms = Some(forms);
         parts.workspace_label = "calc".into();
         parts.workspace_dir = Some("/workspace".into());
         parts.model = Some(ModelId::new("claude-sonnet-5-5"));
-        parts.session_id = Some("latest".into());
+        parts.session_id = Some(LATEST.into());
+        parts.docs = Some(docs.clone());
         parts.project_id = Some("p-calc".into());
-        let opener = Arc::new(Opener { catalog: catalog() });
+        let opener = Arc::new(Opener {
+            catalog: catalog(),
+            docs,
+        });
         let workbench = Workbench::new_with_session(opener, parts, "/workspace".into(), window, cx);
         let Some(session) = workbench.read(cx).session().cloned() else {
             eprintln!("showcase: the workbench opened no session");
@@ -1359,11 +1545,250 @@ fn script(scene: &str) -> Vec<Step> {
         ],
         "picker" => vec![Step::Send(HERO_PROMPT), Step::Keys("ctrl-g f g a d d")],
         "permissions" => vec![Step::Send(HERO_PROMPT), Step::Keys("ctrl-g shift-a")],
+        "doc-split" => vec![Step::Send(HERO_PROMPT), Step::Act(doc_split)],
+        "doc-alone" => vec![Step::Send(HERO_PROMPT), Step::Act(doc_alone)],
+        "doc-source" => vec![
+            Step::Send(HERO_PROMPT),
+            Step::Act(doc_alone),
+            Step::Act(doc_source),
+        ],
+        "doc-page" => vec![
+            Step::Send(HERO_PROMPT),
+            Step::Act(doc_split),
+            Step::Act(doc_page),
+        ],
+        "doc-wide-table" => vec![
+            Step::Send(HERO_PROMPT),
+            Step::Act(doc_split),
+            Step::Act(doc_wide_table),
+        ],
+        "doc-added" => vec![
+            Step::Send(HERO_PROMPT),
+            Step::Act(doc_split),
+            Step::Act(doc_added),
+        ],
+        "doc-diagram" => vec![
+            Step::Send(HERO_PROMPT),
+            Step::Act(doc_alone),
+            Step::Act(doc_diagram),
+        ],
+        "doc-new-diagram" => vec![
+            Step::Send(HERO_PROMPT),
+            Step::Act(doc_alone),
+            Step::Act(doc_new_diagram),
+        ],
+        "doc-usecase" => vec![
+            Step::Send(HERO_PROMPT),
+            Step::Act(doc_alone),
+            Step::Act(doc_new_usecase),
+        ],
+        "doc-bar" => vec![
+            Step::Send(HERO_PROMPT),
+            Step::Act(doc_alone),
+            Step::Act(doc_new_bar),
+        ],
+        "doc-rail" => vec![Step::Send(HERO_PROMPT), Step::Act(doc_alone)],
+        "doc-block-menu" => vec![Step::Send(HERO_PROMPT), Step::Act(doc_block_menu)],
+        "doc-mermaid-menu" => vec![Step::Send(ROUTING_PROMPT), Step::Act(doc_mermaid_menu)],
+        "doc-commands" => vec![
+            Step::Send(HERO_PROMPT),
+            Step::Act(doc_split),
+            Step::Act(doc_command),
+        ],
         other => {
             eprintln!("showcase: unknown scene {other:?}");
             Vec::new()
         }
     }
+}
+
+/// The chart block selected, its split button's menu open.
+fn doc_block_menu(session: &Entity<Session>, _: &mut Window, cx: &mut App) {
+    let timeline = session.read(cx).timeline().clone();
+    timeline.update(cx, |timeline, cx| {
+        timeline.open_menu_of(domain::block::BlockTag::Chart, cx);
+    });
+}
+
+/// The mermaid block selected, its split button's menu open.
+fn doc_mermaid_menu(session: &Entity<Session>, _: &mut Window, cx: &mut App) {
+    let timeline = session.read(cx).timeline().clone();
+    timeline.update(cx, |timeline, cx| {
+        timeline.open_menu_of(domain::block::BlockTag::Mermaid, cx);
+    });
+}
+
+/// The release notes beside the chat.
+fn doc_split(session: &Entity<Session>, _: &mut Window, cx: &mut App) {
+    session.update(cx, |session, cx| {
+        session.show_doc(NOTES_DOC, DocView::Split, cx);
+    });
+}
+
+/// The release notes in place of the chat.
+fn doc_alone(session: &Entity<Session>, _: &mut Window, cx: &mut App) {
+    session.update(cx, |session, cx| {
+        session.show_doc(NOTES_DOC, DocView::Alone, cx);
+    });
+}
+
+/// The markdown source with its toolbar.
+fn doc_source(session: &Entity<Session>, _: &mut Window, cx: &mut App) {
+    let panel = session.read(cx).doc_panel().clone();
+    panel.update(cx, |panel, cx| {
+        if !panel.is_source() {
+            panel.toggle_source(cx);
+        }
+    });
+}
+
+/// The doc of the `doc-page` scene: what the WYSIWYG page shows.
+const PAGE_MD: &str = "# Release notes
+
+**v0.18 in numbers**: 42 commits, 3 features and *one* fix, see [the changelog](https://example.com).
+
+## What changed
+
+| feature | crate | tests |
+| --- | --- | --- |
+| 3D models in /open | ui | 31 |
+| decision model | app | 27 |
+| research mode | app | 19 |
+
+- Research mode streams its stages.
+- Charts can be copied as images.
+- Diagrams open in their own editor.
+
+> The parser rewrite landed behind a flag in v0.17 and is now the default.
+
+```mermaid
+flowchart LR
+  Prompt --> Route --> Answer
+  Route --> Tools --> Answer
+```
+
+![the new board](assets/board.png)
+";
+
+/// A 640x240 picture for the `doc-page` scene, as PNG bytes.
+fn page_picture() -> Vec<u8> {
+    let mut picture = image::RgbaImage::new(640, 240);
+    for (x, y, pixel) in picture.enumerate_pixels_mut() {
+        let across = u8::try_from(x * 255 / 640).unwrap_or(255);
+        let down = u8::try_from(y * 255 / 240).unwrap_or(255);
+        *pixel = image::Rgba([40 + across / 3, 90 + down / 3, 160, 255]);
+    }
+    let mut bytes = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(picture)
+        .write_to(&mut bytes, image::ImageFormat::Png)
+        .unwrap_or_else(|err| panic!("{err}"));
+    bytes.into_inner()
+}
+
+/// The page with its toolbar, the caret inside a cell of the table.
+fn doc_page(session: &Entity<Session>, window: &mut Window, cx: &mut App) {
+    let panel = session.read(cx).doc_panel().clone();
+    panel.update(cx, |panel, cx| {
+        if let Some(doc) = panel.doc().cloned() {
+            panel.show(
+                doc,
+                PAGE_MD.to_owned(),
+                vec![("board.png".to_owned(), page_picture())],
+                cx,
+            );
+        }
+        let cell = PAGE_MD.find("decision").unwrap_or(0) + 3;
+        panel
+            .page_editor()
+            .update(cx, |editor, cx| editor.set_cursor(cell, cx));
+        panel.focus(window, cx);
+    });
+}
+
+/// The page right after "Add to doc" appended the quote: the new section
+/// carries the fading wash.
+fn doc_added(session: &Entity<Session>, window: &mut Window, cx: &mut App) {
+    doc_page(session, window, cx);
+    doc_added_flash(session, window, cx);
+}
+
+/// Lights the quote of [`PAGE_MD`] as if it had just been added.
+fn doc_added_flash(session: &Entity<Session>, _: &mut Window, cx: &mut App) {
+    let panel = session.read(cx).doc_panel().clone();
+    panel.update(cx, |panel, cx| {
+        let start = PAGE_MD.find("> The parser").unwrap_or(0);
+        let end = PAGE_MD[start..]
+            .find("\n\n")
+            .map_or(PAGE_MD.len(), |at| start + at);
+        panel.flash_added(start..end, cx);
+    });
+}
+
+/// The doc of the `doc-wide-table` scene: a table of four columns whose
+/// cells are far wider than the panel.
+const WIDE_TABLE_MD: &str = "# Modules
+
+Some text before the table.
+
+| Module | What it does | Where it lives | Notes |
+| --- | --- | --- | --- |
+| bin | Primary entry point that creates the tokio runtime and opens either the GPUI window or headless | crates/bin/src/main.rs | Owns the process lifetime |
+| cli | CLI definition for workspace selection, headless prompts, research/implement/simulate commands | crates/bin/src/cli.rs | Parsed once at startup |
+| gui | Implements the UI SessionController over the real AgentService and wires window events. | crates/bin/src/gui.rs | Uses the window view |
+| root | Composition root that builds adapters, tools, sessions, flows and the AgentService. | crates/bin/src/root.rs | Single place for wiring |
+
+Text after the table.
+";
+
+/// The page with a wide table, the caret in its second row, after the trailing
+/// space of the `cli` cell.
+fn doc_wide_table(session: &Entity<Session>, window: &mut Window, cx: &mut App) {
+    let panel = session.read(cx).doc_panel().clone();
+    panel.update(cx, |panel, cx| {
+        if let Some(doc) = panel.doc().cloned() {
+            panel.show(doc, WIDE_TABLE_MD.to_owned(), Vec::new(), cx);
+        }
+        // After `cli` AND its trailing space (just before the pipe).
+        let cell = WIDE_TABLE_MD.find("cli |").unwrap_or(0) + 4;
+        panel
+            .page_editor()
+            .update(cx, |editor, cx| editor.set_cursor(cell, cx));
+        panel.focus(window, cx);
+    });
+}
+
+/// The diagram editor on the second diagram.
+fn doc_diagram(session: &Entity<Session>, _: &mut Window, cx: &mut App) {
+    let panel = session.read(cx).doc_panel().clone();
+    panel.update(cx, |panel, cx| panel.open_diagram(1, cx));
+}
+
+/// The diagram editor for a new diagram.
+fn doc_new_diagram(session: &Entity<Session>, _: &mut Window, cx: &mut App) {
+    let panel = session.read(cx).doc_panel().clone();
+    panel.update(cx, |panel, cx| panel.open_new_diagram(cx));
+}
+
+/// The diagram editor on the template named `name`.
+fn doc_template(session: &Entity<Session>, name: &str, cx: &mut App) {
+    let panel = session.read(cx).doc_panel().clone();
+    panel.update(cx, |panel, cx| panel.open_new_diagram_with(name, cx));
+}
+
+/// The diagram editor on the Use case template.
+fn doc_new_usecase(session: &Entity<Session>, _: &mut Window, cx: &mut App) {
+    doc_template(session, "Use case", cx);
+}
+
+/// The diagram editor on the Bar chart template.
+fn doc_new_bar(session: &Entity<Session>, _: &mut Window, cx: &mut App) {
+    doc_template(session, "Bar chart", cx);
+}
+
+/// `/doc find ` typed in the prompt, with its popup.
+fn doc_command(session: &Entity<Session>, window: &mut Window, cx: &mut App) {
+    let input = session.read(cx).input().clone();
+    input.update(cx, |input, cx| input.set_text("/doc find ", window, cx));
 }
 
 /// The tour's **Next**.
@@ -1382,21 +1807,34 @@ enum Step {
     Act(fn(&Entity<Session>, &mut Window, &mut App)),
 }
 
+/// What a scene does again right before the frame is captured: the
+/// moments that fade, like the wash of "add to doc", are long gone after
+/// the waits of [`play`].
+fn last_moment(scene: &str) -> Option<fn(&Entity<Session>, &mut Window, &mut App)> {
+    match scene {
+        "doc-added" => Some(doc_added_flash),
+        _ => None,
+    }
+}
+
 fn play(scene: &str, window: gpui::AnyWindowHandle, session: Entity<Session>, cx: &mut App) {
     let steps = script(scene);
+    let last = last_moment(scene);
     cx.spawn(async move |cx| {
         let executor = cx.background_executor().clone();
         let wait = |ms| executor.timer(Duration::from_millis(ms));
-        wait(600).await;
+        wait(2_500).await;
         for step in steps {
             let keys = match step {
                 Step::Send(text) => {
                     let input = cx.update(|cx| session.read(cx).input().clone());
                     window
                         .update(cx, |_, window, cx| {
+                            session.update(cx, |session, cx| session.focus_input(window, cx));
                             input.update(cx, |input, cx| input.set_text(text, window, cx));
                         })
                         .ok();
+                    wait(500).await;
                     "enter"
                 }
                 Step::Keys(keys) => keys,
@@ -1417,8 +1855,23 @@ fn play(scene: &str, window: gpui::AnyWindowHandle, session: Entity<Session>, cx
             }
             wait(4_000).await;
         }
+        if std::env::var_os("SHOWCASE_PNG").is_some() {
+            // A window nobody looks at gets no frames: draw by hand, with
+            // time between draws for the layouts that run in the background.
+            for _ in 0..4 {
+                window
+                    .update(cx, |_, window, cx| window.draw(cx).clear(cx))
+                    .ok();
+                wait(700).await;
+            }
+        }
+        if let Some(act) = last {
+            window
+                .update(cx, |_, window, cx| act(&session, window, cx))
+                .ok();
+        }
         window
-            .update(cx, |_, window, _| {
+            .update(cx, |_, window, cx| {
                 let size = window.viewport_size();
                 let scale = window.scale_factor();
                 let bounds = window.bounds();
@@ -1431,6 +1884,22 @@ fn play(scene: &str, window: gpui::AnyWindowHandle, session: Entity<Session>, cx
                     f32::from(bounds.size.width),
                     f32::from(bounds.size.height),
                 );
+                // `SHOWCASE_PNG=<file>`: render the frame to a PNG (no screen
+                // capture permission needed) and quit.
+                if let Some(path) = std::env::var_os("SHOWCASE_PNG") {
+                    // A window nobody is looking at gets no frames: draw twice.
+                    window.draw(cx).clear(cx);
+                    window.draw(cx).clear(cx);
+                    match window.render_to_image() {
+                        Ok(image) => {
+                            if let Err(err) = image.save(&path) {
+                                eprintln!("showcase: cannot write {path:?}: {err}");
+                            }
+                        }
+                        Err(err) => eprintln!("showcase: cannot render the frame: {err}"),
+                    }
+                    cx.quit();
+                }
             })
             .ok();
     })

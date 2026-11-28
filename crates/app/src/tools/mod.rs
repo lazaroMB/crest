@@ -7,6 +7,7 @@ pub use application_core::tools::{budget, form, registry, web};
 
 pub mod components;
 pub mod compute;
+pub mod docs;
 pub mod files;
 pub mod formats;
 pub mod ghs;

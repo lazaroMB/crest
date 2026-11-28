@@ -55,6 +55,8 @@ struct AgentController {
     mcp_calls: Arc<Mutex<Vec<String>>>,
     /// The change stream, handed to the first session that asks.
     mcp_changes: Arc<Mutex<Option<futures::channel::mpsc::UnboundedReceiver<()>>>>,
+    /// The requests of the turns run, in order.
+    requests: Arc<Mutex<Vec<TurnRequest>>>,
 }
 
 impl SessionController for AgentController {
@@ -63,10 +65,11 @@ impl SessionController for AgentController {
         let service = Arc::clone(&self.service);
         let conversation = Arc::clone(&self.conversation);
         let events = Arc::clone(&self.events);
+        self.requests.lock().unwrap().push(request.clone());
         std::thread::spawn(move || {
             let end = futures::executor::block_on(async move {
                 events.emit(DomainEvent::BlockAdded {
-                    block: prompt_block(&request.prompt),
+                    block: prompt_block_for(&request.prompt, request.doc_title.as_deref()),
                 });
                 let role = request.role.unwrap_or(ModelRole::Main);
                 let mut opts = TurnOptions::new(role).with_cancel(request.cancel);
@@ -95,6 +98,8 @@ impl SessionController for AgentController {
             model_override: None,
             role: None,
             cancel,
+            context: Vec::new(),
+            doc_title: None,
             skill: None,
         })
     }
@@ -495,6 +500,8 @@ struct Harness {
     mcp_calls: Arc<Mutex<Vec<String>>>,
     /// Tells the session the MCP servers changed.
     mcp_tx: futures::channel::mpsc::UnboundedSender<()>,
+    /// The requests of the turns the agent ran.
+    requests: Arc<Mutex<Vec<TurnRequest>>>,
 }
 
 /// Hosts the root view as the window's root.
@@ -606,6 +613,7 @@ fn harness_parts(
     let logins = Arc::new(Mutex::new(Vec::new()));
     let resume_pending = !conversation.pending_tool_uses().is_empty();
     let mcp = Arc::new(Mutex::new(mcp_fixture()));
+    let requests = Arc::new(Mutex::new(Vec::new()));
     let mcp_calls = Arc::new(Mutex::new(Vec::new()));
     let (mcp_tx, mcp_rx) = futures::channel::mpsc::unbounded();
     let controller = Arc::new(AgentController {
@@ -616,6 +624,7 @@ fn harness_parts(
         mcp: Arc::clone(&mcp),
         mcp_calls: Arc::clone(&mcp_calls),
         mcp_changes: Arc::new(Mutex::new(Some(mcp_rx))),
+        requests: Arc::clone(&requests),
     });
     let mut parts = SessionParts::new(controller, events, approvals, fs.clone(), fs.clone());
     parts.fs = Some(fs);
@@ -653,6 +662,7 @@ fn harness_parts(
             mcp,
             mcp_calls,
             mcp_tx,
+            requests,
         },
         cx,
     )
@@ -3363,6 +3373,670 @@ fn the_plus_menu_row_opens_the_mcp_manager(cx: &mut TestAppContext) {
     cx.update(|window, cx| {
         assert!(view.focus_handle(cx).contains_focused(window, cx));
     });
+}
+
+// ---- chat documents ----
+
+mod docs {
+    use application_core::ports::docs::DocBases;
+    use application_core::ports::store::{SessionStorePort as _, StoredSession};
+    use application_core::usecases::docs::{DocAuthor, DocService};
+    use application_testing::docs::InMemoryDocFiles;
+    use application_testing::system::InMemorySessionStore;
+    use domain::conversation::SessionId;
+    use domain::doc::Doc;
+
+    use super::*;
+    use crate::docs::{DocPanel, DocView};
+    use crate::input::{DocChip, DocPopup};
+    use crate::timeline::{DocTarget, TimelineEvent};
+
+    /// The documents of one saved chat over in-memory store and files.
+    struct Rig {
+        service: Arc<DocService>,
+        files: Arc<InMemoryDocFiles>,
+        session: SessionId,
+    }
+
+    impl Rig {
+        fn new() -> Self {
+            let store = Arc::new(InMemorySessionStore::new());
+            let files = Arc::new(InMemoryDocFiles::new(DocBases {
+                roots: vec!["/ws".into()],
+                data_dir: Some("/data".into()),
+            }));
+            let service = Arc::new(DocService::new(
+                store.clone(),
+                files.clone(),
+                Some("/data".into()),
+                // Each write is a later change, so "newest first" is testable.
+                || {
+                    static CLOCK: std::sync::atomic::AtomicU64 =
+                        std::sync::atomic::AtomicU64::new(1_000);
+                    CLOCK.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                },
+            ));
+            let mut conversation = Conversation::new("/ws", 1);
+            conversation.title = Some("Release".into());
+            let session = conversation.id;
+            futures::executor::block_on(store.save(StoredSession::new(conversation))).unwrap();
+            Self {
+                service,
+                files,
+                session,
+            }
+        }
+
+        /// A doc of the chat, made before the window opens.
+        fn doc(&self, title: &str) -> Doc {
+            futures::executor::block_on(self.service.create_for(
+                self.session,
+                "/ws",
+                Some(title.into()),
+            ))
+            .unwrap()
+        }
+    }
+
+    /// A harness whose session is the chat of `rig`, with its docs.
+    fn open_with<'a>(
+        rig: &Rig,
+        cx: &'a mut TestAppContext,
+    ) -> (Harness, &'a mut VisualTestContext) {
+        let (service, id) = (rig.service.clone(), rig.session.to_string());
+        let script = vec![ScriptedResponse::text("done")];
+        let (h, cx) = harness_parts(
+            script,
+            Conversation::new("/ws", 0),
+            Vec::new(),
+            |_, _| {},
+            move |parts| {
+                parts.docs = Some(service);
+                parts.session_id = Some(id);
+                parts.workspace_dir = Some(PathBuf::from("/ws"));
+            },
+            cx,
+        );
+        cx.run_until_parked();
+        (h, cx)
+    }
+
+    fn panel(h: &Harness, cx: &mut VisualTestContext) -> Entity<DocPanel> {
+        h.session.read_with(cx, |s, _| s.docs.panel.clone())
+    }
+
+    fn view(h: &Harness, cx: &mut VisualTestContext) -> DocView {
+        h.session
+            .read_with(cx, |s, cx| s.root.upgrade().unwrap().read(cx).doc_view())
+    }
+
+    fn shown_title(h: &Harness, cx: &mut VisualTestContext) -> Option<String> {
+        let panel = panel(h, cx);
+        panel.read_with(cx, |panel, _| panel.doc().map(|doc| doc.title.clone()))
+    }
+
+    fn command(h: &Harness, line: &str, cx: &mut VisualTestContext) {
+        let session = h.session.clone();
+        cx.update(|window, cx| session.update(cx, |s, cx| s.command(line, window, cx)));
+        cx.run_until_parked();
+    }
+
+    fn notice(h: &Harness, cx: &mut VisualTestContext) -> Option<String> {
+        h.session.read_with(cx, |s, cx| {
+            s.status()
+                .read(cx)
+                .state()
+                .notice(Instant::now())
+                .map(|n| n.message.clone())
+        })
+    }
+
+    fn text_of_doc(rig: &Rig, doc: &Doc) -> String {
+        futures::executor::block_on(rig.service.read(doc.id))
+            .unwrap()
+            .1
+    }
+
+    #[gpui::test]
+    fn typing_in_the_source_editor_edits_the_doc_and_not_the_prompt(cx: &mut TestAppContext) {
+        let rig = Rig::new();
+        rig.doc("Release notes");
+        let (h, cx) = open_with(&rig, cx);
+        command(&h, "doc Release notes", cx);
+        command(&h, "doc source", cx);
+        cx.run_until_parked();
+        cx.simulate_input("abc");
+        cx.run_until_parked();
+        let panel = panel(&h, cx);
+        assert!(panel.read_with(cx, |p, _| p.is_source()));
+        assert_eq!(panel.read_with(cx, |p, _| p.text()), "abc");
+        let input = h.session.read_with(cx, |s, _| s.input().clone());
+        assert_eq!(input.read_with(cx, |i, cx| i.text(cx)), "");
+        // Esc leaves the source and gives the keyboard back to the prompt.
+        cx.simulate_keystrokes("escape");
+        cx.run_until_parked();
+        assert!(!panel.read_with(cx, |p, _| p.is_source()));
+        cx.simulate_input("x");
+        assert_eq!(input.read_with(cx, |i, cx| i.text(cx)), "x");
+        assert_eq!(panel.read_with(cx, |p, _| p.text()), "abc");
+    }
+
+    #[gpui::test]
+    fn slash_doc_creates_a_doc_and_shows_it_beside_the_chat(cx: &mut TestAppContext) {
+        let rig = Rig::new();
+        let (h, cx) = open_with(&rig, cx);
+        assert_eq!(view(&h, cx), DocView::Hidden);
+        send("/doc", cx);
+        cx.run_until_parked();
+        assert_eq!(view(&h, cx), DocView::Split);
+        assert_eq!(shown_title(&h, cx).as_deref(), Some("Release · notes"));
+        let files = rig.files.files();
+        assert_eq!(files.len(), 1);
+        assert_eq!(
+            files[0].0,
+            format!("/ws/.crest/docs/{}", rig.session),
+            "in the chat's folder of the project"
+        );
+        // A second `/doc` opens the same doc and does not make another.
+        send("/doc", cx);
+        cx.run_until_parked();
+        assert_eq!(rig.files.files().len(), 1);
+    }
+
+    #[gpui::test]
+    fn doc_find_opens_the_only_match_and_says_when_several_or_none_match(cx: &mut TestAppContext) {
+        let rig = Rig::new();
+        rig.doc("Release notes");
+        rig.doc("Plan");
+        let (h, cx) = open_with(&rig, cx);
+        command(&h, "doc find rel", cx);
+        assert_eq!(shown_title(&h, cx).as_deref(), Some("Release notes"));
+        assert_eq!(view(&h, cx), DocView::Split);
+
+        command(&h, "doc find zzz", cx);
+        assert_eq!(notice(&h, cx).as_deref(), Some("no document matches “zzz”"));
+
+        rig.doc("Release plan");
+        command(&h, "doc find rel", cx);
+        assert_eq!(
+            notice(&h, cx).as_deref(),
+            Some("2 documents match “rel”; pick one")
+        );
+        command(&h, "doc find", cx);
+        assert_eq!(notice(&h, cx).as_deref(), Some("usage: /doc find <text>"));
+        // A bare title opens it too.
+        command(&h, "doc Plan", cx);
+        assert_eq!(shown_title(&h, cx).as_deref(), Some("Plan"));
+    }
+
+    #[gpui::test]
+    fn doc_use_puts_a_chip_on_the_prompt_and_the_next_turn_carries_the_doc(
+        cx: &mut TestAppContext,
+    ) {
+        let rig = Rig::new();
+        let doc = rig.doc("Release notes");
+        let (h, cx) = open_with(&rig, cx);
+        command(&h, "doc use", cx);
+        let chips = h
+            .session
+            .read_with(cx, |s, cx| s.input().read(cx).doc_chips().to_vec());
+        assert_eq!(
+            chips,
+            [DocChip::Reference {
+                doc_id: doc.id,
+                title: "Release notes".into()
+            }]
+        );
+        send("make it shorter", cx);
+        wait_until(&h, cx, "the turn to end", |s, _| !s.is_running());
+        let requests = h.requests.lock().unwrap().clone();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0].context,
+            [format!(
+                "The document to change is “Release notes” (doc id {}). \
+                 Use doc_edit or doc_write on it.",
+                doc.id
+            )]
+        );
+        assert_eq!(requests[0].prompt, "make it shorter");
+        let texts: Vec<String> = blocks(&h, cx)
+            .iter()
+            .filter_map(|kind| text_of(kind).map(str::to_owned))
+            .collect();
+        assert_eq!(texts[0], "> make it shorter\n\n↳ Release notes\n");
+        h.session.read_with(cx, |s, cx| {
+            assert!(
+                s.input().read(cx).doc_chips().is_empty(),
+                "the chip went with the message"
+            );
+        });
+        // Without a document, nothing to reference.
+        let (h2, cx) = open_with(&Rig::new(), cx);
+        command(&h2, "doc use", cx);
+        assert_eq!(notice(&h2, cx).as_deref(), Some("no document to reference"));
+    }
+
+    #[gpui::test]
+    fn a_chip_is_removed_by_click_or_backspace_and_sent_with_its_passage(cx: &mut TestAppContext) {
+        let rig = Rig::new();
+        let doc = rig.doc("Plan");
+        let (h, cx) = open_with(&rig, cx);
+        let input = h.session.read_with(cx, |s, _| s.input().clone());
+        input.update(cx, |input, cx| {
+            input.add_doc_chip(
+                DocChip::Selection {
+                    doc_id: doc.id,
+                    title: "Plan".into(),
+                    passage: "old text".into(),
+                },
+                cx,
+            );
+            input.add_doc_chip(
+                DocChip::Reference {
+                    doc_id: doc.id,
+                    title: "Plan".into(),
+                },
+                cx,
+            );
+        });
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("doc-chip-0").is_some());
+        let remove = cx.debug_bounds("doc-chip-remove-0").expect("the ×");
+        cx.simulate_click(remove.center(), gpui::Modifiers::none());
+        assert_eq!(input.read_with(cx, |input, _| input.doc_chips().len()), 1);
+        input.update_in(cx, |input, window, cx| input.focus(window, cx));
+        cx.simulate_keystrokes("backspace");
+        assert!(input.read_with(cx, |input, _| input.doc_chips().is_empty()));
+
+        // A selection goes as the passage the reply should replace.
+        let chip = DocChip::Selection {
+            doc_id: doc.id,
+            title: "Plan".into(),
+            passage: "old text".into(),
+        };
+        input.update(cx, |input, cx| input.add_doc_chip(chip, cx));
+        send("shorter", cx);
+        wait_until(&h, cx, "the turn to end", |s, _| !s.is_running());
+        let requests = h.requests.lock().unwrap().clone();
+        assert_eq!(
+            requests[0].context,
+            [format!(
+                "Selected passage of “Plan” (doc id {}):\nold text\n\
+                 The reply should replace that passage with doc_edit.",
+                doc.id
+            )]
+        );
+    }
+
+    #[gpui::test]
+    fn add_to_doc_appends_to_the_doc_file_and_shows_it(cx: &mut TestAppContext) {
+        let rig = Rig::new();
+        let doc = rig.doc("Plan");
+        let (h, cx) = open_with(&rig, cx);
+        let timeline = h.session.read_with(cx, |s, _| s.timeline().clone());
+        timeline.update(cx, |_, cx| {
+            cx.emit(TimelineEvent::AddToDoc {
+                markdown: "A **finding**".into(),
+                target: DocTarget::Default,
+                image: None,
+            });
+        });
+        cx.run_until_parked();
+        assert_eq!(text_of_doc(&rig, &doc), "A **finding**\n");
+        assert_eq!(view(&h, cx), DocView::Split, "shown where it was hidden");
+        assert_eq!(
+            panel(&h, cx).read_with(cx, |p, _| p.text()),
+            "A **finding**\n"
+        );
+        assert_eq!(notice(&h, cx).as_deref(), Some("added to “Plan”"));
+        assert_eq!(
+            panel(&h, cx).read_with(cx, |p, _| p.added_range()),
+            Some(0..13),
+            "the appended markdown is lit"
+        );
+
+        // `/doc add` takes the selected block; another add keeps one blank line.
+        timeline.update(cx, |_, cx| {
+            cx.emit(TimelineEvent::AddToDoc {
+                markdown: "second".into(),
+                target: DocTarget::Default,
+                image: None,
+            });
+        });
+        cx.run_until_parked();
+        assert_eq!(text_of_doc(&rig, &doc), "A **finding**\n\nsecond\n");
+        assert_eq!(
+            panel(&h, cx).read_with(cx, |p, _| p.added_range()),
+            Some(15..21)
+        );
+
+        // "Add to a new doc" starts another one.
+        timeline.update(cx, |_, cx| {
+            cx.emit(TimelineEvent::AddToDoc {
+                markdown: "fresh".into(),
+                target: DocTarget::New,
+                image: None,
+            });
+        });
+        cx.run_until_parked();
+        assert_eq!(rig.files.files().len(), 2);
+        assert_eq!(text_of_doc(&rig, &doc), "A **finding**\n\nsecond\n");
+        command(&h, "doc add", cx);
+        assert_eq!(
+            notice(&h, cx).as_deref(),
+            Some("select a block in the chat first")
+        );
+    }
+
+    #[gpui::test]
+    fn doc_add_on_a_selected_chart_saves_its_picture(cx: &mut TestAppContext) {
+        use domain::block::{ChartKind, ChartSpec, Series};
+
+        let rig = Rig::new();
+        let doc = rig.doc("Plan");
+        let (h, cx) = open_with(&rig, cx);
+        h.session.update(cx, |s, cx| {
+            s.dispatch(
+                DomainEvent::BlockAdded {
+                    block: Block::new(BlockKind::Chart(ChartSpec {
+                        title: "Sales by month".into(),
+                        kind: ChartKind::Bar,
+                        labels: vec!["jan".into(), "feb".into()],
+                        series: vec![Series {
+                            name: "units".into(),
+                            values: vec![3.0, 5.0],
+                        }],
+                    })),
+                },
+                cx,
+            );
+        });
+        let timeline = h.session.read_with(cx, |s, _| s.timeline().clone());
+        timeline.update(cx, |t, cx| {
+            t.handle_action(&Action::builtin("block.last"), cx);
+        });
+        command(&h, "doc add", cx);
+        cx.run_until_parked();
+        let assets = rig.files.assets();
+        assert_eq!(assets.len(), 1, "{assets:?}");
+        let (_, name, bytes) = &assets[0];
+        assert!(
+            name.starts_with("sales-by-month-") && name.ends_with(".png"),
+            "{name}"
+        );
+        assert_eq!(&bytes[..4], b"\x89PNG");
+        let text = text_of_doc(&rig, &doc);
+        assert_eq!(text, format!("![Sales by month](assets/{name})\n"));
+    }
+
+    #[gpui::test]
+    fn add_to_doc_goes_to_the_doc_the_menu_row_names(cx: &mut TestAppContext) {
+        let rig = Rig::new();
+        let first = rig.doc("First");
+        let second = rig.doc("Second");
+        let (h, cx) = open_with(&rig, cx);
+        let timeline = h.session.read_with(cx, |s, _| s.timeline().clone());
+        // The timeline knows both docs, for its menu.
+        let known = timeline.read_with(cx, |t, _| t.docs().len());
+        assert_eq!(known, 2);
+        timeline.update(cx, |_, cx| {
+            cx.emit(TimelineEvent::AddToDoc {
+                markdown: "to the second".into(),
+                target: DocTarget::Doc(second.id),
+                image: None,
+            });
+        });
+        cx.run_until_parked();
+        assert_eq!(text_of_doc(&rig, &second), "to the second\n");
+        assert_eq!(text_of_doc(&rig, &first), "");
+        assert_eq!(notice(&h, cx).as_deref(), Some("added to “Second”"));
+        // And the first, though the second is the one shown.
+        timeline.update(cx, |_, cx| {
+            cx.emit(TimelineEvent::AddToDoc {
+                markdown: "to the first".into(),
+                target: DocTarget::Doc(first.id),
+                image: None,
+            });
+        });
+        cx.run_until_parked();
+        assert_eq!(text_of_doc(&rig, &first), "to the first\n");
+        assert_eq!(text_of_doc(&rig, &second), "to the second\n");
+        // The doc written last is the newest change: first in the menu.
+        let top = timeline.read_with(cx, |t, _| t.docs().first().map(|doc| doc.id));
+        assert_eq!(top, Some(first.id));
+    }
+
+    #[gpui::test]
+    fn a_doc_button_action_reaches_the_panel_through_the_session(cx: &mut TestAppContext) {
+        let rig = Rig::new();
+        let (h, cx) = open_with(&rig, cx);
+        let run = |h: &Harness, name: &str, cx: &mut VisualTestContext| {
+            let (session, action) = (h.session.clone(), Action::builtin(name));
+            cx.update(|window, cx| session.update(cx, |s, cx| s.action(&action, window, cx)));
+            cx.run_until_parked();
+        };
+        run(&h, "panel.doc", cx);
+        let panel = panel(&h, cx);
+        panel.update(cx, |p, cx| {
+            p.page_editor().update(cx, |e, cx| e.set_cursor(0, cx));
+        });
+        run(&h, "doc.heading", cx);
+        let text = panel.read_with(cx, |p, _| p.text());
+        assert!(text.starts_with("## "), "{text:?}");
+        // The diagram names do nothing while no diagram is open.
+        run(&h, "diagram.cancel", cx);
+        assert!(!panel.read_with(cx, |p, _| p.is_diagram_open()));
+    }
+
+    #[gpui::test]
+    fn panel_doc_cycles_the_views_and_leaves_the_sidebar_alone(cx: &mut TestAppContext) {
+        let rig = Rig::new();
+        let (h, cx) = open_with(&rig, cx);
+        let width_before = h.session.read_with(cx, |s, _| s.sidebar);
+        let run = |h: &Harness, cx: &mut VisualTestContext| {
+            let session = h.session.clone();
+            cx.update(|window, cx| {
+                session.update(cx, |s, cx| {
+                    s.action(&Action::builtin("panel.doc"), window, cx);
+                });
+            });
+            cx.run_until_parked();
+        };
+        for expected in [
+            DocView::Split,
+            DocView::Alone,
+            DocView::Hidden,
+            DocView::Split,
+        ] {
+            run(&h, cx);
+            assert_eq!(view(&h, cx), expected);
+            assert_eq!(h.session.read_with(cx, |s, _| s.sidebar), width_before);
+        }
+        assert_eq!(rig.files.files().len(), 1, "the first press made the doc");
+        // `<leader>d` is the key of the action.
+        run(&h, cx);
+        run(&h, cx);
+        assert_eq!(view(&h, cx), DocView::Hidden);
+        cx.simulate_keystrokes("ctrl-g d");
+        cx.run_until_parked();
+        assert_eq!(view(&h, cx), DocView::Split);
+        run(&h, cx);
+        assert_eq!(view(&h, cx), DocView::Alone);
+        // "show chat" in the strip brings the chat back beside the doc.
+        let root = h.session.read_with(cx, |s, _| s.root.upgrade().unwrap());
+        root.update(cx, |root, cx| {
+            root.set_doc_view(DocView::Split, cx);
+            cx.emit(crate::app::DocViewChanged(DocView::Split));
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            panel(&h, cx).read_with(cx, |panel, _| panel.view()),
+            DocView::Split
+        );
+    }
+
+    #[gpui::test]
+    fn what_the_agent_writes_reloads_the_panel_and_names_the_agent(cx: &mut TestAppContext) {
+        let rig = Rig::new();
+        let doc = rig.doc("Plan");
+        let (h, cx) = open_with(&rig, cx);
+        command(&h, "doc open Plan", cx);
+        futures::executor::block_on(rig.service.save_by(
+            doc.id,
+            "from the agent",
+            DocAuthor::Agent,
+        ))
+        .unwrap();
+        cx.run_until_parked();
+        let panel = panel(&h, cx);
+        assert_eq!(panel.read_with(cx, |p, _| p.text()), "from the agent");
+        assert!(
+            panel
+                .read_with(cx, |p, _| p.saved_label())
+                .contains("agent"),
+            "{}",
+            panel.read_with(cx, |p, _| p.saved_label())
+        );
+        // A doc the agent creates opens by itself.
+        let made = futures::executor::block_on(rig.service.create_with(
+            rig.session,
+            "Summary",
+            "written by the agent",
+            DocAuthor::Agent,
+        ))
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(shown_title(&h, cx).as_deref(), Some("Summary"));
+        assert_eq!(
+            panel.read_with(cx, |p, _| p.doc().map(|d| d.id)),
+            Some(made.id)
+        );
+    }
+
+    #[gpui::test]
+    fn the_palette_lists_the_matching_docs_and_the_export_formats(cx: &mut TestAppContext) {
+        let rig = Rig::new();
+        rig.doc("Release notes");
+        rig.doc("Plan");
+        let (h, cx) = open_with(&rig, cx);
+        cx.simulate_input("/doc find rel");
+        let popup = h
+            .session
+            .read_with(cx, |s, cx| s.input().read(cx).doc_popup(cx));
+        let Some(DocPopup::Entries(rows)) = popup else {
+            panic!("expected rows, got {popup:?}");
+        };
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].title, "Release notes");
+        assert_eq!(rows[0].detail, "Release", "the title of its chat");
+        assert_eq!(rows[0].run, "doc open Release notes");
+        // Enter on the row opens that document, exactly named.
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+        assert_eq!(shown_title(&h, cx).as_deref(), Some("Release notes"));
+
+        cx.simulate_input("/doc find zzz");
+        let popup = h
+            .session
+            .read_with(cx, |s, cx| s.input().read(cx).doc_popup(cx));
+        assert_eq!(popup, Some(DocPopup::Message("No document matches".into())));
+        cx.simulate_keystrokes("ctrl-c");
+        cx.simulate_input("/doc export ");
+        let popup = h
+            .session
+            .read_with(cx, |s, cx| s.input().read(cx).doc_popup(cx));
+        let Some(DocPopup::Entries(rows)) = popup else {
+            panic!("expected formats");
+        };
+        let names: Vec<&str> = rows.iter().map(|row| row.title.as_str()).collect();
+        assert_eq!(names, ["Markdown", "Web page", "PDF", "Copy"]);
+    }
+
+    #[gpui::test]
+    fn the_plus_menu_has_a_document_row_that_types_doc(cx: &mut TestAppContext) {
+        let (h, cx) = open_with(&Rig::new(), cx);
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        let button = cx.debug_bounds("prompt-mode-button").expect("the + button");
+        cx.simulate_click(button.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        // Modes 0-2, then `@`, `/`, Document.
+        let row = cx.debug_bounds("mode-menu-5").expect("the Document row");
+        cx.simulate_click(row.center(), gpui::Modifiers::none());
+        cx.run_until_parked();
+        assert_eq!(prompt_of(&h, cx), "/doc ");
+    }
+
+    #[gpui::test]
+    fn export_copy_puts_the_markdown_on_the_clipboard_and_other_commands_report(
+        cx: &mut TestAppContext,
+    ) {
+        let rig = Rig::new();
+        let (empty, cx) = open_with(&Rig::new(), cx);
+        command(&empty, "doc export copy", cx);
+        assert_eq!(notice(&empty, cx).as_deref(), Some("no document open"));
+        command(&empty, "doc source", cx);
+        assert_eq!(notice(&empty, cx).as_deref(), Some("no document open"));
+        let doc = rig.doc("Plan");
+        futures::executor::block_on(rig.service.save(doc.id, "# Plan\n")).unwrap();
+        let (h, cx) = open_with(&rig, cx);
+        command(&h, "doc open Plan", cx);
+        command(&h, "doc export copy", cx);
+        assert_eq!(
+            cx.read_from_clipboard().and_then(|item| item.text()),
+            Some("# Plan\n".to_owned())
+        );
+        command(&h, "doc export zip", cx);
+        assert_eq!(
+            notice(&h, cx).as_deref(),
+            Some("usage: /doc export md|html|pdf|copy")
+        );
+        // The PDF asks for no path (a prompt would wait for the person): the
+        // page is written to a temporary file and the notice follows. The
+        // test platform cannot show that the browser opened.
+        command(&h, "doc export pdf", cx);
+        cx.run_until_parked();
+        let mut waited = 0;
+        while notice(&h, cx).as_deref()
+            != Some("opened in the browser: use its print dialog to save the PDF")
+            && waited < 100
+        {
+            cx.executor().allow_parking();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            cx.run_until_parked();
+            waited += 1;
+        }
+        assert_eq!(
+            notice(&h, cx).as_deref(),
+            Some("opened in the browser: use its print dialog to save the PDF")
+        );
+        command(&h, "doc close", cx);
+        assert_eq!(view(&h, cx), DocView::Hidden);
+        command(&h, "doc only", cx);
+        assert_eq!(view(&h, cx), DocView::Alone);
+        command(&h, "doc split", cx);
+        assert_eq!(view(&h, cx), DocView::Split);
+    }
+
+    #[gpui::test]
+    fn deleting_a_chat_leaves_the_doc_files(cx: &mut TestAppContext) {
+        let rig = Rig::new();
+        let doc = rig.doc("Plan");
+        futures::executor::block_on(rig.service.save(doc.id, "keep me")).unwrap();
+        let (_h, _cx) = open_with(&rig, cx);
+        // The store deletes the chat and, with it, the rows; the files stay.
+        futures::executor::block_on(rig.service.store().delete(rig.session)).unwrap();
+        assert!(
+            futures::executor::block_on(rig.service.list())
+                .unwrap()
+                .is_empty()
+        );
+        let files = rig.files.files();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].2, "keep me");
+    }
 }
 
 fn agent_block(id: BlockId, status: domain::block::AgentStatus) -> Block {

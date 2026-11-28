@@ -242,6 +242,8 @@ impl TestReportView {
             .gap_1()
             .child(
                 crate::kit::header(cx)
+                    // Room for the block's floating copy bar (it shows on hover).
+                    .pr(px(96.))
                     .child(crate::kit::title(SharedString::from(title)))
                     .child(chips),
             )

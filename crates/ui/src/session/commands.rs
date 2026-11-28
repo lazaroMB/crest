@@ -71,6 +71,7 @@ impl Session {
             Command::Tour => self.open_tour(cx),
             Command::Permissions => self.open_permissions(window, cx),
             Command::Mcp(mcp) => self.mcp_command(mcp, window, cx),
+            Command::Doc(doc) => self.doc_command(doc, window, cx),
             Command::ModalClose => {
                 let closed = self
                     .modal
@@ -226,6 +227,10 @@ impl Session {
         let reset = self.controller.new_session();
         let timeline = cx.new(TimelineView::new);
         self.timeline = timeline.clone();
+        self.watch_timeline(cx);
+        // The document belonged to the chat that was cleared.
+        self.docs.current = None;
+        self.set_doc_view(crate::docs::DocView::Hidden, cx);
         self.root
             .update(cx, |root, cx| root.set_timeline(timeline, cx))
             .ok();

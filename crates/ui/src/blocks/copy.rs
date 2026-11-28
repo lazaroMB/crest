@@ -48,13 +48,15 @@ use domain::devops::trace::TraceSpec;
 use domain::report::{FindingsSpec, TestOutcome, TestReportSpec};
 use domain::science::MoleculeSpec;
 use domain::widget::timeline::{TimeUnit, format_duration};
+use gpui::prelude::FluentBuilder as _;
 use gpui::{
     AnyElement, App, ClipboardItem, ElementId, InteractiveElement as _, IntoElement as _,
-    ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
+    MouseButton, ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _,
+    Window, deferred, div, px,
 };
-use gpui_component::{ActiveTheme as _, h_flex};
+use gpui_component::{ActiveTheme as _, h_flex, v_flex};
 
-use crate::timeline::TimelineEntry;
+use crate::timeline::{DocRef, DocTarget, TimelineEntry};
 
 /// One way to copy a block.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -555,16 +557,188 @@ impl CopyLabels {
     }
 }
 
+/// Whether `kind` can go in a document from its block menu: its markdown
+/// exists ([`super::doc_markdown`]). Text included: the bar floats at the
+/// block's top right, over its margin, and adds that one block (the reply
+/// footer adds the whole reply).
+#[must_use]
+pub fn addable(kind: &BlockKind) -> bool {
+    super::doc_markdown(kind).is_some()
+}
+
+/// How many documents the menu names; the rest are one `/doc` away.
+pub const MENU_DOCS: usize = 3;
+
+/// The longest title a menu row shows whole.
+const TITLE_CHARS: usize = 36;
+
+/// What a click on a menu row of "Add to ..." asks for.
+pub type PickDoc = Rc<dyn Fn(DocTarget, &mut App)>;
+
 /// Makes the text of the block `id` in the form `key` when its button is
 /// clicked (the block may have changed since it was drawn).
 pub type CopyText = Rc<dyn Fn(BlockId, &str, &App) -> Option<String>>;
 
-/// The copy row of the selected block, or `None` when it has no forms or
-/// shows its own buttons (computed cards). A click copies what
-/// `text_of` makes.
-pub fn row(
+/// The label of the row that adds to `doc`.
+#[must_use]
+pub fn add_label(doc: &DocRef) -> String {
+    let title = doc.title.trim();
+    if title.chars().count() > TITLE_CHARS {
+        let cut: String = title.chars().take(TITLE_CHARS - 1).collect();
+        format!("Add to \"{cut}…\"")
+    } else {
+        format!("Add to \"{title}\"")
+    }
+}
+
+/// The surface of a popup menu.
+fn panel(cx: &App) -> gpui::Div {
+    let theme = cx.theme();
+    v_flex()
+        .min_w(px(220.))
+        .p_1()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.popover)
+        .text_color(theme.popover_foreground)
+        .text_sm()
+        .shadow_md()
+        // A press in the menu must not start a text selection under it.
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+}
+
+/// One row of a popup menu.
+fn menu_row(
+    selector: String,
+    id: SharedString,
+    label: impl Into<SharedString>,
+    on_click: impl Fn(&mut App) + 'static,
+    cx: &App,
+) -> AnyElement {
+    let theme = cx.theme();
+    div()
+        .id(ElementId::Name(id))
+        .debug_selector(move || selector.clone())
+        .px_2()
+        .py_1()
+        .rounded_sm()
+        .cursor_pointer()
+        .whitespace_nowrap()
+        .hover(|style| style.bg(theme.secondary_hover))
+        .child(label.into())
+        .on_click(move |_, _, cx| {
+            cx.stop_propagation();
+            on_click(cx);
+        })
+        .into_any_element()
+}
+
+/// The "Add to ..." rows of a menu: one per document (the newest
+/// [`MENU_DOCS`], `docs` being newest first), then "Add to a new doc"; with
+/// no documents, a single "Add to doc". `prefix` keeps the debug selectors
+/// of two menus apart (`add-to-doc-<n>`, `add-to-new-doc`, `add-to-doc`).
+pub fn doc_rows(
+    docs: &[DocRef],
+    prefix: &'static str,
+    uid: &str,
+    pick: &PickDoc,
+    cx: &App,
+) -> Vec<AnyElement> {
+    let mut rows = Vec::new();
+    if docs.is_empty() {
+        let pick = pick.clone();
+        rows.push(menu_row(
+            format!("{prefix}add-to-doc"),
+            format!("{prefix}add-to-doc-{uid}").into(),
+            "Add to doc",
+            move |cx| pick(DocTarget::Default, cx),
+            cx,
+        ));
+        return rows;
+    }
+    for (n, doc) in docs.iter().take(MENU_DOCS).enumerate() {
+        let (pick, target) = (pick.clone(), DocTarget::Doc(doc.id));
+        rows.push(menu_row(
+            format!("{prefix}add-to-doc-{n}"),
+            format!("{prefix}add-to-doc-{n}-{uid}").into(),
+            add_label(doc),
+            move |cx| pick(target, cx),
+            cx,
+        ));
+    }
+    let pick = pick.clone();
+    rows.push(menu_row(
+        format!("{prefix}add-to-new-doc"),
+        format!("{prefix}add-to-new-doc-{uid}").into(),
+        "Add to a new doc",
+        move |cx| pick(DocTarget::New, cx),
+        cx,
+    ));
+    rows
+}
+
+/// A thin line between two groups of rows.
+fn separator(cx: &App) -> AnyElement {
+    div()
+        .h(px(1.))
+        .my_1()
+        .bg(cx.theme().border)
+        .into_any_element()
+}
+
+/// The popup of "Add to ..." rows alone (the reply footer's), under its
+/// anchor: draw it inside a `relative` parent.
+pub fn doc_menu(
+    docs: &[DocRef],
+    prefix: &'static str,
+    uid: &str,
+    pick: &PickDoc,
+    cx: &App,
+) -> AnyElement {
+    deferred(doc_popup(docs, prefix, uid, pick, cx))
+        .with_priority(2)
+        .into_any_element()
+}
+
+/// [`doc_menu`] without the `deferred` wrapper, for a host that is already
+/// drawn deferred (a deferred inside a deferred is not supported).
+pub fn doc_popup(
+    docs: &[DocRef],
+    prefix: &'static str,
+    uid: &str,
+    pick: &PickDoc,
+    cx: &App,
+) -> gpui::Div {
+    let rows = doc_rows(docs, prefix, uid, pick, cx);
+    div()
+        .absolute()
+        .top(px(24.))
+        .left_0()
+        .child(panel(cx).children(rows))
+}
+
+/// What the split button needs besides the block.
+pub struct Bar {
+    /// Whether the popup is open.
+    pub open: bool,
+    /// Opens the popup, or closes it when open.
+    pub toggle: Rc<dyn Fn(&mut App)>,
+    /// The chat's documents, newest change first.
+    pub docs: Rc<[DocRef]>,
+    /// Adds the block to a document (and closes the popup).
+    pub pick: PickDoc,
+    /// Makes a copy form's text.
+    pub text_of: CopyText,
+}
+
+/// The split button of the selected block, floating at the block's top
+/// right: "copy" (the first form) and "▾", which opens the other forms and
+/// "Add to ..." rows. `None` when the block has neither or shows its own
+/// buttons (computed cards). Draw it inside a `relative` parent.
+pub fn bar(
     entry: &TimelineEntry,
-    text_of: CopyText,
+    bar: Bar,
     window: &mut Window,
     cx: &mut App,
 ) -> Option<AnyElement> {
@@ -581,41 +755,124 @@ pub fn row(
         |labels, _, _| *labels = CopyLabels::new(&entry.block.kind),
     );
     let labels = labels.read(cx).0.clone();
-    if labels.is_empty() {
+    let addable = addable(&entry.block.kind);
+    if labels.is_empty() && !addable {
         return None;
     }
+    let Bar {
+        open,
+        toggle,
+        docs,
+        pick,
+        text_of,
+    } = bar;
     let theme = cx.theme();
-    let mut row = h_flex()
-        .gap_1()
-        .pt_1()
-        .text_xs()
-        .text_color(theme.muted_foreground)
+    let (border, muted, hover) = (theme.border, theme.muted_foreground, theme.secondary_hover);
+    let mut split = h_flex()
+        .id(ElementId::Name(SharedString::from(format!(
+            "copy-bar-{id}"
+        ))))
         .debug_selector(|| "copy-row".to_owned())
-        .child("copy as");
-    for &(key, label) in labels.iter() {
-        let text_of = text_of.clone();
-        row = row.child(
+        .rounded_md()
+        .border_1()
+        .border_color(border)
+        .bg(theme.popover)
+        .text_xs()
+        .text_color(muted)
+        .overflow_hidden()
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation());
+    type Toggle = Rc<dyn Fn(&mut App)>;
+    let copy = move |key: &'static str, text_of: &CopyText, toggle: Option<&Toggle>| {
+        let (text_of, toggle) = (text_of.clone(), toggle.cloned());
+        move |cx: &mut App| {
+            if let Some(text) = text_of(id, key, cx) {
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+            }
+            if let Some(toggle) = &toggle {
+                toggle(cx);
+            }
+        }
+    };
+    if let Some(&(key, _)) = labels.first() {
+        let on = copy(key, &text_of, None);
+        split = split.child(
             div()
                 .id(ElementId::Name(SharedString::from(format!(
-                    "copy-{key}-{id}"
+                    "copy-main-{id}"
                 ))))
-                .debug_selector(move || format!("copy-{key}"))
+                .debug_selector(|| "copy-main".to_owned())
                 .px_1p5()
-                .rounded_sm()
-                .border_1()
-                .border_color(theme.border)
+                .py_0p5()
                 .cursor_pointer()
-                .hover(|style| style.bg(theme.secondary_hover))
-                .child(label)
+                .hover(|style| style.bg(hover))
+                .child(if key == "image" {
+                    "⧉ copy image"
+                } else {
+                    "⧉ copy"
+                })
                 .on_click(move |_, _, cx| {
                     cx.stop_propagation();
-                    if let Some(text) = text_of(id, key, cx) {
-                        cx.write_to_clipboard(ClipboardItem::new_string(text));
-                    }
+                    on(cx);
                 }),
         );
     }
-    Some(row.into_any_element())
+    let more = toggle.clone();
+    split = split.child(
+        div()
+            .id(ElementId::Name(SharedString::from(format!(
+                "copy-more-{id}"
+            ))))
+            .debug_selector(|| "copy-more".to_owned())
+            .px_1p5()
+            .py_0p5()
+            .cursor_pointer()
+            .when(!labels.is_empty(), |this| {
+                this.border_l_1().border_color(border)
+            })
+            .when(open, |this| this.bg(hover))
+            .hover(|style| style.bg(hover))
+            .child("▾")
+            .on_click(move |_, _, cx| {
+                cx.stop_propagation();
+                more(cx);
+            }),
+    );
+    let inset = super::view(entry.block.kind.tag()).map_or(0., |view| view.bar_inset(entry));
+    let mut host = div().absolute().top_1().right(px(8. + inset)).child(split);
+    if open {
+        let mut rows: Vec<AnyElement> = Vec::new();
+        for (n, &(key, label)) in labels.iter().enumerate() {
+            let text = if n == 0 && key == "image" {
+                "Copy image".to_owned()
+            } else {
+                format!("Copy as {label}")
+            };
+            rows.push(menu_row(
+                format!("copy-{key}"),
+                format!("copy-{key}-{id}").into(),
+                text,
+                copy(key, &text_of, Some(&toggle)),
+                cx,
+            ));
+        }
+        if addable {
+            if !rows.is_empty() {
+                rows.push(separator(cx));
+            }
+            rows.extend(doc_rows(&docs, "", &id.to_string(), &pick, cx));
+        }
+        host = host.child(
+            deferred(
+                div()
+                    .absolute()
+                    .top(px(24.))
+                    .right_0()
+                    .child(panel(cx).children(rows)),
+            )
+            .with_priority(2),
+        );
+    }
+    Some(host.into_any_element())
 }
 
 #[cfg(test)]
@@ -863,6 +1120,148 @@ mod tests {
         );
     }
 
+    /// One block of every kind the doc tests need, with whether it can be
+    /// added to a doc.
+    fn doc_samples() -> Vec<(&'static str, BlockKind, bool)> {
+        use domain::block::{ChartKind, Column, DiffSpec, MermaidSpec, Series, TableSpec};
+        use domain::computed::{CalcSheetBody, ComputedBody, Engine};
+        let mut envelope = domain::computed::Computed::new(
+            "c1",
+            "stats.t",
+            "t-test",
+            Engine {
+                name: "e".into(),
+                version: "1".into(),
+                backend: None,
+                platform: None,
+            },
+        );
+        envelope
+            .values
+            .insert("p".into(), domain::computed::ComputedValue::new(0.5));
+        vec![
+            (
+                "text",
+                BlockKind::Text {
+                    markdown: "hola".into(),
+                },
+                true,
+            ),
+            (
+                "table",
+                BlockKind::Table(TableSpec {
+                    columns: vec![Column::new("a")],
+                    rows: vec![vec![domain::block::Cell::Number(1.0)]],
+                }),
+                true,
+            ),
+            (
+                "chart",
+                BlockKind::Chart(domain::block::ChartSpec {
+                    title: "sizes".into(),
+                    kind: ChartKind::Bar,
+                    labels: vec!["a".into()],
+                    series: vec![Series {
+                        name: "s".into(),
+                        values: vec![1.0],
+                    }],
+                }),
+                true,
+            ),
+            (
+                "computed",
+                BlockKind::Computed {
+                    envelope: Box::new(envelope),
+                    body: Box::new(ComputedBody::CalcSheet(CalcSheetBody { lines: Vec::new() })),
+                },
+                true,
+            ),
+            (
+                "diff",
+                BlockKind::Diff(DiffSpec {
+                    path: "a.rs".into(),
+                    old_text: None,
+                    new_text: "x".into(),
+                    unified: "+x\n".into(),
+                    approval: None,
+                }),
+                true,
+            ),
+            (
+                "mermaid",
+                BlockKind::Mermaid(MermaidSpec {
+                    source: "graph TD; A-->B".into(),
+                    title: None,
+                }),
+                true,
+            ),
+            (
+                "shell",
+                BlockKind::Shell {
+                    command: "ls".into(),
+                    exit_code: Some(0),
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    timed_out: false,
+                    truncated: false,
+                },
+                false,
+            ),
+            (
+                "thinking",
+                BlockKind::Thinking {
+                    text: "hmm".into(),
+                    collapsed: true,
+                },
+                false,
+            ),
+            (
+                "stage",
+                BlockKind::StageHeader {
+                    stage: "s".into(),
+                    index: 1,
+                    total: 2,
+                },
+                false,
+            ),
+            (
+                "tool",
+                BlockKind::ToolCall {
+                    tool_use_id: "t".into(),
+                    name: "read_file".into(),
+                    summary: "x".into(),
+                    input: serde_json::json!({}),
+                    status: domain::block::ToolStatus::Succeeded,
+                    output: None,
+                },
+                false,
+            ),
+        ]
+    }
+
+    #[test]
+    fn blocks_are_addable_exactly_when_they_have_markdown() {
+        // The set of kinds with markdown grows; the rule does not.
+        for (name, kind, _) in doc_samples() {
+            assert_eq!(
+                addable(&kind),
+                super::super::doc_markdown(&kind).is_some(),
+                "{name}"
+            );
+        }
+        let text = BlockKind::Text {
+            markdown: "# Hi".into(),
+        };
+        assert!(addable(&text));
+        for chrome in ["thinking", "tool", "stage"] {
+            let kind = doc_samples()
+                .into_iter()
+                .find(|(name, ..)| *name == chrome)
+                .map(|(_, kind, _)| kind);
+            assert!(kind.is_some_and(|kind| !addable(&kind)), "{chrome}");
+        }
+    }
+
     #[gpui::test]
     fn the_selected_block_copies_as_csv(cx: &mut gpui::TestAppContext) {
         use application_core::keymap::Action;
@@ -890,9 +1289,16 @@ mod tests {
             view.handle_action(&Action::builtin("block.last"), cx);
         });
         draw(cx);
+        assert!(cx.debug_bounds("copy-csv").is_none(), "the menu is closed");
+        let more = cx
+            .debug_bounds("copy-more")
+            .unwrap_or_else(|| panic!("no chevron"));
+        cx.simulate_click(more.center(), Modifiers::none());
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
         let button = cx
             .debug_bounds("copy-csv")
-            .unwrap_or_else(|| panic!("no copy button"));
+            .unwrap_or_else(|| panic!("no copy row"));
         cx.simulate_click(button.center(), Modifiers::none());
         let copied = cx.read_from_clipboard().and_then(|item| item.text());
         assert_eq!(copied.as_deref(), Some(csv(&table()).as_str()));

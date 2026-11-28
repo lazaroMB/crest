@@ -65,6 +65,11 @@ pub const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../migrations/0008_organize.sql"),
         after: None,
     },
+    Migration {
+        name: "0009_docs",
+        sql: include_str!("../migrations/0009_docs.sql"),
+        after: None,
+    },
 ];
 
 /// Version a fully migrated database has.
@@ -204,6 +209,7 @@ mod tests {
                 "discovery_artifacts",
                 "discovery_events",
                 "discovery_sources",
+                "docs",
                 "flow_sessions",
                 "permission_rules",
                 "project_roots",

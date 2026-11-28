@@ -3,15 +3,17 @@
 //
 //   mock bar (outside crest)
 //   ┌ window ──────────────────────────────────────────────┐
-//   │ chats │ tree │ timeline                              │
+//   │ chats │ tree │ timeline          ┃ doc panel         │  (docView: hidden | split | doc)
 //   │       │      │ activity line                         │
 //   │ prompt                                                │
 //   │ status bar                                            │
 //   └──────────────────────────────────────────────────────┘
-//   approval dialog, MCP servers modal (over everything)
+//   approval dialog, MCP servers modal, selection bar (over everything)
 
 import { h } from "./lib/h.js";
-import { subscribe, state } from "./store.js";
+import { setUi, subscribe, state } from "./store.js";
+import { mountDocPanel } from "./components/doc-panel/doc-panel.js";
+import { SelectionBar, bindSelectionBar } from "./components/selection-bar/selection-bar.js";
 import { ActivityLine } from "./components/activity-line/activity-line.js";
 import { InfoCorner } from "./components/info-corner/info-corner.js";
 import { ApprovalDialog } from "./components/approval-dialog/approval-dialog.js";
@@ -70,6 +72,9 @@ export function mountApp(root) {
   const overlay = slot();
   const info = slot();
   const mcp = slot();
+  const selectionBar = slot();
+  const doc = h("aside");
+  const panes = h("div", { class: "panes" }, h("div", { class: "session" }, timeline), doc);
 
   const win = h(
     "div",
@@ -77,18 +82,25 @@ export function mountApp(root) {
     h(
       "div",
       { class: "workbench" },
-      h("div", { class: "workbench__body" }, chats, h("div", { class: "root" }, tree, h("div", { class: "session" }, timeline, activity))),
+      h("div", { class: "workbench__body" }, chats, h("div", { class: "root" }, tree, h("div", { class: "main" }, panes, activity))),
       prompt,
       status,
     ),
     overlay,
     info,
     mcp,
+    selectionBar,
   );
   root.append(mockBar, h("div", { class: "stage" }, win));
 
   const timelineView = mountTimeline(timeline);
   const promptView = mountPromptInput(prompt);
+  const docView = mountDocPanel(doc);
+  bindSelectionBar(win);
+  // A click anywhere but a menu closes the block and doc menus.
+  document.addEventListener("mousedown", (e) => {
+    if ((state.ui.blockMenu || state.ui.docMenu) && !e.target.closest?.(".block-menu, .doc-panel__anchor")) setUi({ blockMenu: null, docMenu: null });
+  });
 
   const regions = [
     region(mockBar, (s) => s.ui, MockBar),
@@ -105,18 +117,22 @@ export function mountApp(root) {
         s.ui.archivedOpen,
         s.mcp.map((m) => m.state),
         s.ui.mcp.open,
+        s.ui.docId,
+        s.ui.docView,
+        s.docs.map((d) => [d.id, d.title, d.chatId]),
       ],
       ChatsPanel,
     ),
+    region(selectionBar, (s) => s.ui.selectionBar, SelectionBar),
     region(tree, (s) => [s.ui.treeShown, s.ui.focus], (s) => s.ui.treeShown && TreePanel(s)),
     region(activity, (s) => [s.turn.activity, s.turn.queue, Math.floor(Date.now() / 100)], (s) => ActivityLine(s)),
-    region(status, (s) => [s.status, s.notice, s.turn.busy, s.organization, s.openChatId], StatusBar),
+    region(status, (s) => [s.status, s.notice, s.turn.busy, s.organization, s.openChatId, s.ui.docView, s.ui.docId, s.docs.map((d) => [d.id, d.title, d.chatId])], StatusBar),
     region(info, (s) => [s.notices, s.notice, s.turn.steps, s.toast, s.ui.infoOpen], InfoCorner),
     region(overlay, (s) => [s.turn.approval, s.turn.chatId, s.chat?.id, s.ui.approvalIndex], ApprovalDialog),
     keptRegion(mcp, (s) => [s.ui.mcp.open && s.mcp, s.ui.mcp], McpManager),
   ];
   const renderTimeline = whenChanged(
-    (s) => [s.chat, s.ui.selected, s.ui.expanded, s.ui.altView, s.ui.outlineOpen, s.ui.focus],
+    (s) => [s.chat, s.ui.selected, s.ui.expanded, s.ui.altView, s.ui.outlineOpen, s.ui.focus, s.ui.blockMenu, s.ui.docId, s.docs.map((d) => [d.id, d.title, d.chatId])],
     timelineView.update,
   );
 
@@ -124,8 +140,10 @@ export function mountApp(root) {
     win.setAttribute("data-theme", s.ui.theme);
     win.style.maxWidth = s.ui.width === "fill" ? "" : `${s.ui.width}px`;
     win.classList.toggle("window--framed", s.ui.width !== "fill");
+    panes.dataset.docView = s.ui.docView;
     for (const update of regions) update(s);
     renderTimeline(s);
+    docView.update(s);
     promptView.update(s);
   }
 

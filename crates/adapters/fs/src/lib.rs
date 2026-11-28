@@ -15,6 +15,7 @@
 //! disk to choose the project to open, before there is a workspace.
 
 pub mod browse;
+pub mod docs;
 pub mod guard;
 mod read;
 mod write;

@@ -25,16 +25,18 @@ use application_core::ports::events::DomainEvent;
 use futures::StreamExt as _;
 use futures::channel::mpsc::UnboundedReceiver;
 use gpui::{
-    AnyElement, App, ClipboardItem, Context, ElementId, FocusHandle, Focusable, FollowMode,
-    InteractiveElement as _, IntoElement, KeyDownEvent, ListAlignment, ListState, MouseButton,
-    MouseDownEvent, MouseUpEvent, ParentElement as _, Render, ScrollHandle, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Task, WeakEntity, Window, div, list,
-    prelude::FluentBuilder as _, px,
+    AnyElement, App, ClipboardItem, Context, ElementId, EventEmitter, FocusHandle, Focusable,
+    FollowMode, InteractiveElement as _, IntoElement, KeyDownEvent, ListAlignment, ListState,
+    MouseButton, MouseDownEvent, MouseUpEvent, ParentElement as _, Render, ScrollHandle,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Task, WeakEntity, Window, div,
+    list, prelude::FluentBuilder as _, px,
 };
 use gpui_component::button::{Button, ButtonVariants as _};
 use gpui_component::scroll::ScrollableElement as _;
 use gpui_component::tooltip::Tooltip;
 use gpui_component::{ActiveTheme as _, IconName, Sizable as _, h_flex, v_flex};
+
+use domain::doc::DocId;
 
 use super::column::{COLUMN_GUTTER, block_width};
 use super::selection::{self, CopyHint, render_hint};
@@ -64,6 +66,60 @@ impl DeferredKey {
     }
 }
 
+/// Which document an "Add to doc" goes to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DocTarget {
+    /// This document of the chat (a row of the block menu).
+    Doc(DocId),
+    /// A new document.
+    New,
+    /// The document in the panel, else the chat's latest, else a new one
+    /// (`/doc add`, the keyboard selection, the selection bar).
+    Default,
+}
+
+/// A document of the chat, as the block menu lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocRef {
+    /// Its id.
+    pub id: DocId,
+    /// Its title.
+    pub title: String,
+    /// Last change, milliseconds since the Unix epoch.
+    pub updated_at: u64,
+}
+
+/// What a [`TimelineView`] tells the session.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TimelineEvent {
+    /// The person asked to put `markdown` in a document: a block's
+    /// markdown (block menu, `/doc add`) or the selected text (selection
+    /// bar). `target` says which document. `image` is a picture to save
+    /// beside the doc as `(file name, PNG bytes)`: the picture of a chart
+    /// block (`markdown` refers to it as `assets/<name>`); `None` for
+    /// everything else, and for a chart that cannot be drawn (it goes in as
+    /// its table).
+    AddToDoc {
+        /// What to append.
+        markdown: String,
+        /// The document it goes to.
+        target: DocTarget,
+        /// A picture the markdown refers to (`assets/<name>`).
+        image: Option<(String, Vec<u8>)>,
+    },
+}
+
+impl EventEmitter<TimelineEvent> for TimelineView {}
+
+/// Where the popup is open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MenuAt {
+    /// Under the split button of this block.
+    Block(domain::block::BlockId),
+    /// Under the "Add to doc" of the reply ending at this entry.
+    Reply(usize),
+}
+
 /// The timeline area of the main window.
 pub struct TimelineView {
     state: TimelineState,
@@ -72,8 +128,16 @@ pub struct TimelineView {
     /// The "Copy" hint next to the text selected with the mouse.
     copy_hint: Option<CopyHint>,
     _hint_expiry: Option<Task<()>>,
+    /// Whether the selection bar's "Add to doc" popup is open.
+    hint_menu: bool,
     /// The reply (by its last block) whose copy button just copied.
     copied_reply: Option<usize>,
+    /// The chat's documents, most recently changed first.
+    docs: std::rc::Rc<[DocRef]>,
+    /// The open "copy / add to doc" popup.
+    menu: Option<MenuAt>,
+    /// The row under the pointer: its block bar shows without a selection.
+    hovered: Option<usize>,
     /// The menu of the user's questions is open.
     outline_open: bool,
     /// The menu's rows, rebuilt when the entries or the selection change
@@ -116,7 +180,11 @@ impl TimelineView {
             focus_handle: cx.focus_handle(),
             copy_hint: None,
             _hint_expiry: None,
+            hint_menu: false,
             copied_reply: None,
+            docs: std::rc::Rc::from(Vec::new()),
+            menu: None,
+            hovered: None,
             outline_open: false,
             outline: super::outline::Outline { groups: Vec::new() },
             outline_key: None,
@@ -129,6 +197,22 @@ impl TimelineView {
             _reply_expiry: None,
             _events: None,
         }
+    }
+
+    /// Takes the chat's documents for the block menu's "Add to" rows
+    /// (newest change first; the menu shows the first three).
+    pub fn set_docs(&mut self, mut docs: Vec<DocRef>, cx: &mut Context<Self>) {
+        docs.sort_by_key(|doc| std::cmp::Reverse(doc.updated_at));
+        if *self.docs != *docs {
+            self.docs = docs.into();
+            cx.notify();
+        }
+    }
+
+    /// The documents the menu offers, newest change first.
+    #[must_use]
+    pub fn docs(&self) -> &[DocRef] {
+        &self.docs
     }
 
     /// The keys the welcome screen suggests: keys and what they do.
@@ -154,18 +238,111 @@ impl TimelineView {
     fn mouse_up(&mut self, event: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
         let text = selection::selected_text(window, cx);
         if text.is_empty() {
+            self.hint_menu = false;
             if self.copy_hint.take().is_some() {
                 cx.notify();
             }
             return;
         }
         window.focus(&self.focus_handle, cx);
+        self.hint_menu = false;
         self.copy_hint = Some(CopyHint {
             at: event.position,
             text,
             copied: false,
         });
         cx.notify();
+    }
+
+    /// Selects the first block of kind `tag` and opens its copy / add-to-doc
+    /// menu (the showcase's `doc-block-menu` scene). Returns whether there
+    /// was one.
+    pub fn open_menu_of(&mut self, tag: domain::block::BlockTag, cx: &mut Context<Self>) -> bool {
+        let found = (0..self.state.len()).find_map(|ix| {
+            let entry = self.state.get(ix)?;
+            (entry.block.kind.tag() == tag).then_some((ix, entry.block.id))
+        });
+        let Some((ix, id)) = found else {
+            return false;
+        };
+        let before = self.state.selected();
+        self.state.select(ix);
+        self.remeasure_selection(before, Some(ix));
+        self.menu = Some(MenuAt::Block(id));
+        cx.notify();
+        true
+    }
+
+    /// What adding the block the keyboard selection is on puts in a
+    /// document: its markdown and picture (see [`crate::blocks::doc_content`]).
+    pub fn selected_block_doc_content(&self) -> Option<crate::blocks::DocContent> {
+        let entry = self.state.selected_entry()?;
+        crate::blocks::doc_content(&entry.block.kind, entry.block.id)
+    }
+
+    /// Emits [`TimelineEvent::AddToDoc`] for the block `id` (the copy row's
+    /// entries). Returns whether the block can be added.
+    pub fn add_block_to_doc(
+        &mut self,
+        id: domain::block::BlockId,
+        target: DocTarget,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some((markdown, image)) = self
+            .state
+            .position(id)
+            .and_then(|ix| self.state.get(ix))
+            .and_then(|entry| crate::blocks::doc_content(&entry.block.kind, entry.block.id))
+        else {
+            return false;
+        };
+        self.menu = None;
+        cx.emit(TimelineEvent::AddToDoc {
+            markdown,
+            target,
+            image,
+        });
+        cx.notify();
+        true
+    }
+
+    /// Adds the text selected in the timeline to the chat's document
+    /// (the selection bar's "Add to doc"; bind it to `selection.add_to_doc`).
+    /// Hides the bar and clears the selection. Returns whether there was
+    /// any selected text.
+    pub fn add_selection_to_doc(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let live = selection::selected_text(window, cx);
+        let text = if live.is_empty() {
+            self.copy_hint
+                .as_ref()
+                .map(|hint| hint.text.clone())
+                .unwrap_or_default()
+        } else {
+            live
+        };
+        self.add_text_to_doc(text, DocTarget::Default, window, cx)
+    }
+
+    fn add_text_to_doc(
+        &mut self,
+        text: String,
+        target: DocTarget,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if text.is_empty() {
+            return false;
+        }
+        self.copy_hint = None;
+        self.hint_menu = false;
+        gpui_base::TextSelection::clear(window, cx);
+        cx.emit(TimelineEvent::AddToDoc {
+            markdown: text,
+            target,
+            image: None,
+        });
+        cx.notify();
+        true
     }
 
     /// Copies the text selected in the timeline. Returns whether there was
@@ -185,6 +362,7 @@ impl TimelineView {
             return;
         };
         hint.copied = true;
+        self.hint_menu = false;
         self._hint_expiry = Some(cx.spawn(async move |this, cx| {
             cx.background_executor().timer(selection::COPIED_TTL).await;
             this.update(cx, |this, cx| {
@@ -336,7 +514,14 @@ impl TimelineView {
     fn on_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let m = &event.keystroke.modifiers;
         if event.keystroke.key == "escape" && self.copy_hint.take().is_some() {
+            self.hint_menu = false;
             gpui_base::TextSelection::clear(window, cx);
+            self.deferred = None;
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
+        if event.keystroke.key == "escape" && self.menu.take().is_some() {
             self.deferred = None;
             cx.notify();
             cx.stop_propagation();
@@ -520,6 +705,7 @@ impl TimelineView {
     /// any other scrolls to the top of the chat.
     fn choose_outline(&mut self, ix: usize, cx: &mut Context<Self>) {
         let before = self.state.selected();
+        self.menu = None;
         if self.state.select(ix).is_some() {
             self.remeasure_selection(before, Some(ix));
             if !super::spy::is_on_screen(&self.list, ix) {
@@ -730,11 +916,12 @@ impl TimelineView {
     }
 
     /// The "Copy" button at the end of a complete reply.
-    fn reply_footer(&self, ix: usize, view: WeakEntity<Self>) -> Option<AnyElement> {
+    fn reply_footer(&self, ix: usize, view: WeakEntity<Self>, cx: &App) -> Option<AnyElement> {
         if !self.state.is_reply_end(ix) {
             return None;
         }
         let copied = self.copied_reply == Some(ix);
+        let copy_view = view.clone();
         let button = Button::new(("reply-copy", ix))
             .ghost()
             .xsmall()
@@ -747,9 +934,79 @@ impl TimelineView {
             .on_click(move |_, _, cx| {
                 // The row's click would select and expand the block.
                 cx.stop_propagation();
-                view.update(cx, |this, cx| this.copy_reply(ix, cx)).ok();
+                copy_view
+                    .update(cx, |this, cx| this.copy_reply(ix, cx))
+                    .ok();
             });
-        Some(h_flex().pt_1().child(button).into_any_element())
+        // This adds the whole reply; the block bar adds one block.
+        let open = self.menu == Some(MenuAt::Reply(ix));
+        let toggle_view = view.clone();
+        let add = div()
+            .relative()
+            .debug_selector(|| "reply-add".to_owned())
+            .child(
+                Button::new(("reply-add-doc", ix))
+                    .ghost()
+                    .xsmall()
+                    .label("Add to doc ▾")
+                    .tooltip("Add this reply to a document")
+                    .on_click(move |_, _, cx| {
+                        cx.stop_propagation();
+                        toggle_view
+                            .update(cx, |this, cx| {
+                                this.menu = (this.menu != Some(MenuAt::Reply(ix)))
+                                    .then_some(MenuAt::Reply(ix));
+                                cx.notify();
+                            })
+                            .ok();
+                    }),
+            );
+        let add = if open {
+            let pick_view = view.clone();
+            let pick: crate::blocks::copy::PickDoc = std::rc::Rc::new(move |target, cx| {
+                pick_view
+                    .update(cx, |this, cx| this.add_reply_to_doc(ix, target, cx))
+                    .ok();
+            });
+            add.child(crate::blocks::copy::doc_menu(
+                &self.docs,
+                "reply-",
+                &ix.to_string(),
+                &pick,
+                cx,
+            ))
+        } else {
+            add
+        };
+        Some(
+            h_flex()
+                .pt_1()
+                .gap_1()
+                .child(button)
+                .child(add)
+                .into_any_element(),
+        )
+    }
+
+    /// Emits [`TimelineEvent::AddToDoc`] with the reply that ends at block
+    /// `ix` (the reply footer's buttons). Returns whether there was a reply.
+    pub fn add_reply_to_doc(
+        &mut self,
+        ix: usize,
+        target: DocTarget,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(markdown) = self.state.reply_to_copy(ix) else {
+            return false;
+        };
+        self.menu = None;
+        cx.emit(TimelineEvent::AddToDoc {
+            markdown,
+            target,
+            image: None,
+        });
+        cx.notify();
+        true
     }
 
     /// Copies the reply that ends at block `ix`; the text is built now,
@@ -785,12 +1042,40 @@ impl TimelineView {
         };
         let content = render_block(entry, window, cx);
         let selected = self.state.selected() == Some(ix);
-        let copy_row = selected
-            .then(|| crate::blocks::copy::row(entry, copy_text_of(view.clone()), window, cx))
+        let id = entry.block.id;
+        let open = self.menu == Some(MenuAt::Block(id));
+        // The menu's popup sits outside the row: while it is open its bar
+        // stays even if the pointer leaves the block.
+        let copy_bar = (selected || self.hovered == Some(ix) || open)
+            .then(|| {
+                let toggle_view = view.clone();
+                let toggle: std::rc::Rc<dyn Fn(&mut App)> = std::rc::Rc::new(move |cx| {
+                    toggle_view
+                        .update(cx, |this, cx| {
+                            this.menu =
+                                (this.menu != Some(MenuAt::Block(id))).then_some(MenuAt::Block(id));
+                            cx.notify();
+                        })
+                        .ok();
+                });
+                let weak = view.clone();
+                let pick: crate::blocks::copy::PickDoc = std::rc::Rc::new(move |target, cx| {
+                    weak.update(cx, |this, cx| this.add_block_to_doc(id, target, cx))
+                        .ok();
+                });
+                let bar = crate::blocks::copy::Bar {
+                    open,
+                    toggle,
+                    docs: self.docs.clone(),
+                    pick,
+                    text_of: copy_text_of(view.clone()),
+                };
+                crate::blocks::copy::bar(entry, bar, window, cx)
+            })
             .flatten();
         let theme = cx.theme();
         let width = block_width(&entry.block.kind);
-        let footer = self.reply_footer(ix, view.clone());
+        let footer = self.reply_footer(ix, view.clone(), cx);
         // `min_w_0`: content that does not wrap on its own (a form's
         // labels) must not widen the block past the window.
         let block = div()
@@ -800,9 +1085,10 @@ impl TimelineView {
             .px_2()
             .py_1()
             .border_l_2()
+            .relative()
             .debug_selector(move || format!("block-{ix}"))
             .child(content)
-            .children(copy_row)
+            .children(copy_bar)
             .children(footer);
         let block = if selected {
             block
@@ -817,6 +1103,43 @@ impl TimelineView {
             .flex()
             .justify_center()
             .px(px(COLUMN_GUTTER))
+            .on_hover({
+                let view = view.clone();
+                move |hovered, _, cx| {
+                    view.update(cx, |this, cx| {
+                        let next = if *hovered {
+                            Some(ix)
+                        } else if this.hovered == Some(ix) {
+                            None
+                        } else {
+                            this.hovered
+                        };
+                        if this.hovered != next {
+                            this.hovered = next;
+                            cx.notify();
+                        }
+                    })
+                    .ok();
+                }
+            })
+            // Capture phase: a child that stops the mouse down (the diagram
+            // canvas) still selects its row. The click toggles as before.
+            .capture_any_mouse_down({
+                let view = view.clone();
+                move |event, _, cx| {
+                    if event.button != gpui::MouseButton::Left {
+                        return;
+                    }
+                    view.update(cx, |this, cx| {
+                        let before = this.state.selected();
+                        if before != Some(ix) && this.state.select(ix).is_some() {
+                            this.remeasure_selection(before, Some(ix));
+                            cx.notify();
+                        }
+                    })
+                    .ok();
+                }
+            })
             .on_click(move |_, window, cx| {
                 // The click landed in a form being answered (one of its
                 // inputs took the focus on mouse down): the form keeps the
@@ -993,20 +1316,57 @@ fn blocks_layer(
 ) -> AnyElement {
     let view = cx.entity().downgrade();
     // The hint outlives the selection only while it says "Copied".
+    // While its popup is open the bar stays (the text is already captured).
     if let Some(hint) = &this.copy_hint
         && !hint.copied
+        && !this.hint_menu
         && selection::selected_text(window, cx).is_empty()
     {
         this.copy_hint = None;
     }
+    if this.copy_hint.is_none() {
+        this.hint_menu = false;
+    }
     let hint = this.copy_hint.as_ref().map(|hint| {
         let weak = view.clone();
         let text = hint.text.clone();
+        let toggle_weak = view.clone();
+        let menu = this.hint_menu.then(|| {
+            let pick_view = view.clone();
+            let pick_text = hint.text.clone();
+            let handle = window.window_handle();
+            let pick: crate::blocks::copy::PickDoc = std::rc::Rc::new(move |target, cx| {
+                let (view, text) = (pick_view.clone(), pick_text.clone());
+                // The click is being dispatched in this window: clear the
+                // selection once it is done.
+                cx.defer(move |cx| {
+                    handle
+                        .update(cx, move |_, window, cx| {
+                            view.update(cx, |this, cx| {
+                                this.add_text_to_doc(text, target, window, cx);
+                            })
+                            .ok();
+                        })
+                        .ok();
+                });
+            });
+            crate::blocks::copy::doc_popup(&this.docs, "hint-", "selection", &pick, cx)
+                .into_any_element()
+        });
         render_hint(
             hint,
             move |_window, cx| {
                 weak.update(cx, |this, cx| this.copy(text.clone(), cx)).ok();
             },
+            move |_window, cx| {
+                toggle_weak
+                    .update(cx, |this, cx| {
+                        this.hint_menu = !this.hint_menu;
+                        cx.notify();
+                    })
+                    .ok();
+            },
+            menu,
             cx,
         )
     });
@@ -1252,8 +1612,12 @@ mod tests {
                 delta: gpui::ScrollDelta::Pixels(gpui::point(px(0.), px(wheel))),
                 ..Default::default()
             });
-            cx.update(|window, _| window.refresh());
-            cx.run_until_parked();
+            // Twice: the selected block's copy row changes its height, and
+            // the list settles on the frame after.
+            for _ in 0..6 {
+                cx.update(|window, _| window.refresh());
+                cx.run_until_parked();
+            }
             assert_eq!(selected(cx), at_top(cx), "after a wheel of {wheel}");
         }
         assert_eq!(selected(cx), Some(79), "the bottom is the last block");
@@ -1402,5 +1766,541 @@ mod tests {
             view.handle_action(&Action::builtin("block.toggle_view"), cx);
             assert!(view.state().entries()[0].alt_view);
         });
+    }
+
+    /// Records every [`TimelineEvent`] `view` emits.
+    fn record_events(
+        view: &Entity<TimelineView>,
+        cx: &mut VisualTestContext,
+    ) -> std::rc::Rc<std::cell::RefCell<Vec<TimelineEvent>>> {
+        let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        let sink = events.clone();
+        cx.update(|_, app| {
+            app.subscribe(view, move |_, event: &TimelineEvent, _| {
+                sink.borrow_mut().push(event.clone());
+            })
+            .detach();
+        });
+        events
+    }
+
+    #[gpui::test]
+    fn add_to_doc_fires_from_the_copy_row_and_the_keyboard_selection(cx: &mut TestAppContext) {
+        use application_core::keymap::Action;
+        use gpui::{Modifiers, point, size};
+
+        cx.update(gpui_component::init);
+        let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+        let events = record_events(&view, cx);
+        let kind = BlockKind::Table(domain::block::TableSpec {
+            columns: vec![domain::block::Column::new("a")],
+            rows: vec![vec![domain::block::Cell::Number(1.0)]],
+        });
+        let expected = domain::doc::block_markdown(&kind, None).unwrap_or_default();
+        let table = Block::new(kind);
+        view.update(cx, |view, cx| {
+            view.apply_all([table].map(|block| DomainEvent::BlockAdded { block }), cx);
+            view.handle_action(&Action::builtin("block.last"), cx);
+        });
+        assert_eq!(
+            view.read_with(cx, |view, _| view
+                .selected_block_doc_content()
+                .map(|(markdown, _)| markdown)),
+            Some(expected.clone())
+        );
+        cx.draw(point(px(0.), px(0.)), size(px(800.), px(600.)), |_, _| {
+            div().size_full().child(view.clone())
+        });
+        cx.run_until_parked();
+        let doc = doc_ref("Plan", 1);
+        let chosen = doc.id;
+        // Without docs one row adds to the default; with one, rows name it.
+        let mut rounds = vec![("add-to-doc", DocTarget::Default)];
+        rounds.extend([
+            ("add-to-doc-0", DocTarget::Doc(chosen)),
+            ("add-to-new-doc", DocTarget::New),
+        ]);
+        for (n, (selector, target)) in rounds.into_iter().enumerate() {
+            if n == 1 {
+                view.update(cx, |view, cx| view.set_docs(vec![doc.clone()], cx));
+            }
+            let more = cx
+                .debug_bounds("copy-more")
+                .unwrap_or_else(|| panic!("no chevron"));
+            cx.simulate_click(more.center(), Modifiers::none());
+            cx.update(|window, _| window.refresh());
+            cx.run_until_parked();
+            let button = cx
+                .debug_bounds(selector)
+                .unwrap_or_else(|| panic!("no {selector}"));
+            cx.simulate_click(button.center(), Modifiers::none());
+            assert_eq!(
+                events.borrow().last(),
+                Some(&TimelineEvent::AddToDoc {
+                    markdown: expected.clone(),
+                    target,
+                    image: None,
+                })
+            );
+            cx.update(|window, _| window.refresh());
+            cx.run_until_parked();
+        }
+        assert_eq!(events.borrow().len(), 3);
+    }
+
+    fn redraw(cx: &mut VisualTestContext, view: &Entity<TimelineView>) {
+        cx.draw(
+            gpui::point(px(0.), px(0.)),
+            gpui::size(px(800.), px(900.)),
+            |_, _| div().size_full().child(view.clone()),
+        );
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn the_block_bar_shows_while_the_pointer_is_over_the_row(cx: &mut TestAppContext) {
+        use gpui::Modifiers;
+
+        cx.update(gpui_component::init);
+        let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+        let table = Block::new(BlockKind::Table(domain::block::TableSpec {
+            columns: vec![domain::block::Column::new("a")],
+            rows: vec![vec![domain::block::Cell::Number(1.0)]],
+        }));
+        let chart = Block::new(BlockKind::Chart(domain::block::ChartSpec {
+            title: "sizes".into(),
+            kind: domain::block::ChartKind::Bar,
+            labels: vec!["a".into(), "b".into()],
+            series: vec![domain::block::Series {
+                name: "s".into(),
+                values: vec![1.0, 2.0],
+            }],
+        }));
+        view.update(cx, |view, cx| {
+            view.apply_all(
+                [table, chart].map(|block| DomainEvent::BlockAdded { block }),
+                cx,
+            );
+        });
+        redraw(cx, &view);
+        assert!(view.read_with(cx, |v, _| v.state().selected()).is_none());
+        assert!(cx.debug_bounds("copy-row").is_none());
+        for (ix, selector) in [(0, "block-0"), (1, "block-1")] {
+            let row = cx.debug_bounds(selector).expect("row");
+            cx.simulate_mouse_move(row.center(), None, Modifiers::none());
+            redraw(cx, &view);
+            assert!(cx.debug_bounds("copy-row").is_some(), "no bar on {ix}");
+            cx.simulate_mouse_move(gpui::point(px(799.), px(899.)), None, Modifiers::none());
+            redraw(cx, &view);
+            assert!(cx.debug_bounds("copy-row").is_none(), "bar stuck on {ix}");
+        }
+    }
+
+    #[gpui::test]
+    fn a_mouse_down_on_a_diagram_selects_its_block(cx: &mut TestAppContext) {
+        use gpui::Modifiers;
+
+        cx.update(gpui_component::init);
+        let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+        let diagram = Block::new(BlockKind::Mermaid(domain::block::MermaidSpec {
+            source: "graph TD; A-->B".into(),
+            title: None,
+        }));
+        view.update(cx, |view, cx| {
+            view.apply_all([diagram].map(|block| DomainEvent::BlockAdded { block }), cx);
+        });
+        redraw(cx, &view);
+        let row = cx.debug_bounds("block-0").expect("row");
+        cx.simulate_click(row.center(), Modifiers::none());
+        redraw(cx, &view);
+        assert_eq!(view.read_with(cx, |v, _| v.state().selected()), Some(0));
+        assert!(cx.debug_bounds("copy-row").is_some());
+    }
+
+    #[gpui::test]
+    fn a_text_block_adds_itself_to_a_doc(cx: &mut TestAppContext) {
+        cx.update(gpui_component::init);
+        let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+        let events = record_events(&view, cx);
+        let block = Block::new(BlockKind::Text {
+            markdown: "Some **reply**".into(),
+        });
+        let id = block.id;
+        view.update(cx, |view, cx| {
+            view.apply_all([block].map(|block| DomainEvent::BlockAdded { block }), cx);
+        });
+        let added = view.update(cx, |view, cx| {
+            view.add_block_to_doc(id, DocTarget::Default, cx)
+        });
+        assert!(added);
+        assert_eq!(
+            events.borrow().last(),
+            Some(&TimelineEvent::AddToDoc {
+                markdown: "Some **reply**".into(),
+                target: DocTarget::Default,
+                image: None,
+            })
+        );
+    }
+
+    fn doc_ref(title: &str, updated_at: u64) -> DocRef {
+        DocRef {
+            id: DocId::new(),
+            title: title.into(),
+            updated_at,
+        }
+    }
+
+    /// Opens the menu of the selected table and lists its "Add to" rows
+    /// (as `(selector, id)`: the debug selectors found, in order).
+    fn menu_rows(cx: &mut gpui::VisualTestContext) -> Vec<String> {
+        use gpui::Modifiers;
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|window, _| window.refresh());
+            cx.run_until_parked();
+        };
+        draw(cx);
+        // The menu stays open between calls: open it only when it is closed.
+        if cx.debug_bounds("copy-csv").is_none() {
+            let more = cx
+                .debug_bounds("copy-more")
+                .unwrap_or_else(|| panic!("no chevron"));
+            cx.simulate_click(more.center(), Modifiers::none());
+            draw(cx);
+        }
+        let mut found = Vec::new();
+        for selector in [
+            "add-to-doc-0",
+            "add-to-doc-1",
+            "add-to-doc-2",
+            "add-to-doc-3",
+        ]
+        .into_iter()
+        .chain(["add-to-new-doc", "add-to-doc"])
+        {
+            if cx.debug_bounds(selector).is_some() {
+                found.push(selector.to_owned());
+            }
+        }
+        found
+    }
+
+    #[gpui::test]
+    fn the_menu_lists_the_three_newest_docs_then_a_new_one(cx: &mut TestAppContext) {
+        use application_core::keymap::Action;
+        use gpui::Modifiers;
+
+        cx.update(gpui_component::init);
+        let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+        let events = record_events(&view, cx);
+        let table = Block::new(BlockKind::Table(domain::block::TableSpec {
+            columns: vec![domain::block::Column::new("a")],
+            rows: vec![vec![domain::block::Cell::Number(1.0)]],
+        }));
+        view.update(cx, |view, cx| {
+            view.apply_all([table].map(|block| DomainEvent::BlockAdded { block }), cx);
+            view.handle_action(&Action::builtin("block.last"), cx);
+        });
+        // No docs: one row that makes the first.
+        assert_eq!(menu_rows(cx), ["add-to-doc"]);
+
+        let docs = [
+            doc_ref("old", 10),
+            doc_ref("newest", 40),
+            doc_ref("middle", 30),
+            doc_ref("second", 35),
+        ];
+        let ids = docs.clone().map(|doc| doc.id);
+        // Three docs, set out of order: the newest change first.
+        view.update(cx, |view, cx| view.set_docs(docs[..3].to_vec(), cx));
+        assert_eq!(
+            view.read_with(cx, |view, _| view
+                .docs()
+                .iter()
+                .map(|doc| doc.title.clone())
+                .collect::<Vec<_>>()),
+            ["newest", "middle", "old"]
+        );
+        assert_eq!(
+            menu_rows(cx),
+            [
+                "add-to-doc-0",
+                "add-to-doc-1",
+                "add-to-doc-2",
+                "add-to-new-doc"
+            ]
+        );
+        let label = |cx: &mut gpui::VisualTestContext, doc: &DocRef| {
+            let _ = cx;
+            crate::blocks::copy::add_label(doc)
+        };
+        assert_eq!(label(cx, &docs[1]), "Add to \"newest\"");
+
+        // Four docs: only the three newest.
+        view.update(cx, |view, cx| view.set_docs(docs.to_vec(), cx));
+        assert_eq!(
+            menu_rows(cx),
+            [
+                "add-to-doc-0",
+                "add-to-doc-1",
+                "add-to-doc-2",
+                "add-to-new-doc"
+            ]
+        );
+        // The second row is the second newest change.
+        let second = cx
+            .debug_bounds("add-to-doc-1")
+            .unwrap_or_else(|| panic!("no second row"));
+        cx.simulate_click(second.center(), Modifiers::none());
+        assert!(matches!(
+            events.borrow().last(),
+            Some(TimelineEvent::AddToDoc { target, .. }) if *target == DocTarget::Doc(ids[3])
+        ));
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("add-to-doc-1").is_none(), "the menu closes");
+    }
+
+    #[gpui::test]
+    fn blocks_without_markdown_cannot_be_added(cx: &mut TestAppContext) {
+        use application_core::keymap::Action;
+        cx.update(gpui_component::init);
+        let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+        let events = record_events(&view, cx);
+        let shell = Block::new(BlockKind::ToolCall {
+            tool_use_id: "t".into(),
+            name: "read_file".into(),
+            summary: "x".into(),
+            input: serde_json::json!({}),
+            status: domain::block::ToolStatus::Succeeded,
+            output: None,
+        });
+        let id = shell.id;
+        view.update(cx, |view, cx| {
+            view.apply_all([DomainEvent::BlockAdded { block: shell }], cx);
+            view.handle_action(&Action::builtin("block.last"), cx);
+            assert!(!view.add_block_to_doc(id, DocTarget::New, cx));
+        });
+        assert_eq!(
+            view.read_with(cx, |view, _| view
+                .selected_block_doc_content()
+                .map(|(markdown, _)| markdown)),
+            None
+        );
+        assert!(events.borrow().is_empty());
+    }
+
+    #[gpui::test]
+    fn the_selection_bar_adds_the_selected_text(cx: &mut TestAppContext) {
+        use gpui::point;
+
+        cx.update(gpui_component::init);
+        let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+        let events = record_events(&view, cx);
+        view.update(cx, |view, cx| {
+            view.apply_all(
+                [text("pick this")].map(|block| DomainEvent::BlockAdded { block }),
+                cx,
+            );
+        });
+        view.update_in(cx, |view, window, cx| {
+            // The bar as the mouse-up handler leaves it (set here: a redraw
+            // would drop it, there being no live selection in the test).
+            view.copy_hint = Some(CopyHint {
+                at: point(px(40.), px(40.)),
+                text: "pick this".into(),
+                copied: false,
+            });
+            assert!(view.add_selection_to_doc(window, cx));
+            assert!(view.copy_hint().is_none(), "the bar hides");
+            assert!(!view.add_selection_to_doc(window, cx), "nothing left");
+        });
+        assert_eq!(
+            events.borrow().as_slice(),
+            [TimelineEvent::AddToDoc {
+                markdown: "pick this".into(),
+                target: DocTarget::Default,
+                image: None,
+            }]
+        );
+    }
+
+    /// Shows the selection bar with its popup open, as a click on "Add to
+    /// doc" leaves it. The test window has no live text selection, so the
+    /// open popup is what keeps the bar through a redraw.
+    fn open_hint_menu(cx: &mut VisualTestContext, view: &Entity<TimelineView>) {
+        view.update(cx, |view, cx| {
+            view.copy_hint = Some(CopyHint {
+                at: gpui::point(px(40.), px(40.)),
+                text: "pick this".into(),
+                copied: false,
+            });
+            view.hint_menu = true;
+            cx.notify();
+        });
+        // `cx.draw` of a bar (a deferred, anchored element) trips GPUI's
+        // frame arena in tests; a refresh of the drawn window does not.
+        cx.update(|window, _| window.refresh());
+        cx.run_until_parked();
+    }
+
+    #[gpui::test]
+    fn the_selection_bar_asks_which_document(cx: &mut TestAppContext) {
+        use gpui::Modifiers;
+
+        cx.update(gpui_component::init);
+        let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+        let events = record_events(&view, cx);
+        let doc = doc_ref("Plan", 1);
+        let chosen = doc.id;
+        view.update(cx, |view, cx| {
+            view.set_docs(vec![doc.clone()], cx);
+            view.apply_all(
+                [text("pick this")].map(|block| DomainEvent::BlockAdded { block }),
+                cx,
+            );
+        });
+        redraw(cx, &view);
+        open_hint_menu(cx, &view);
+        let picked = String::from("pick this");
+        let chip = cx.debug_bounds("add-to-doc-hint").expect("chip");
+        assert!(cx.debug_bounds("hint-add-to-doc-0").is_some());
+        assert!(cx.debug_bounds("hint-add-to-new-doc").is_some());
+        assert!(events.borrow().is_empty(), "opening adds nothing");
+        // A click on the chip closes it, adding nothing.
+        cx.simulate_click(chip.center(), Modifiers::none());
+        assert!(!view.read_with(cx, |v, _| v.hint_menu));
+        assert!(events.borrow().is_empty());
+        open_hint_menu(cx, &view);
+        let row = cx.debug_bounds("hint-add-to-doc-0").expect("row");
+        cx.simulate_click(row.center(), Modifiers::none());
+        assert_eq!(
+            events.borrow().as_slice(),
+            [TimelineEvent::AddToDoc {
+                markdown: picked,
+                target: DocTarget::Doc(chosen),
+                image: None,
+            }]
+        );
+        assert!(view.read_with(cx, |v, _| v.copy_hint().is_none()));
+        assert!(!view.read_with(cx, |v, _| v.hint_menu));
+    }
+
+    #[gpui::test]
+    fn the_selection_bar_without_docs_adds_to_the_default(cx: &mut TestAppContext) {
+        use gpui::Modifiers;
+
+        cx.update(gpui_component::init);
+        let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+        let events = record_events(&view, cx);
+        view.update(cx, |view, cx| {
+            view.apply_all(
+                [text("pick this")].map(|block| DomainEvent::BlockAdded { block }),
+                cx,
+            );
+        });
+        redraw(cx, &view);
+        open_hint_menu(cx, &view);
+        let row = cx.debug_bounds("hint-add-to-doc").expect("row");
+        cx.simulate_click(row.center(), Modifiers::none());
+        assert!(matches!(
+            events.borrow().as_slice(),
+            [TimelineEvent::AddToDoc {
+                target: DocTarget::Default,
+                ..
+            }]
+        ));
+    }
+
+    #[gpui::test]
+    fn adding_a_chart_to_a_doc_sends_its_picture(cx: &mut TestAppContext) {
+        use domain::block::{ChartKind, ChartSpec, Series};
+
+        cx.update(gpui_component::init);
+        let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+        let events = record_events(&view, cx);
+        let block = Block::new(BlockKind::Chart(ChartSpec {
+            title: "Sales by month".into(),
+            kind: ChartKind::Line,
+            labels: vec!["jan".into(), "feb".into(), "mar".into()],
+            series: vec![Series {
+                name: "units".into(),
+                values: vec![3.0, 5.0, 4.0],
+            }],
+        }));
+        let id = block.id;
+        view.update(cx, |view, cx| {
+            view.apply_all([block].map(|block| DomainEvent::BlockAdded { block }), cx);
+            assert!(view.add_block_to_doc(id, DocTarget::Default, cx));
+        });
+        let events = events.borrow();
+        let [
+            TimelineEvent::AddToDoc {
+                markdown, image, ..
+            },
+        ] = events.as_slice()
+        else {
+            panic!("one event expected: {events:?}");
+        };
+        let (name, png) = image.as_ref().expect("a picture");
+        assert!(
+            name.starts_with("sales-by-month-") && name.ends_with(".png"),
+            "{name}"
+        );
+        assert_eq!(&png[..4], b"\x89PNG");
+        assert_eq!(markdown, &format!("![Sales by month](assets/{name})"));
+    }
+
+    #[gpui::test]
+    fn a_reply_footer_adds_the_reply_to_a_doc(cx: &mut TestAppContext) {
+        use gpui::{Modifiers, point, size};
+
+        cx.update(gpui_component::init);
+        let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+        let events = record_events(&view, cx);
+        view.update(cx, |view, cx| {
+            view.apply_all(
+                [text("> question"), text("the reply")]
+                    .map(|block| DomainEvent::BlockAdded { block }),
+                cx,
+            );
+        });
+        cx.draw(point(px(0.), px(0.)), size(px(800.), px(600.)), |_, _| {
+            div().size_full().child(view.clone())
+        });
+        cx.run_until_parked();
+        view.update(cx, |view, cx| view.set_docs(vec![doc_ref("Plan", 5)], cx));
+        for (open, selector, target) in [
+            ("reply-add-doc", "reply-add-to-doc-0", None),
+            (
+                "reply-add-doc",
+                "reply-add-to-new-doc",
+                Some(DocTarget::New),
+            ),
+        ] {
+            let draw = |cx: &mut gpui::VisualTestContext| {
+                cx.update(|window, _| window.refresh());
+                cx.run_until_parked();
+            };
+            draw(cx);
+            let more = cx
+                .debug_bounds("reply-add")
+                .unwrap_or_else(|| panic!("no {open}"));
+            cx.simulate_click(more.center(), Modifiers::none());
+            draw(cx);
+            let button = cx
+                .debug_bounds(selector)
+                .unwrap_or_else(|| panic!("no {selector}"));
+            cx.simulate_click(button.center(), Modifiers::none());
+            let doc = view.read_with(cx, |view, _| view.docs()[0].id);
+            assert_eq!(
+                events.borrow().last(),
+                Some(&TimelineEvent::AddToDoc {
+                    markdown: "the reply".into(),
+                    target: target.unwrap_or(DocTarget::Doc(doc)),
+                    image: None,
+                })
+            );
+        }
     }
 }

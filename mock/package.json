@@ -10,7 +10,8 @@
   },
   "dependencies": {
     "@fontsource/jetbrains-mono": "^5.1.1",
-    "html-to-image": "^1.11.13"
+    "html-to-image": "^1.11.13",
+    "mermaid": "^12.3.0"
   },
   "devDependencies": {
     "sass": "^1.107.0",

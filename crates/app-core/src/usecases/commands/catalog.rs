@@ -18,6 +18,8 @@ pub enum Handler {
 pub enum CommandGroup {
     /// This conversation (`/clear`, `/open`, `!`, `/aside`).
     Chat,
+    /// This chat's documents (`/doc`).
+    Docs,
     /// Research, implement, simulate.
     Flows,
     /// Steer the running flow.
@@ -32,8 +34,9 @@ pub enum CommandGroup {
 
 impl CommandGroup {
     /// Every group, in the palette's order.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Chat,
+        Self::Docs,
         Self::Flows,
         Self::Stages,
         Self::ModelAndPermissions,
@@ -46,6 +49,7 @@ impl CommandGroup {
     pub const fn label(self) -> &'static str {
         match self {
             Self::Chat => "Chat",
+            Self::Docs => "Docs",
             Self::Flows => "Flows",
             Self::Stages => "Stages",
             Self::ModelAndPermissions => "Model & permissions",
@@ -134,6 +138,16 @@ pub const CATALOG: &[CommandInfo] = &[
         description: "Start a new, empty session (not while a turn runs)",
         handler: Handler::Ui,
         group: CommandGroup::Chat,
+    },
+    CommandInfo {
+        name: "doc",
+        aliases: &[],
+        usage: "/doc [new|find|open|use|add|split|only|close|source|export] [text]",
+        description: "Open this chat's document or create it; `new [title]`, `find <text>`, `open <title>`, \
+                      `use [title]` (reference it in the next message), `add` (the selected block), `split`, \
+                      `only`, `close`, `source`, `export md|html|pdf|copy`; `/doc <title>` opens that document",
+        handler: Handler::Ui,
+        group: CommandGroup::Docs,
     },
     CommandInfo {
         name: "project",

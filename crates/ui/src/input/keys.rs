@@ -186,6 +186,13 @@ impl InputView {
             return true;
         }
         if *key == Key::plain(KeyCode::Backspace)
+            && !self.chips.is_empty()
+            && self.text(cx).is_empty()
+        {
+            self.remove_doc_chip(self.chips.len() - 1, cx);
+            return true;
+        }
+        if *key == Key::plain(KeyCode::Backspace)
             && !self.tray.is_empty()
             && self.text(cx).is_empty()
         {

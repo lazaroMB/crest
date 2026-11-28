@@ -1,7 +1,8 @@
 // The sidebar (crates/ui/src/chats.rs), in three widths (src/modes.js):
 //
 //   full    New chat · Search, then Projects (each with its directories and
-//           chats), Chats (the standalone ones), and, if anything is
+//           chats), Chats (the standalone ones), Docs (every doc; a click
+//           shows it alone, over its own chat), and, if anything is
 //           archived, a folded "Archived" section at the bottom
 //   strip   icons only: expand, new chat, search, projects, one initial per project
 //   hidden  the logo only, over the top left; the conversation starts below it.
@@ -41,6 +42,8 @@ import {
   unarchiveProject,
 } from "../../actions.js";
 import { setUi } from "../../store.js";
+import { newDoc, openDoc } from "../../doc-actions.js";
+import { allDocs, placeOf } from "../../docs.js";
 import { archivedModel, chatRoots, sidebarModel } from "../../organization.js";
 import { icon } from "../icons.js";
 import { Brand } from "../brand/brand.js";
@@ -202,6 +205,7 @@ function ChatRow(chat, state, nested) {
         onContextmenu: openMenu,
       },
       h("span", { class: "chat-row__title" }, chat.title || "New chat"),
+      docCount(state, chat.id) > 0 && h("span", { class: "chat-row__docs", title: `${docCount(state, chat.id)} doc(s) in this chat` }, icon("doc", 12)),
       chat.branchedFrom && h("span", { class: "chat-row__branch", title: `Branched from "${chat.branchedFrom.title}"` }, icon("branch", 12)),
       chat.activity && h("span", { class: "chat-row__badge" }, BADGE[chat.activity]),
       h("button", { class: "chat-row__more", title: "Chat actions", onClick: openMenu }, icon("more", 14)),
@@ -237,6 +241,33 @@ function ProjectGroup(project, state) {
       (project.chats.length
         ? project.chats.map((chat) => ChatRow(chat, state, true))
         : h("div", { class: "chats__empty chats__empty--nested" }, state.ui.search ? "No match" : "No chats yet")),
+  );
+}
+
+const docCount = (state, chatId) => state.docs.filter((d) => d.chatId === chatId).length;
+
+/** Every doc, newest first. A click opens it alone, full width, over its own chat (whose prompt stays). */
+function DocsSection(state) {
+  const docs = allDocs(state.docs, state.ui.search ?? "");
+  const chatTitle = (id) => state.organization.chats.find((c) => c.id === id)?.title ?? "";
+  return Section(
+    "Docs",
+    state.chat && iconButton("plus", "New doc in this chat", () => newDoc()),
+    docs.length
+      ? docs.map((d) =>
+          h(
+            "div",
+            {
+              class: ["chat-row", "doc-row", d.id === state.ui.docId && state.ui.docView !== "hidden" && "chat-row--open"],
+              title: `${placeOf(d, state.organization).file}\nin chat: ${chatTitle(d.chatId)}`,
+              onClick: () => openDoc(d.id, "doc"),
+            },
+            icon("doc", 12),
+            h("span", { class: "chat-row__title" }, d.title),
+            h("span", { class: "doc-row__chat" }, chatTitle(d.chatId)),
+          ),
+        )
+      : h("div", { class: "chats__empty" }, state.ui.search ? "No match" : "Docs you make from a chat show here"),
   );
 }
 
@@ -378,6 +409,7 @@ function Full(state) {
         null,
         standalone.length ? standalone.map((c) => ChatRow(c, state, false)) : h("div", { class: "chats__empty" }, state.ui.search ? "No match" : "Wild chats, the ones without a project, show here"),
       ),
+      DocsSection(state),
       ArchivedSection(state),
     ),
     McpDock(state),
@@ -393,6 +425,7 @@ function StripRows(state) {
     iconButton("chat", "New chat", () => newChat(null), { class: "strip-new" }),
     iconButton("search", "Search", () => setSearch(""), { class: "strip-search" }),
     iconButton("folder", "Projects", () => setSidebar("full"), { class: "strip-projects" }),
+    iconButton("doc", "Docs", () => setSidebar("full"), { class: "strip-docs" }),
     h("div", { class: "chats__strip-sep" }),
     projects.map((p) =>
       h(

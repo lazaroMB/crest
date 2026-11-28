@@ -23,6 +23,7 @@ use application::ports::telemetry::TelemetryPort;
 use application::privacy::Redactor;
 use application::tools::components::register_component_tools;
 use application::tools::compute::{ComputeToolPorts, register_compute_tools};
+use application::tools::docs::register_doc_tools;
 use application::tools::files::{FileToolPorts, register_file_tools};
 use application::tools::form::register_form_tool;
 use application::tools::formats::{FormatToolPorts, register_format_tools};
@@ -34,6 +35,7 @@ use application::tools::skill::{SkillDeps, SkillToolSource};
 use application::tools::task::{TaskPorts, TaskTool};
 use application::tools::web::WebTools;
 use application::usecases::background::AgentRunner;
+use application::usecases::docs::DocService;
 use application::usecases::run_turn::SharedPermissions;
 use application::usecases::simulate::{SimulateDeps, Simulator};
 use domain::model::ModelPolicy;
@@ -74,6 +76,8 @@ pub(super) struct ToolInputs<'a> {
     pub(super) events: Arc<dyn EventSink>,
     /// The tools that `init.lua` and the plugins declare.
     pub(super) plugin_tools: &'a [PluginToolSpec],
+    /// The chats' documents; their tools register only with a store.
+    pub(super) docs: Option<Arc<DocService>>,
     /// The `AGENTS.md` and `CLAUDE.md` files, for the `task` subagent.
     pub(super) instructions: Arc<dyn InstructionsPort>,
     /// The skills, for the `skill` tool.
@@ -121,6 +125,7 @@ pub(super) async fn register_tools(
         file_search,
         events,
         plugin_tools,
+        docs,
         instructions,
         skills,
         permissions,
@@ -138,6 +143,9 @@ pub(super) async fn register_tools(
         },
     )
     .context("tool registration")?;
+    if let Some(docs) = docs {
+        register_doc_tools(&mut tools, docs).context("tool registration")?;
+    }
     register_component_tools(&mut tools).context("tool registration")?;
     register_form_tool(&mut tools, Arc::clone(&form)).context("tool registration")?;
     let compute = compute_ports(Arc::clone(&fs));

@@ -9,13 +9,19 @@
 //   DELETE /api/chats/:id
 //   POST   /api/projects            { name, roots, chatId? } -> a new project, the chat promoted into it
 //   PATCH  /api/projects/:id        { name?, addRoot?, removeRoot?, pinned?, archived? }
-//   GET    /api/turn?chat=&prompt=  runs a scripted turn, streamed as server-sent events
+//   GET    /api/docs                every doc (src/docs.js)
+//   POST   /api/docs                { chatId, title, markdown?, assets? } -> a new doc owned by the chat
+//   PATCH  /api/docs/:id            { title?, markdown?, assets? } (assets are merged)
+//   DELETE /api/docs/:id
+//   GET    /api/turn?chat=&prompt=&doc=&context=
+//                                   runs a scripted turn, streamed as server-sent events; `doc` is the doc
+//                                   in the panel and `context` the passages the person passed (JSON)
 //   POST   /api/approval/:id        { choice: once|session|project|all-edits|reject }
 //   POST   /api/interrupt/:chatId
 //   PATCH  /api/status              { mode?, model? }
 //   /api/mcp…                       the MCP servers (server/mcp.js)
 
-import { chats, commands, projects, standalone, status } from "./data.js";
+import { chats, commands, docs, projects, standalone, status } from "./data.js";
 import { mcpRoutes } from "./mcp.js";
 import { pickScenario } from "./scenarios.js";
 import * as org from "../src/organization.js";
@@ -73,6 +79,8 @@ async function runTurn(req, res) {
   const url = new URL(req.url, "http://mock");
   const chat = chats[url.searchParams.get("chat")];
   const prompt = url.searchParams.get("prompt") ?? "";
+  const docId = url.searchParams.get("doc") || null;
+  const context = JSON.parse(url.searchParams.get("context") || "[]");
   if (!chat) return send(res, { error: "no such chat" }, 404);
 
   res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
@@ -87,6 +95,17 @@ async function runTurn(req, res) {
   const setActivity = (activity) => setChat(chat.id, { activity });
 
   const turn = {
+    chatId: chat.id,
+    chatTitle: chat.title,
+    prompt,
+    context,
+    doc: () => docs[docId] ?? Object.values(docs).filter((d) => d.chatId === chat.id).sort((a, b) => b.updatedAt - a.updatedAt)[0] ?? null,
+    /** Creates or changes a doc of this chat and streams it to the panel. */
+    writeDoc(doc) {
+      docs[doc.id] = { ...docs[doc.id], ...doc, updatedAt: Date.now() };
+      emit({ type: "doc", doc: docs[doc.id] });
+      return docs[doc.id];
+    },
     push(block) {
       upsert(chat, block);
       emit({ type: "block", block });
@@ -128,9 +147,9 @@ async function runTurn(req, res) {
 
   setActivity("running");
   setChat(chat.id, { updatedAt: Date.now() });
-  turn.push({ id: `user-${Date.now().toString(36)}`, kind: "user", text: prompt });
+  turn.push({ id: `user-${Date.now().toString(36)}`, kind: "user", text: prompt, context: context.length ? context : undefined });
   try {
-    await pickScenario(prompt)(turn);
+    await pickScenario(prompt, turn)(turn);
   } catch (error) {
     if (!(error instanceof Interrupted)) throw error;
     turn.notice("info", "turn interrupted");
@@ -144,7 +163,42 @@ async function runTurn(req, res) {
 }
 
 const routes = [
-  ["GET", /^\/api\/workbench$/, (req, res) => send(res, { organization, openChatId, status })],
+  ["GET", /^\/api\/workbench$/, (req, res) => send(res, { organization, openChatId, status, docs: Object.values(docs) })],
+  ["GET", /^\/api\/docs$/, (req, res) => send(res, Object.values(docs))],
+  [
+    "POST",
+    /^\/api\/docs$/,
+    async (req, res) => {
+      const { chatId, title, markdown = "", assets = {} } = await readBody(req);
+      if (!chats[chatId]) return send(res, { error: "a doc belongs to a chat" }, 409);
+      const now = Date.now();
+      const id = `d-${now.toString(36)}`;
+      docs[id] = { id, chatId, title: title || "Untitled doc", markdown, assets, createdAt: now, updatedAt: now };
+      send(res, docs[id]);
+    },
+  ],
+  [
+    "PATCH",
+    /^\/api\/docs\/([\w-]+)$/,
+    async (req, res, id) => {
+      const body = await readBody(req);
+      const doc = docs[id];
+      if (!doc) return send(res, { error: "no such doc" }, 404);
+      if (body.title !== undefined) doc.title = body.title.trim() || "Untitled doc";
+      if (body.markdown !== undefined) doc.markdown = body.markdown;
+      if (body.assets) doc.assets = { ...doc.assets, ...body.assets };
+      doc.updatedAt = Date.now();
+      send(res, doc);
+    },
+  ],
+  [
+    "DELETE",
+    /^\/api\/docs\/([\w-]+)$/,
+    (req, res, id) => {
+      delete docs[id];
+      send(res, { ok: true });
+    },
+  ],
   ["GET", /^\/api\/commands$/, (req, res) => send(res, commands)],
   [
     "GET",

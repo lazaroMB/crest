@@ -1,0 +1,25 @@
+---
+source: crates/app/src/tools/docs.rs
+expression: def
+---
+{
+  "name": "doc_read",
+  "description": "Returns the markdown of a document of this chat, by id or title. Read it before editing it.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "doc": {
+        "type": "string",
+        "description": "The document: its id, or its title (or part of it) when that names\none document of this chat."
+      }
+    },
+    "required": [
+      "doc"
+    ],
+    "description": "Input of `doc_read`.",
+    "title": "DocReadRequest",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  },
+  "cache": false
+}

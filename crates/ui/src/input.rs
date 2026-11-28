@@ -50,8 +50,10 @@
 //! commits directly, without key events, bypasses the sequencer.
 
 pub mod attachments;
+pub mod chips;
 pub mod completion;
 pub mod cursor;
+pub mod doc_popup;
 mod float;
 mod groups;
 pub mod history;
@@ -68,6 +70,8 @@ mod render;
 pub mod theme_popup;
 pub mod tray;
 
+pub use chips::DocChip;
+pub use doc_popup::{DocChoice, DocPopup};
 pub use keys::key_from_keystroke;
 pub use mode::{ChatMode, PROMPT_MODE_ACTION};
 pub use palette::palette_matches;
@@ -251,6 +255,10 @@ pub struct InputView {
     /// Whether the `/theme ` popup is showing another theme.
     theme_previewing: bool,
     tray: ImageTray,
+    /// The documents the next message names.
+    chips: Vec<DocChip>,
+    /// The documents the `/doc ` popup lists, newest first.
+    docs: Vec<DocChoice>,
     /// The prompt mode and its menu.
     mode_control: ModeControl,
     /// Where the floating popups were drawn.
@@ -324,6 +332,8 @@ impl InputView {
             current_theme: String::new(),
             theme_previewing: false,
             tray: ImageTray::default(),
+            chips: Vec::new(),
+            docs: Vec::new(),
             mode_control: ModeControl::default(),
             float: Float::default(),
             attaching: None,

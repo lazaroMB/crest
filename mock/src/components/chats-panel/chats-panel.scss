@@ -303,6 +303,23 @@
   }
 }
 
+// A doc in the Docs section: its title, then its chat, dimmer.
+.doc-row {
+  > .icon {
+    color: var(--muted-fg);
+  }
+
+  &__chat {
+    flex: 0 1 auto;
+    max-width: 40%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--text-xs);
+    color: var(--muted-fg);
+  }
+}
+
 .chat-row {
   display: flex;
   align-items: center;
@@ -332,7 +349,8 @@
     white-space: nowrap;
   }
 
-  &__branch {
+  &__branch,
+  &__docs {
     flex: none;
     color: var(--muted-fg);
   }

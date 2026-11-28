@@ -202,6 +202,8 @@ async fn the_users_command_runs_its_skill_first() {
             model_override: None,
             role: None,
             cancel: CancelToken::new(),
+            context: Vec::new(),
+            doc_title: None,
             skill: Some(application::usecases::run_turn::SkillCall {
                 name: "standup".into(),
                 args: "since monday".into(),

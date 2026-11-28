@@ -17,4 +17,4 @@ pub use selection::{CopyHint, copy_chord};
 pub use state::{
     NO_REV, TextNumbers, TimelineChange, TimelineEntry, TimelineState, has_alt_view, next_rev,
 };
-pub use view::{DeferredKey, TimelineView};
+pub use view::{DeferredKey, DocRef, DocTarget, TimelineEvent, TimelineView};

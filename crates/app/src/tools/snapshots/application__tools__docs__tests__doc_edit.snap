@@ -1,0 +1,35 @@
+---
+source: crates/app/src/tools/docs.rs
+expression: def
+---
+{
+  "name": "doc_edit",
+  "description": "Edits a document of this chat by replacing one passage, `from`, with `to`. `from` must be in the document (read it first); include enough surrounding text to be exact. The user sees the diff and may need to approve it.",
+  "input_schema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "doc": {
+        "type": "string",
+        "description": "The document: its id, or its title."
+      },
+      "from": {
+        "type": "string",
+        "description": "The passage to replace, as it reads in the document. Marks such as\n`**` or a list bullet may be left out."
+      },
+      "to": {
+        "type": "string",
+        "description": "The text that replaces it."
+      }
+    },
+    "required": [
+      "doc",
+      "from",
+      "to"
+    ],
+    "description": "Input of `doc_edit`.",
+    "title": "DocEditRequest",
+    "$schema": "https://json-schema.org/draft/2020-12/schema"
+  },
+  "cache": false
+}

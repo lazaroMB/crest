@@ -12,7 +12,7 @@ use super::completion::{Paint, palette_top};
 use super::cursor::{CursorShape, HiddenCaret, paint_cursor};
 use super::popups::Completion;
 use super::tray::paste_handler;
-use super::{IMAGE_MODE_ACTION, InputView, model_popup, path_popup, theme_popup};
+use super::{IMAGE_MODE_ACTION, InputView, doc_popup, model_popup, path_popup, theme_popup};
 
 impl Render for InputView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -23,6 +23,7 @@ impl Render for InputView {
             })
             .clone();
         let tray = self.tray.render(mode_keys.as_deref(), cx);
+        let chips = self.render_chips(cx);
         let mode_control = self.render_mode_control(cx);
         let popups = self.render_popups(cx);
         let wide = !self.mode_menu_open();
@@ -95,6 +96,7 @@ impl Render for InputView {
             .relative()
             // The popups float above the input; the wheel over them moves their rows.
             .children(float.map(|float| float.on_scroll_wheel(cx.listener(Self::popup_wheel))))
+            .children(chips)
             .children(tray)
             .child(prompt)
             .children(status)
@@ -151,6 +153,7 @@ impl InputView {
                 model_popup::render(popup, &paint, self.current_model.as_ref())
             }
             Completion::Theme(popup) => theme_popup::render(popup, &paint, &self.current_theme),
+            Completion::Doc(popup) => doc_popup::render(popup, &paint),
         })
     }
 

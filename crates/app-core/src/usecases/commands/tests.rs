@@ -1,5 +1,7 @@
 use std::sync::Mutex;
 
+use domain::doc::ExportFormat;
+
 use super::*;
 
 #[test]
@@ -147,6 +149,27 @@ fn the_controller_commands_read_their_arguments() {
         Command::Plugin(PluginCommand::Invalid)
     );
     assert_eq!(Command::parse("open @a.rs"), Command::Open("@a.rs".into()));
+    for (line, want) in [
+        ("doc", DocCommand::Open),
+        ("doc find rel", DocCommand::Find("rel".into())),
+        ("doc new Plan", DocCommand::New(Some("Plan".into()))),
+        ("doc use", DocCommand::Use(None)),
+        ("doc export zip", DocCommand::Export(None)),
+        (
+            "doc export pdf",
+            DocCommand::Export(Some(ExportFormat::Pdf)),
+        ),
+        (
+            "doc export html",
+            DocCommand::Export(Some(ExportFormat::Html)),
+        ),
+        (
+            "doc Release notes",
+            DocCommand::OpenTitle("Release notes".into()),
+        ),
+    ] {
+        assert_eq!(Command::parse(line), Command::Doc(want), "{line}");
+    }
     assert_eq!(
         Command::parse("picker.files"),
         Command::Other {
@@ -318,6 +341,7 @@ fn every_group_is_used_and_the_shell_is_in_chat() {
         labels,
         [
             "Chat",
+            "Docs",
             "Flows",
             "Stages",
             "Model & permissions",

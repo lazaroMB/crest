@@ -5,11 +5,16 @@
 //!
 //! Nothing here deletes a chat except [`ChatAction::Delete`]. Archiving keeps
 //! every block; deleting a project sets its chats free as standalone ones.
+//!
+//! A move of a chat, or the removal of a project's first directory, goes
+//! through the [`DocService`] when the caller has one, so the chat's
+//! documents follow (R03 FR-25).
 
 use domain::conversation::{ProjectId, SessionId};
 use domain::project::Project;
 
 use crate::ports::store::{SessionStorePort, StoreError};
+use crate::usecases::docs::{DocError, DocService};
 
 /// A row of a chat's menu.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,6 +52,7 @@ pub enum ChatDone {
 /// the store's error.
 pub async fn chat_action(
     store: &dyn SessionStorePort,
+    docs: Option<&DocService>,
     id: SessionId,
     action: ChatAction,
 ) -> Result<ChatDone, StoreError> {
@@ -54,10 +60,35 @@ pub async fn chat_action(
     match action {
         ChatAction::Rename(title) => store.rename_session(id, &title).await.map(changed),
         ChatAction::Pin(pinned) => store.pin_session(id, pinned).await.map(changed),
-        ChatAction::Move(project) => store.move_session(id, project).await.map(changed),
+        ChatAction::Move(project) => move_chat(store, docs, id, project).await.map(changed),
         ChatAction::Archive(on) => store.set_session_archived(id, on).await.map(changed),
         ChatAction::Delete => store.delete(id).await.map(changed),
         ChatAction::Branch => store.branch_session(id).await.map(ChatDone::Branched),
+    }
+}
+
+/// Moves chat `id` into `project`, its documents with it when there is a
+/// service. The chat has moved even when the documents could not follow.
+pub(crate) async fn move_chat(
+    store: &dyn SessionStorePort,
+    docs: Option<&DocService>,
+    id: SessionId,
+    project: Option<ProjectId>,
+) -> Result<(), StoreError> {
+    match docs {
+        Some(docs) => docs
+            .move_session(id, project)
+            .await
+            .map_err(into_store_error),
+        None => store.move_session(id, project).await,
+    }
+}
+
+/// A document error as the store error the menus report.
+fn into_store_error(err: DocError) -> StoreError {
+    match err {
+        DocError::Store(err) => err,
+        other => StoreError::Backend(other.to_string()),
     }
 }
 
@@ -69,13 +100,14 @@ pub async fn chat_action(
 /// The refusal of the project (no name or directory), or the store's error.
 pub async fn promote_chat(
     store: &dyn SessionStorePort,
+    docs: Option<&DocService>,
     id: SessionId,
     name: &str,
     directory: &str,
 ) -> Result<Project, StoreError> {
     store.load(id).await?;
     let project = store.create_project(name, &[directory.to_owned()]).await?;
-    store.move_session(id, Some(project.id)).await?;
+    move_chat(store, docs, id, Some(project.id)).await?;
     Ok(project)
 }
 
@@ -117,6 +149,7 @@ pub enum ProjectDone {
 /// [`StoreError::ProjectNotFound`] or the store's error.
 pub async fn project_action(
     store: &dyn SessionStorePort,
+    docs: Option<&DocService>,
     project: &Project,
     action: ProjectAction,
 ) -> Result<ProjectDone, StoreError> {
@@ -125,7 +158,13 @@ pub async fn project_action(
         ProjectAction::Rename(name) => store.rename_project(id, &name).await?,
         ProjectAction::Pin(pinned) => store.pin_project(id, pinned).await?,
         ProjectAction::AddDirectory(path) => store.add_root(id, &path).await?,
-        ProjectAction::RemoveDirectory(path) => store.remove_root(id, &path).await?,
+        ProjectAction::RemoveDirectory(path) => match docs {
+            Some(docs) => docs
+                .remove_root(id, &path)
+                .await
+                .map_err(into_store_error)?,
+            None => store.remove_root(id, &path).await?,
+        },
         ProjectAction::Archive(archived) => store.set_project_archived(id, archived).await?,
         ProjectAction::Delete => {
             let chats_freed = store.delete_project(id).await?;
@@ -176,7 +215,9 @@ mod tests {
         let mut log = vec![view(&store).await];
 
         // New project from a chat.
-        let api = promote_chat(&store, a, "api", "/w/api").await.unwrap();
+        let api = promote_chat(&store, None, a, "api", "/w/api")
+            .await
+            .unwrap();
         log.push(view(&store).await);
 
         // Archive and restore a chat, then a project with its chats.
@@ -185,9 +226,9 @@ mod tests {
             (ChatAction::Archive(false), Some(true)),
             (ChatAction::Pin(true), Some(false)),
         ] {
-            chat_action(&store, b, action).await.unwrap();
+            chat_action(&store, None, b, action).await.unwrap();
             if let Some(archived) = project {
-                project_action(&store, &api, ProjectAction::Archive(archived))
+                project_action(&store, None, &api, ProjectAction::Archive(archived))
                     .await
                     .unwrap();
             }
@@ -195,15 +236,17 @@ mod tests {
         }
 
         // Branch lands next to its source; deleting the project frees chats.
-        let ChatDone::Branched(branch) = chat_action(&store, a, ChatAction::Branch).await.unwrap()
+        let ChatDone::Branched(branch) = chat_action(&store, None, a, ChatAction::Branch)
+            .await
+            .unwrap()
         else {
             panic!("a branch is reported");
         };
-        chat_action(&store, b, ChatAction::Move(Some(api.id)))
+        chat_action(&store, None, b, ChatAction::Move(Some(api.id)))
             .await
             .unwrap();
         log.push(view(&store).await);
-        let deleted = project_action(&store, &api, ProjectAction::Delete).await;
+        let deleted = project_action(&store, None, &api, ProjectAction::Delete).await;
         log.push(format!("{deleted:?}: {}", view(&store).await));
         let loose = store.load(branch).await.unwrap().session;
         log.push(format!("{:?} {:?}", loose.workspace_root, loose.project_id));
@@ -249,13 +292,80 @@ mod tests {
             ),
         ];
         for (action, message) in rows {
-            let refused = project_action(&store, &api, action).await.unwrap_err();
+            let refused = project_action(&store, None, &api, action)
+                .await
+                .unwrap_err();
             assert_eq!(refused.to_string(), message);
         }
         // A project that is refused, or a chat that is missing, creates nothing.
         for (target, name) in [(id, " "), (SessionId::new(), "ghost")] {
-            assert!(promote_chat(&store, target, name, "/w/x").await.is_err());
+            assert!(
+                promote_chat(&store, None, target, name, "/w/x")
+                    .await
+                    .is_err()
+            );
         }
         assert_eq!(store.projects().await.unwrap(), [api]);
+    }
+
+    #[tokio::test]
+    async fn the_menus_move_a_chats_docs_with_it() {
+        use std::sync::Arc;
+
+        use crate::ports::docs::DocBases;
+        use crate::testing::docs::InMemoryDocFiles;
+
+        let store = Arc::new(InMemorySessionStore::new());
+        let files = Arc::new(InMemoryDocFiles::new(DocBases {
+            roots: vec!["/w/api".into(), "/w/web".into()],
+            data_dir: Some("/data".into()),
+        }));
+        let docs = DocService::new(store.clone(), files.clone(), Some("/data".into()), || 1);
+        let id = chat(&store, 1).await;
+        let doc = docs.create_for(id, "", Some("Plan".into())).await.unwrap();
+        assert_eq!(doc.dir, format!("/data/docs/{id}"));
+
+        let api = promote_chat(&*store, Some(&docs), id, "api", "/w/api")
+            .await
+            .unwrap();
+        assert_eq!(
+            docs.doc(doc.id).await.unwrap().dir,
+            format!("/w/api/.crest/docs/{id}")
+        );
+        project_action(
+            &*store,
+            Some(&docs),
+            &api,
+            ProjectAction::AddDirectory("/w/web".into()),
+        )
+        .await
+        .unwrap();
+        project_action(
+            &*store,
+            Some(&docs),
+            &api,
+            ProjectAction::RemoveDirectory("/w/api".into()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            docs.doc(doc.id).await.unwrap().dir,
+            format!("/w/web/.crest/docs/{id}")
+        );
+        chat_action(&*store, Some(&docs), id, ChatAction::Move(None))
+            .await
+            .unwrap();
+        assert_eq!(
+            docs.doc(doc.id).await.unwrap().dir,
+            format!("/data/docs/{id}")
+        );
+
+        files.fail_relocate(true);
+        let refused = chat_action(&*store, Some(&docs), id, ChatAction::Move(Some(api.id))).await;
+        assert!(refused.is_err());
+        assert_eq!(
+            docs.doc(doc.id).await.unwrap().dir,
+            format!("/data/docs/{id}")
+        );
     }
 }

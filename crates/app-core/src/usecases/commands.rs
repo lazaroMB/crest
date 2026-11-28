@@ -13,6 +13,7 @@ pub mod catalog;
 pub mod research;
 
 use domain::block::Block;
+pub use domain::doc::DocCommand;
 use domain::permission::{ParsePermissionModeError, PermissionMode};
 use futures::FutureExt as _;
 use futures::future::BoxFuture;
@@ -109,6 +110,8 @@ pub enum Command {
     Plugin(PluginCommand),
     /// `/open @path`: the argument.
     Open(String),
+    /// `/doc ...`: the chat's documents, see [`DocCommand`].
+    Doc(DocCommand),
     /// `/init [focus]`: what was typed after it.
     Init(String),
     /// `/agent [explore|plan] <prompt>` (also `& <prompt>`): a background
@@ -165,6 +168,7 @@ impl Command {
             "mcp" => Self::Mcp(McpCommand::parse(arg)),
             "plugin" => Self::Plugin(PluginCommand::parse(arg)),
             "open" => Self::Open(arg.to_owned()),
+            "doc" => Self::Doc(DocCommand::parse(arg)),
             "init" => Self::Init(arg.to_owned()),
             "agent" => Self::Agent(arg.to_owned()),
             "agents" => Self::Agents(arg.to_owned()),
@@ -499,6 +503,7 @@ pub fn dispatch<H: CommandHandler + ?Sized>(handler: &H, command: Command) -> Op
         | Command::Login(_)
         | Command::Logout(_)
         | Command::ModalClose
+        | Command::Doc(_)
         | Command::Modal(_) => return None,
     })
 }

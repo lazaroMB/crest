@@ -91,6 +91,7 @@ pub(crate) fn catalog_of(sidebar: Sidebar, archived: Archived) -> Catalog {
                 .collect(),
             chats: entries(archived.chats),
         },
+        docs: Vec::new(),
     }
 }
 

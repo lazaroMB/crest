@@ -42,6 +42,8 @@ fn request(prompt: &str, cancel: CancelToken) -> TurnRequest {
         model_override: None,
         role: None,
         cancel,
+        context: Vec::new(),
+        doc_title: None,
         skill: None,
     }
 }

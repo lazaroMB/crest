@@ -5,6 +5,7 @@ pub mod compute;
 pub mod credentials;
 pub mod decision;
 pub mod discovery;
+pub mod docs;
 pub mod form;
 pub mod formats;
 pub mod fs;

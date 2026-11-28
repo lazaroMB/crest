@@ -119,7 +119,8 @@ docs/                   user and developer guides
 | `make package` | Release tarball in `dist/`. |
 | `make install` / `make uninstall` | Packages the release build and installs it with `scripts/install.sh`: `$(PREFIX)/bin/crest` plus the app menu entry on Linux, `~/Applications/crest.app` on macOS (`PREFIX=~/.local`). |
 | `make clean` | `cargo clean`. |
-| `make sweep` | `cargo sweep --time 14` (`SWEEP_DAYS`): deletes the artifacts no build has used in two weeks. Needs `cargo install cargo-sweep`. |
+| `make sweep` | `cargo sweep --installed` then `cargo sweep --time 14` (`SWEEP_DAYS`): drops what the installed toolchain did not build and the artifacts no build has used in two weeks. Needs `cargo install cargo-sweep`. |
+| `make tidy` | What `make check` ends with: `make sweep` when cargo-sweep is installed; otherwise `cargo clean` once `target/` passes `TARGET_MAX_GB` (60), and nothing below that. |
 
 ### Build times and disk
 
@@ -130,7 +131,7 @@ GPUI makes `target/` big and links slow, so the workspace trims both:
 - One integration test binary per crate (`tests/it/`), no doctest pass in `ui`, `crest` and `adapter-formats`, and the UI examples behind `--features examples`.
 - The linker is already LLD: Rust's `x86_64-unknown-linux-gnu` target links with its bundled `rust-lld` (Arch's `rust` package included), so there is no `.cargo/config.toml`.
 
-`make sweep` deletes the artifacts unused for two weeks. If your `rustc` comes from the distribution (Arch's `rust` package rather than rustup), every package update changes the compiler and makes all of `target/` stale: run `cargo sweep --installed` after it, which keeps only what the installed toolchain built.
+`target/` grows without bound: every feature set (`clippy --all-targets`, `langfuse`, the UI examples, `gpui`'s `test-support`) leaves its own artifacts and every `Cargo.lock` or toolchain change leaves the old ones behind; it has reached hundreds of GiB. `make check` therefore ends with `make tidy`: `make sweep` when cargo-sweep is installed (install it, it keeps the recent builds), or `cargo clean` once `target/` passes `TARGET_MAX_GB` (60) without it. `make sweep` deletes the artifacts unused for two weeks. If your `rustc` comes from the distribution (Arch's `rust` package rather than rustup), every package update changes the compiler and makes all of `target/` stale: run `cargo sweep --installed` after it, which keeps only what the installed toolchain built.
 
 ### Screenshots
 
